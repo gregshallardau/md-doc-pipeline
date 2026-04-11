@@ -69,24 +69,21 @@ def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ex
     If output_dir is given, mirror the source tree under it.
     Otherwise, write output alongside the source file.
 
-    ext can be either a standard suffix (e.g., ".pdf") or a stem+suffix like "-form.pdf"
+    ext can be ".pdf", ".docx", etc., or "-form.pdf" for PDF forms.
     """
-    # Handle special suffixes like "-form.pdf" that aren't simple extensions
-    if ext.startswith("-") and "." in ext:
-        # Extract the stem suffix and extension (e.g., "-form.pdf" -> "-form", "pdf")
-        stem_part, ext_part = ext.rsplit(".", 1)
-        # stem_part is "-form", ext_part is "pdf"
-        final_ext = "." + ext_part
-
+    # Handle "-form.pdf" style extensions that don't start with a dot
+    if ext.startswith("-"):
+        stem_addition, file_ext = ext.rsplit(".", 1)
+        file_ext = "." + file_ext
         if output_dir is not None:
             rel = doc_path.relative_to(root)
-            new_name = rel.stem + stem_part + final_ext
-            return output_dir / rel.parent / new_name
+            new_stem = rel.stem + stem_addition
+            return output_dir / rel.parent / (new_stem + file_ext)
         else:
-            new_name = doc_path.stem + stem_part + final_ext
-            return doc_path.parent / new_name
+            new_stem = doc_path.stem + stem_addition
+            return doc_path.parent / (new_stem + file_ext)
     else:
-        # Standard suffix handling
+        # Standard suffix (e.g., ".pdf", ".docx")
         if output_dir is not None:
             rel = doc_path.relative_to(root)
             return output_dir / rel.with_suffix(ext)
