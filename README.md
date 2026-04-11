@@ -2,7 +2,7 @@
 
 A lightweight Markdown → PDF/DOCX document pipeline with cascading config, Jinja2 template composition, and pluggable cloud sync.
 
-Built for document-heavy workflows — insurance binders, renewal letters, compliance reports — where content is structured in Markdown, assembled from reusable fragments, and published to PDF and/or DOCX.
+Built for document-heavy workflows — proposals, project reports, compliance documents, contracts — where content is structured in Markdown, assembled from reusable fragments, and published to PDF and/or DOCX.
 
 ---
 
@@ -39,13 +39,13 @@ Requires Python 3.11+. WeasyPrint requires system libraries — see [WeasyPrint 
 
 ```bash
 # Build PDF and DOCX from a single document
-md-doc build docs/renewals/2026/binder-cover.md
+md-doc build docs/projects/2026/alpha-project-report.md
 
 # Build all documents in a directory (recursive)
-md-doc build docs/renewals/2026/
+md-doc build docs/projects/2026/
 
 # Sync built outputs to Azure
-md-doc sync docs/renewals/2026/
+md-doc sync docs/projects/2026/
 
 # Generate document register
 md-doc register
@@ -57,21 +57,21 @@ md-doc register
 
 ```
 my-docs/
-├── _meta.yml                   # Repo-level defaults (org name, outputs, sync config)
-├── templates/                  # Shared reusable fragments
-│   ├── aib-header.md
+├── _meta.yml                      # Repo-level defaults (org name, outputs, sync config)
+├── templates/                     # Shared reusable fragments
+│   ├── org-header.md
 │   ├── confidentiality-footer.md
-│   └── product-intro-binder.md
+│   └── section-intro.md
 ├── themes/
 │   └── default/
-│       └── pdf-theme.css       # WeasyPrint CSS theme
+│       └── pdf-theme.css          # WeasyPrint CSS theme
 ├── docs/
-│   └── renewals/
-│       ├── _meta.yml           # Renewal-specific defaults (product, status)
+│   └── projects/
+│       ├── _meta.yml              # Project-specific defaults (product, status)
 │       └── 2026/
-│           ├── _meta.yml       # Year-level overrides (version, date)
-│           └── binder-cover.md # Individual document with frontmatter
-└── build/                      # Generated outputs (PDF, DOCX) — git-ignored
+│           ├── _meta.yml          # Year-level overrides (version, date)
+│           └── project-report.md  # Individual document with frontmatter
+└── build/                         # Generated outputs (PDF, DOCX) — git-ignored
 ```
 
 ---
@@ -91,15 +91,15 @@ Configuration cascades from shallowest to deepest. Later layers override earlier
 # _meta.yml or document frontmatter
 
 title: My Document Title
-product: Acme Binder — Liability
-document_type: binder_cover
+product: Alpha Initiative — Phase 2
+document_type: project_report
 version: "2.0"
 status: final                    # draft | final | superseded
 
-author: Acme IB
+author: Acme Corp
 outputs: [pdf, docx]             # Which formats to build
-output_pdf: AIB-Binder-2026.pdf  # Output filename (optional, defaults to doc stem)
-output_docx: AIB-Binder-2026.docx
+output_pdf: Alpha-Report-2026.pdf  # Output filename (optional, defaults to doc stem)
+output_docx: Alpha-Report-2026.docx
 
 # Sync config
 sync_target: azure               # azure | s3 | local
@@ -108,15 +108,15 @@ include_md_in_share: false       # Never sync source .md files
 sync_config:
   # Azure
   connection_string_env: AZURE_STORAGE_CONNECTION_STRING
-  share_name: binder-docs
-  remote_dir: renewals/2026
+  share_name: report-docs
+  remote_dir: projects/2026
 
   # S3
   bucket: my-docs-bucket
-  prefix: renewals/2026/
+  prefix: projects/2026/
 
   # Local
-  path: /mnt/shared/docs/renewals/2026/
+  path: /mnt/shared/docs/projects/2026/
 ```
 
 ---
@@ -129,26 +129,26 @@ Document bodies are processed through Jinja2 before building. All config variabl
 
 ```markdown
 ---
-title: Renewal Cover Letter — {{ product }}
-client: Riverside Holdings
-renewal_date: 1 May 2026
+title: Project Report — {{ product }}
+client: Beta Systems Ltd
+report_date: 1 May 2026
 ---
 
 Dear {{ client }},
 
-We are pleased to present your renewal for **{{ product }}** effective {{ renewal_date }}.
+Please find attached the project report for **{{ product }}** as at {{ report_date }}.
 ```
 
 ### Including shared fragments
 
 ```markdown
-{% include "templates/aib-header.md" %}
+{% include "templates/org-header.md" %}
 
 # {{ title }}
 
-{% include "templates/product-intro-binder.md" %}
+{% include "templates/section-intro.md" %}
 
-## Schedule of Cover
+## Deliverables
 
 ...
 
@@ -163,37 +163,37 @@ Fragment search order:
 
 ---
 
-## Worked example: insurance binder renewals
+## Worked example: project reports
 
-See [`examples/insurance-binders/`](examples/insurance-binders/) for a full working example including:
+See [`examples/project-reports/`](examples/project-reports/) for a full working example including:
 
 - Repo `_meta.yml` with org defaults
-- Product-level `_meta.yml`
-- Individual binder cover letter with frontmatter
+- Project-level `_meta.yml`
+- Individual project report with frontmatter
 - Shared header/footer fragments
 - Expected build output
 
 ### Directory structure
 
 ```
-examples/insurance-binders/
+examples/project-reports/
 ├── _meta.yml
 ├── templates/
-│   ├── aib-header.md
+│   ├── org-header.md
 │   └── confidentiality-footer.md
 └── docs/
-    └── renewals/
+    └── projects/
         └── 2026/
             ├── _meta.yml
-            └── riverside-holdings-binder.md
+            └── alpha-project-report.md
 ```
 
 ### Build it
 
 ```bash
-cd examples/insurance-binders
-md-doc build docs/renewals/2026/riverside-holdings-binder.md
-# → build/docs/renewals/2026/Riverside-Holdings-Binder-2026.pdf
+cd examples/project-reports
+md-doc build docs/projects/2026/alpha-project-report.md
+# → build/docs/projects/2026/Alpha-Project-Report-2026.pdf
 ```
 
 ---
