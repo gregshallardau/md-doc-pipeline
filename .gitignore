@@ -18,9 +18,6 @@ register.json
 register.md
 register.csv
 
-# Auto-generated theme (created on first build if none exists — customise with md-doc theme init)
-_pdf-theme.css
-
 # Editor
 .DS_Store
 *.swp
