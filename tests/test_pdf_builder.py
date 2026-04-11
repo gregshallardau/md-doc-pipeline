@@ -31,16 +31,16 @@ class TestResolveCss:
     def test_repo_default_theme_fallback(self, tmp_repo):
         default_dir = tmp_repo / "themes" / "default"
         default_dir.mkdir(parents=True)
-        css = default_dir / "pdf-theme.css"
+        css = default_dir / "_pdf-theme.css"
         css.write_text("body {}")
         result = _resolve_css({}, tmp_repo)
         assert result == css.resolve()
 
     def test_nested_css_in_doc_dir(self, tmp_repo):
-        """pdf-theme.css placed next to the document is picked up."""
+        """_pdf-theme.css placed next to the document is picked up."""
         doc_dir = tmp_repo / "products" / "alpha"
         doc_dir.mkdir(parents=True)
-        css = doc_dir / "pdf-theme.css"
+        css = doc_dir / "_pdf-theme.css"
         css.write_text("body { color: red; }")
         doc = doc_dir / "report.md"
         doc.write_text("# Report\n")
@@ -48,12 +48,12 @@ class TestResolveCss:
         assert result == css.resolve()
 
     def test_nested_css_in_ancestor_dir(self, tmp_repo):
-        """pdf-theme.css in an intermediate ancestor is found when none is closer."""
+        """_pdf-theme.css in an intermediate ancestor is found when none is closer."""
         mid = tmp_repo / "products"
         mid.mkdir()
         deep = mid / "alpha"
         deep.mkdir()
-        css = mid / "pdf-theme.css"
+        css = mid / "_pdf-theme.css"
         css.write_text("body { color: blue; }")
         doc = deep / "report.md"
         doc.write_text("# Report\n")
@@ -61,13 +61,13 @@ class TestResolveCss:
         assert result == css.resolve()
 
     def test_deeper_css_overrides_ancestor(self, tmp_repo):
-        """A pdf-theme.css closer to the document wins over one higher up."""
+        """A _pdf-theme.css closer to the document wins over one higher up."""
         mid = tmp_repo / "products"
         deep = mid / "alpha"
         deep.mkdir(parents=True)
-        mid_css = mid / "pdf-theme.css"
+        mid_css = mid / "_pdf-theme.css"
         mid_css.write_text("body { color: blue; }")
-        deep_css = deep / "pdf-theme.css"
+        deep_css = deep / "_pdf-theme.css"
         deep_css.write_text("body { color: green; }")
         doc = deep / "report.md"
         doc.write_text("# Report\n")
@@ -75,10 +75,10 @@ class TestResolveCss:
         assert result == deep_css.resolve()
 
     def test_explicit_pdf_theme_overrides_nested(self, tmp_repo):
-        """pdf_theme config key takes priority over any nested pdf-theme.css."""
+        """pdf_theme config key takes priority over any nested _pdf-theme.css."""
         doc_dir = tmp_repo / "docs"
         doc_dir.mkdir()
-        nested_css = doc_dir / "pdf-theme.css"
+        nested_css = doc_dir / "_pdf-theme.css"
         nested_css.write_text("body { color: red; }")
         explicit_css = tmp_repo / "explicit.css"
         explicit_css.write_text("body { color: purple; }")

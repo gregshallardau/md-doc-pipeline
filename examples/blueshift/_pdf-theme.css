@@ -1,6 +1,7 @@
-/* PDF Theme — Pulse Monitor brand
-   Warm amber/orange palette to differentiate from the default Blueshift blue.
-   Nested CSS: overrides themes/default/pdf-theme.css for all Pulse documents.
+/* PDF Theme — Blueshift Labs
+   Base theme for all Blueshift documents. Product sub-themes can override
+   individual rules by placing their own pdf-theme.css in a subdirectory
+   and importing this file (see products/pulse/pdf-theme.css for an example).
 */
 
 /* ============================================
@@ -11,7 +12,7 @@
   margin: 25mm 20mm 22mm 25mm;
 
   @bottom-left {
-    content: "Blueshift Labs — Pulse Monitor";
+    content: "Blueshift Labs";
     font-size: 7.5pt;
     color: #7f8c9a;
     font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -38,6 +39,7 @@
   }
 }
 
+/* Cover page — suppress footer/header */
 @page cover {
   margin: 0;
   @bottom-left { content: none; border: none; }
@@ -52,20 +54,21 @@ html, body {
   font-family: 'Segoe UI', 'Helvetica Neue', 'Liberation Sans', Arial, sans-serif;
   font-size: 10.5pt;
   line-height: 1.65;
-  color: #1a1a1a;
+  color: #1a1a2e;
   margin: 0;
   padding: 0;
   orphans: 3;
   widows: 3;
 }
 
+/* Running string for date in footer */
 .running-date {
   string-set: research-date content();
   display: none;
 }
 
 /* ============================================
-   COVER PAGE — Pulse amber/orange palette
+   COVER PAGE
    ============================================ */
 .cover {
   page: cover;
@@ -78,7 +81,7 @@ html, body {
 }
 
 .cover-bar {
-  background: #7d3c00;
+  background: #1b4f72;
   height: 10mm;
   width: 100%;
 }
@@ -89,7 +92,7 @@ html, body {
   left: 0;
   width: 6mm;
   height: 120mm;
-  background: #e67e22;
+  background: #2e86c1;
 }
 
 .cover-content {
@@ -101,14 +104,14 @@ html, body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 2.5pt;
-  color: #e67e22;
+  color: #2e86c1;
   margin: 0 0 10mm 0;
 }
 
 .cover-title {
   font-size: 24pt;
   font-weight: 700;
-  color: #7d3c00;
+  color: #1b4f72;
   line-height: 1.2;
   margin: 0 0 8mm 0;
   border: none;
@@ -117,7 +120,7 @@ html, body {
 
 .cover-divider {
   border: none;
-  border-top: 3pt solid #7d3c00;
+  border-top: 3pt solid #1b4f72;
   width: 40mm;
   margin: 0 0 8mm 0;
 }
@@ -130,7 +133,7 @@ html, body {
 }
 
 .cover-meta strong {
-  color: #1a1a1a;
+  color: #1a1a2e;
   font-weight: 600;
 }
 
@@ -146,12 +149,12 @@ html, body {
 }
 
 /* ============================================
-   HEADINGS — amber palette
+   HEADINGS
    ============================================ */
 h1 {
   font-size: 15pt;
   font-weight: 700;
-  color: #7d3c00;
+  color: #1b4f72;
   border-bottom: 1.5pt solid #d5d8dc;
   padding-bottom: 4pt;
   margin-top: 18pt;
@@ -163,7 +166,7 @@ h1 {
 h2 {
   font-size: 12.5pt;
   font-weight: 600;
-  color: #e67e22;
+  color: #2e86c1;
   margin-top: 14pt;
   margin-bottom: 5pt;
   page-break-after: avoid;
@@ -173,7 +176,7 @@ h2 {
 h3 {
   font-size: 10.5pt;
   font-weight: 700;
-  color: #7f8c9a;
+  color: #5d6d7e;
   margin-top: 10pt;
   margin-bottom: 4pt;
   page-break-after: avoid;
@@ -183,7 +186,7 @@ h3 {
 h4 {
   font-size: 10pt;
   font-weight: 600;
-  color: #1a1a1a;
+  color: #1a1a2e;
   margin-top: 8pt;
   margin-bottom: 2pt;
   page-break-after: avoid;
@@ -193,51 +196,164 @@ h4 {
 /* ============================================
    BODY TEXT
    ============================================ */
-p { margin: 0 0 7pt 0; orphans: 3; widows: 3; }
-ul, ol { padding-left: 16pt; margin: 3pt 0 8pt 0; }
-li { margin-bottom: 3pt; line-height: 1.6; orphans: 2; widows: 2; }
-li > p { margin: 2pt 0; }
-strong { font-weight: 700; color: #7d3c00; }
-em { font-style: italic; color: #7f8c9a; }
-a { color: #e67e22; text-decoration: none; }
-a[href^="http"]::after { content: " <" attr(href) ">"; font-size: 7pt; color: #7f8c9a; word-break: break-all; }
-a[href^="#"]::after, a:not([href^="http"])::after { content: ""; }
+p {
+  margin: 0 0 7pt 0;
+  orphans: 3;
+  widows: 3;
+}
+
+ul, ol {
+  padding-left: 16pt;
+  margin: 3pt 0 8pt 0;
+}
+
+li {
+  margin-bottom: 3pt;
+  line-height: 1.6;
+  orphans: 2;
+  widows: 2;
+}
+
+li > p {
+  margin: 2pt 0;
+}
+
+strong {
+  font-weight: 700;
+  color: #1b4f72;
+}
+
+em {
+  font-style: italic;
+  color: #5d6d7e;
+}
+
+a {
+  color: #2e86c1;
+  text-decoration: none;
+}
+
+a[href^="http"]::after {
+  content: " <" attr(href) ">";
+  font-size: 7pt;
+  color: #7f8c9a;
+  word-break: break-all;
+  font-style: normal;
+}
+
+a[href^="#"]::after,
+a:not([href^="http"])::after {
+  content: "";
+}
 
 /* ============================================
    TABLES
    ============================================ */
-table { border-collapse: collapse; width: 100%; margin: 6pt 0 12pt 0; font-size: 9.5pt; page-break-inside: avoid; }
-thead { display: table-header-group; }
-tr { page-break-inside: avoid; }
-th { background: #7d3c00; color: #fff; padding: 5pt 9pt; text-align: left; font-weight: 700; font-size: 8.5pt; letter-spacing: 0.4pt; text-transform: uppercase; }
-td { padding: 5pt 9pt; border-bottom: 0.5pt solid #d5d8dc; vertical-align: top; }
-tr:nth-child(even) td { background: #fdf3e7; }
-tr:last-child td { border-bottom: 1pt solid #aab7c4; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6pt 0 12pt 0;
+  font-size: 9.5pt;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+thead {
+  display: table-header-group;
+}
+
+tr {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+th {
+  background: #1b4f72;
+  color: #ffffff;
+  padding: 5pt 9pt;
+  text-align: left;
+  font-weight: 700;
+  font-size: 8.5pt;
+  letter-spacing: 0.4pt;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 5pt 9pt;
+  border-bottom: 0.5pt solid #d5d8dc;
+  vertical-align: top;
+}
+
+tr:nth-child(even) td {
+  background: #f5f7fa;
+}
+
+tr:last-child td {
+  border-bottom: 1pt solid #aab7c4;
+}
 
 /* ============================================
    CODE
    ============================================ */
-code { background: #fef5e7; border-radius: 2pt; padding: 1pt 4pt; font-size: 8.5pt; color: #7d3c00; font-family: 'Consolas', 'Courier New', monospace; }
-pre { background: #fdf3e7; border-left: 3pt solid #e67e22; border-radius: 3pt; padding: 8pt 10pt; font-size: 8pt; line-height: 1.5; margin: 6pt 0 10pt 0; page-break-inside: avoid; overflow: hidden; }
-pre code { background: none; padding: 0; color: #1a1a1a; font-size: 8pt; }
+code {
+  background: #eaf4fb;
+  border-radius: 2pt;
+  padding: 1pt 4pt;
+  font-size: 8.5pt;
+  color: #1b4f72;
+  font-family: 'Consolas', 'Courier New', 'Liberation Mono', monospace;
+}
+
+pre {
+  background: #f0f4f8;
+  border-left: 3pt solid #2e86c1;
+  border-radius: 3pt;
+  padding: 8pt 10pt;
+  font-size: 8pt;
+  line-height: 1.5;
+  margin: 6pt 0 10pt 0;
+  page-break-inside: avoid;
+  overflow: hidden;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  color: #1a1a2e;
+  font-size: 8pt;
+}
 
 /* ============================================
    BLOCKQUOTE / CALLOUT
    ============================================ */
-blockquote { border-left: 3pt solid #e67e22; margin: 6pt 0 8pt 0; padding: 4pt 10pt; color: #7f8c9a; font-style: italic; background: #fdf3e7; page-break-inside: avoid; }
-blockquote p { margin: 2pt 0; }
-blockquote strong { color: #7d3c00; }
+blockquote {
+  border-left: 3pt solid #2e86c1;
+  margin: 6pt 0 8pt 0;
+  padding: 4pt 10pt;
+  color: #5d6d7e;
+  font-style: italic;
+  background: #f4f9fd;
+  page-break-inside: avoid;
+}
+
+blockquote p {
+  margin: 2pt 0;
+}
+
+blockquote strong {
+  color: #1b4f72;
+}
 
 /* ============================================
    MISC
    ============================================ */
 hr { border: none; border-top: 1pt solid #d5d8dc; margin: 12pt 0; }
 dl { margin: 6pt 0 10pt 0; }
-dt { font-weight: 700; color: #7d3c00; margin-top: 6pt; }
-dd { margin-left: 14pt; margin-bottom: 4pt; }
+dt { font-weight: 700; color: #1b4f72; margin-top: 6pt; }
+dd { margin-left: 14pt; margin-bottom: 4pt; color: #1a1a2e; }
 img { max-width: 100%; height: auto; display: block; margin: 8pt auto 12pt auto; page-break-inside: avoid; }
-h1 + * { page-break-before: avoid; }
-h2 + * { page-break-before: avoid; }
+h1 + * { page-break-before: avoid; break-before: avoid; }
+h2 + * { page-break-before: avoid; break-before: avoid; }
 table, figure, blockquote, pre { page-break-inside: avoid; }
 .appendix-template-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }
 .report-body h1 { page-break-before: always; break-before: page; }

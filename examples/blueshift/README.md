@@ -1,7 +1,7 @@
 # Blueshift Labs — Example Project
 
 A multi-layer example project for `md-doc-pipeline` demonstrating cascading
-`_meta.yml` config, nested `templates/`, and nested `pdf-theme.css`.
+`_meta.yml` config, nested `templates/`, and nested `_pdf-theme.css`.
 
 ## Structure
 
@@ -26,7 +26,7 @@ blueshift/
 │   │
 │   └── pulse/                           # Pulse Monitor product line
 │       ├── _meta.yml                    # product, version, alert_email
-│       ├── pdf-theme.css                # ← amber theme, overrides default blue
+│       ├── _pdf-theme.css                # ← amber theme, overrides default blue
 │       └── on-call-handbook.md
 │
 └── clients/
@@ -63,11 +63,11 @@ So `author` comes from root, `document_type` from products, and `product` +
 `{% include "product-disclaimer.md" %}` resolves to `products/templates/` because
 no deeper override exists.
 
-### Nested `pdf-theme.css`
+### Nested `_pdf-theme.css`
 
-Pulse documents automatically pick up `products/pulse/pdf-theme.css` (amber/orange
+Pulse documents automatically pick up `products/pulse/_pdf-theme.css` (amber/orange
 palette) without any `pdf_theme` config key. All other documents fall through to
-the repo default at `themes/default/pdf-theme.css` (blue palette).
+the repo default at `themes/default/_pdf-theme.css` (blue palette).
 
 ## Building
 

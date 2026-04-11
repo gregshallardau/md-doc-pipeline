@@ -2,9 +2,11 @@
 md-doc CLI entrypoint.
 
 Commands:
-  md-doc build [ROOT] [--output DIR] [--format pdf|docx|all]
+  md-doc build [ROOT] [--output DIR] [--format pdf|docx|dotx|all]
   md-doc register [ROOT]
   md-doc sync [ROOT] [--backend azure|s3|local]
+  md-doc theme init [DIR]
+  md-doc theme override [DIR]
 
 Wired via pyproject.toml:
   [project.scripts]
@@ -57,7 +59,7 @@ def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ex
 @click.group()
 @click.version_option(package_name="md-doc-pipeline")
 def main() -> None:
-    """Markdown → PDF/DOCX document pipeline with cascading config and sync."""
+    """Markdown → PDF/DOCX/DOTX document pipeline with cascading config and sync."""
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +77,7 @@ def main() -> None:
 @click.option(
     "--format", "-f", "fmt",
     default="all",
-    type=click.Choice(["pdf", "docx", "all"], case_sensitive=False),
+    type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
     help="Output format(s). Overrides per-document 'outputs' config when set explicitly.",
 )
 @click.option("--strict", is_flag=True, default=False, help="Fail on undefined Jinja2 variables.")
@@ -138,6 +140,9 @@ def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx  # type: ignore[import]
                     build_docx(rendered_md, config, out_path)
+                elif format_name == "dotx":
+                    from .builders.dotx import build as build_dotx  # type: ignore[import]
+                    build_dotx(rendered_md, config, out_path, doc_path=doc_path)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
@@ -245,3 +250,138 @@ def sync(root: Path, backend: str | None, dry_run: bool) -> None:
         click.echo("Dry run complete — nothing uploaded.")
     else:
         click.echo("Sync complete.")
+
+
+# ---------------------------------------------------------------------------
+# theme
+# ---------------------------------------------------------------------------
+
+def _prompt_color(prompt: str, default: str) -> str:
+    """Prompt for a hex colour with validation."""
+    from .theme import validate_hex_color
+    while True:
+        raw = click.prompt(prompt, default=default)
+        try:
+            return validate_hex_color(raw)
+        except ValueError as exc:
+            click.echo(f"  {exc} — try again.", err=True)
+
+
+@main.group()
+def theme() -> None:
+    """Create and manage PDF themes."""
+
+
+@theme.command("init")
+@click.argument(
+    "directory",
+    default=".",
+    type=click.Path(file_okay=False, path_type=Path),
+)
+def theme_init(directory: Path) -> None:
+    """Generate a full _pdf-theme.css for a project or company root.
+
+    \b
+    Examples:
+      md-doc theme init
+      md-doc theme init examples/blueshift/
+    """
+    from .theme import generate_base_theme, generate_meta_yml
+
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+
+    click.echo("Creating a new PDF theme. Press Enter to accept defaults.\n")
+
+    org_name = click.prompt("Organisation name (used in page footer)", default="My Organisation")
+    primary  = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
+    accent   = _prompt_color("Accent colour   (h2, links, code borders)        ", "#2e86c1")
+    body_text = _prompt_color("Body text colour                                 ", "#1a1a2e")
+    muted    = _prompt_color("Muted text colour (h3, captions, footer)         ", "#5d6d7e")
+    body_font = click.prompt(
+        "Body font family",
+        default="'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+    )
+    mono_font = click.prompt(
+        "Monospace font   ",
+        default="'Consolas', 'Courier New', 'Liberation Mono', monospace",
+    )
+    page_size  = click.prompt("Page size", default="A4", type=click.Choice(["A4", "Letter"], case_sensitive=False))
+    cover_page = click.confirm("Include cover page by default?", default=True)
+
+    css = generate_base_theme(
+        org_name=org_name,
+        primary=primary,
+        accent=accent,
+        body_text=body_text,
+        muted=muted,
+        body_font=body_font,
+        mono_font=mono_font,
+        page_size=page_size.upper(),
+    )
+
+    css_path = directory / "_pdf-theme.css"
+    css_path.write_text(css, encoding="utf-8")
+    click.echo(f"\n  wrote {css_path}")
+
+    meta_path = directory / "_meta.yml"
+    if meta_path.exists():
+        click.echo(f"  skipped {meta_path}  (already exists)")
+    else:
+        meta_path.write_text(generate_meta_yml(org_name, cover_page), encoding="utf-8")
+        click.echo(f"  wrote {meta_path}")
+
+    click.echo("\nTheme created. Edit _pdf-theme.css to fine-tune.")
+
+
+@theme.command("override")
+@click.argument(
+    "directory",
+    default=".",
+    type=click.Path(file_okay=False, path_type=Path),
+)
+def theme_override(directory: Path) -> None:
+    """Generate a minimal colour-override _pdf-theme.css for a sub-folder.
+
+    Finds the nearest parent _pdf-theme.css automatically and writes an
+    @import + colour overrides only. Everything else is inherited.
+
+    \b
+    Examples:
+      md-doc theme override
+      md-doc theme override examples/blueshift/products/pulse/
+    """
+    from .theme import (
+        find_parent_theme,
+        generate_override_theme,
+        relative_import_path,
+        validate_hex_color,
+    )
+
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+
+    # Find parent theme
+    parent = find_parent_theme(directory)
+    if parent:
+        import_path = relative_import_path(directory, parent)
+        click.echo(f"  Found parent theme: {parent}")
+        click.echo(f"  Will import as:     {import_path}\n")
+    else:
+        click.echo("  No parent _pdf-theme.css found in ancestor directories.")
+        import_path = click.prompt("  Enter @import path manually", default="../_pdf-theme.css")
+
+    sub_name = click.prompt("Sub-brand name (used in page footer)", default="My Organisation — Sub Brand")
+    primary  = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
+    accent   = _prompt_color("Accent colour   (h2, links, code borders)        ", "#2e86c1")
+
+    css = generate_override_theme(
+        sub_name=sub_name,
+        import_path=import_path,
+        primary=primary,
+        accent=accent,
+    )
+
+    css_path = directory / "_pdf-theme.css"
+    css_path.write_text(css, encoding="utf-8")
+    click.echo(f"\n  wrote {css_path}")

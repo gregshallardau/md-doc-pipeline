@@ -17,7 +17,7 @@ Config keys consumed
   author       — author name shown on cover/footer  (default: "Document Producer")
   date         — date string for cover page          (default: today)
   pdf_theme    — path to CSS file, relative to repo root or absolute
-                  (default: themes/default/pdf-theme.css)
+                  (default: themes/default/_pdf-theme.css)
 """
 
 from __future__ import annotations
@@ -97,17 +97,19 @@ def _inject_appendix_breaks(md_content: str) -> str:
     return "\n".join(result)
 
 
-def _build_html(title: str, date_str: str, author: str, html_body: str, css_path: Path) -> str:
+def _build_html(
+    title: str,
+    date_str: str,
+    author: str,
+    html_body: str,
+    css_path: Path,
+    *,
+    cover_page: bool = True,
+) -> str:
     css_uri = css_path.as_uri()
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>{_escape_html(title)}</title>
-  <link rel="stylesheet" href="{css_uri}">
-</head>
-<body>
-
+    cover_html = ""
+    if cover_page:
+        cover_html = f"""
   <!-- COVER PAGE -->
   <div class="cover">
     <div class="cover-bar"></div>
@@ -125,7 +127,16 @@ def _build_html(title: str, date_str: str, author: str, html_body: str, css_path
       {_escape_html(author)} &nbsp;·&nbsp; Confidential
     </div>
   </div>
-
+"""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{_escape_html(title)}</title>
+  <link rel="stylesheet" href="{css_uri}">
+</head>
+<body>
+{cover_html}
   <!-- REPORT BODY -->
   <div class="report-body">
     <span class="running-date">{_escape_html(date_str)}</span>
@@ -145,8 +156,8 @@ def _resolve_css(
 
     Resolution order:
     1. ``pdf_theme`` config key (absolute path or relative to repo_root)
-    2. ``pdf-theme.css`` in each directory from doc_path up to repo_root (deepest wins)
-    3. ``themes/default/pdf-theme.css`` at repo root
+    2. ``_pdf-theme.css`` in each directory from doc_path up to repo_root (deepest wins)
+    3. ``themes/default/_pdf-theme.css`` at repo root
     4. Package-bundled default theme
 
     This mirrors the cascading behaviour of ``_meta.yml`` — a CSS file placed
@@ -160,7 +171,7 @@ def _resolve_css(
         if repo_root and (repo_root / p).exists():
             return (repo_root / p).resolve()
 
-    # Walk from doc_path up to repo_root looking for pdf-theme.css (deepest wins)
+    # Walk from doc_path up to repo_root looking for _pdf-theme.css (deepest wins)
     if doc_path is not None and repo_root is not None:
         doc_dir = doc_path.parent if doc_path.is_file() else doc_path
         try:
@@ -173,22 +184,22 @@ def _resolve_css(
         except ValueError:
             candidate_dirs = [doc_dir]
         for directory in candidate_dirs:
-            candidate = directory / "pdf-theme.css"
+            candidate = directory / "_pdf-theme.css"
             if candidate.exists():
                 return candidate.resolve()
 
-    # Fallback: repo-level themes/default/pdf-theme.css
-    if repo_root and (repo_root / "themes" / "default" / "pdf-theme.css").exists():
-        return (repo_root / "themes" / "default" / "pdf-theme.css").resolve()
+    # Fallback: repo-level themes/default/_pdf-theme.css
+    if repo_root and (repo_root / "themes" / "default" / "_pdf-theme.css").exists():
+        return (repo_root / "themes" / "default" / "_pdf-theme.css").resolve()
 
     # Package fallback: look relative to this file's location
-    pkg_default = Path(__file__).parent.parent.parent / "themes" / "default" / "pdf-theme.css"
+    pkg_default = Path(__file__).parent.parent.parent / "themes" / "default" / "_pdf-theme.css"
     if pkg_default.exists():
         return pkg_default.resolve()
 
     raise FileNotFoundError(
         "PDF theme CSS not found. Set 'pdf_theme' in _meta.yml or place "
-        "themes/default/pdf-theme.css at the repo root."
+        "themes/default/_pdf-theme.css at the repo root."
     )
 
 
@@ -232,7 +243,7 @@ def build(
         from out_path if not provided.
     doc_path:
         Optional path to the source .md file. When provided, enables nested
-        CSS resolution — a ``pdf-theme.css`` placed in any ancestor directory
+        CSS resolution — a ``_pdf-theme.css`` placed in any ancestor directory
         between the document and the repo root will be used (deepest wins).
     """
     out_path = Path(out_path).resolve()
@@ -247,14 +258,17 @@ def build(
     author: str = config.get("author", "Document Producer")
     date_str: str = config.get("date") or datetime.date.today().strftime("%-d %B %Y")
 
-    body = _strip_leading_h1(body)
+    cover_page: bool = bool(config.get("cover_page", True))
+
+    if cover_page:
+        body = _strip_leading_h1(body)
     body = _inject_appendix_breaks(body)
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html_body = md_engine.convert(body)
 
     css_path = _resolve_css(config, repo_root, doc_path=doc_path)
-    html = _build_html(title, date_str, author, html_body, css_path)
+    html = _build_html(title, date_str, author, html_body, css_path, cover_page=cover_page)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(str(out_path))

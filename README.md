@@ -64,7 +64,7 @@ my-docs/
 │   └── section-intro.md
 ├── themes/
 │   └── default/
-│       └── pdf-theme.css          # WeasyPrint CSS theme
+│       └── _pdf-theme.css          # WeasyPrint CSS theme
 ├── docs/
 │   └── projects/
 │       ├── _meta.yml              # Project-specific defaults (product, status)
@@ -228,10 +228,10 @@ The default PDF theme is a professional A4 layout with:
 - Running header/footer with page numbers
 - Tables, code blocks, blockquotes styled for print
 
-Place a custom CSS file at `themes/default/pdf-theme.css` in your repo root, or specify via `css_theme` in `_meta.yml`:
+Place a custom CSS file at `themes/default/_pdf-theme.css` in your repo root, or specify via `css_theme` in `_meta.yml`:
 
 ```yaml
-css_theme: themes/my-company/pdf-theme.css
+css_theme: themes/my-company/_pdf-theme.css
 ```
 
 ---
