@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from .config import load_config, get_output_formats
+from .config import load_config, get_output_formats, load_merge_fields
 from .renderer import render
 
 
@@ -68,11 +68,29 @@ def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ex
 
     If output_dir is given, mirror the source tree under it.
     Otherwise, write output alongside the source file.
+
+    ext can be either a standard suffix (e.g., ".pdf") or a stem+suffix like "-form.pdf"
     """
-    if output_dir is not None:
-        rel = doc_path.relative_to(root)
-        return output_dir / rel.with_suffix(ext)
-    return doc_path.with_suffix(ext)
+    # Handle special suffixes like "-form.pdf" that aren't simple extensions
+    if ext.startswith("-") and "." in ext:
+        # Extract the stem suffix and extension (e.g., "-form.pdf" -> "-form", "pdf")
+        stem_part, ext_part = ext.rsplit(".", 1)
+        # stem_part is "-form", ext_part is "pdf"
+        final_ext = "." + ext_part
+
+        if output_dir is not None:
+            rel = doc_path.relative_to(root)
+            new_name = rel.stem + stem_part + final_ext
+            return output_dir / rel.parent / new_name
+        else:
+            new_name = doc_path.stem + stem_part + final_ext
+            return doc_path.parent / new_name
+    else:
+        # Standard suffix handling
+        if output_dir is not None:
+            rel = doc_path.relative_to(root)
+            return output_dir / rel.with_suffix(ext)
+        return doc_path.with_suffix(ext)
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +171,11 @@ def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool
 
         # Build each format
         for format_name in formats:
-            out_path = _resolve_output_path(doc_path, root, output, f".{format_name}")
+            if format_name == "pdf" and config.get("pdf_forms"):
+                ext = "-form.pdf"
+            else:
+                ext = f".{format_name}"
+            out_path = _resolve_output_path(doc_path, root, output, ext)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
@@ -183,6 +205,67 @@ def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool
 
     if not dry_run:
         click.echo("Build complete.")
+
+
+# ---------------------------------------------------------------------------
+# lint
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def lint(root: Path) -> None:
+    """Lint all Markdown documents under ROOT for build errors.
+
+    Checks:
+      - Frontmatter YAML is valid
+      - outputs: values are recognised formats
+      - Jinja2 syntax is valid
+      - {{ variables }} exist in the config cascade (warning)
+      - {% include %} targets resolve (error)
+      - [[fields]] exist in _merge_fields.yml cascade (warning, if schema present)
+
+    Exits non-zero if any errors are found. Warnings are displayed but
+    do not affect the exit code.
+
+    \b
+    Examples:
+      md-doc lint
+      md-doc lint workspace/acme/
+    """
+    from .linter import lint_directory
+
+    root = Path(root).resolve()
+    results = lint_directory(root, repo_root=root)
+
+    if not results:
+        click.echo("No documents found." if not list(_discover_markdown(root)) else "All documents OK.")
+        return
+
+    error_count = 0
+    warning_count = 0
+
+    for doc_path, issues in sorted(results.items()):
+        try:
+            rel = doc_path.relative_to(root)
+        except ValueError:
+            rel = doc_path
+        for issue in issues:
+            marker = "ERROR" if issue.severity == "error" else "warn "
+            click.echo(f"  {marker}  {rel}: {issue.message}")
+            if issue.severity == "error":
+                error_count += 1
+            else:
+                warning_count += 1
+
+    parts = []
+    if error_count:
+        parts.append(f"{error_count} error(s)")
+    if warning_count:
+        parts.append(f"{warning_count} warning(s)")
+    click.echo(f"\n{', '.join(parts)}")
+
+    if error_count:
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +309,172 @@ def register(root: Path, output: Path | None, write_md: bool) -> None:
     click.echo(f"Register written to {json_path}")
     if write_md:
         click.echo(f"Markdown register written to {json_path.with_suffix('.md')}")
+
+
+# ---------------------------------------------------------------------------
+# fields
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("directory", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+def fields(directory: Path) -> None:
+    """List available [[merge fields]] at DIRECTORY level.
+
+    Shows all fields from the _merge_fields.yml cascade at this location,
+    grouped by the file they come from (shallowest to deepest).
+
+    \b
+    Examples:
+      md-doc fields
+      md-doc fields workspace/acme/
+      md-doc fields workspace/acme/clients/stormfront/
+    """
+    from .config import _find_repo_root, _load_yaml_file
+
+    directory = Path(directory).resolve()
+    repo_root = _find_repo_root(directory)
+
+    try:
+        rel = directory.relative_to(repo_root)
+        parts = [repo_root] + [repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)]
+    except ValueError:
+        parts = [directory]
+
+    found_any = False
+    for level_dir in parts:
+        field_file = level_dir / "_merge_fields.yml"
+        layer = _load_yaml_file(field_file)
+        if not layer:
+            continue
+        found_any = True
+        try:
+            label = field_file.relative_to(repo_root)
+        except ValueError:
+            label = field_file
+        click.echo(f"\n{label}")
+        click.echo("-" * len(str(label)))
+        for name, description in layer.items():
+            click.echo(f"  [[{name}]]  —  {description}")
+
+    if not found_any:
+        click.echo("No merge fields defined at this level or above.")
+        click.echo("Create a _merge_fields.yml file to define available [[fields]].")
+
+
+# ---------------------------------------------------------------------------
+# new
+# ---------------------------------------------------------------------------
+
+@main.group()
+def new() -> None:
+    """Scaffold new folders and documents."""
+
+
+@new.command("folder")
+@click.argument("name")
+@click.option(
+    "--in", "parent",
+    default=".",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Parent directory to create the folder in (default: current directory).",
+)
+def new_folder(name: str, parent: Path) -> None:
+    """Create a new project folder NAME with a starter _meta.yml.
+
+    NAME may be a relative path (e.g. clients/acme) — intermediate
+    directories are created automatically.
+
+    \b
+    Examples:
+      md-doc new folder clients/acme --in workspace/blueshift/
+      md-doc new folder products/pulse --in workspace/blueshift/
+    """
+    parent = Path(parent).resolve()
+    target = parent / name
+
+    if target.exists():
+        raise click.ClickException(f"{target} already exists.")
+
+    target.mkdir(parents=True)
+
+    # Load inherited config so we know what keys are already resolved
+    config = load_config(parent, repo_root=None)
+    inherited_keys = set(config.keys())
+
+    # Write a minimal _meta.yml — only prompt for keys not already inherited
+    meta_lines = ["# Add keys specific to this level.\n"]
+    meta_path = target / "_meta.yml"
+    meta_path.write_text("".join(meta_lines), encoding="utf-8")
+
+    click.echo(f"  created  {target}/")
+    click.echo(f"  created  {meta_path}")
+    if inherited_keys:
+        click.echo(f"\nInherited from parent config: {', '.join(sorted(inherited_keys))}")
+    click.echo("\nEdit _meta.yml to add keys specific to this level.")
+
+
+@new.command("doc")
+@click.argument("name")
+@click.option(
+    "--in", "parent",
+    default=".",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Directory to create the document in (default: current directory).",
+)
+def new_doc(name: str, parent: Path) -> None:
+    """Create a new Markdown document NAME.
+
+    Prompts for output format and cover page preference, then writes a
+    ready-to-edit .md file with correct frontmatter.
+
+    \b
+    Examples:
+      md-doc new doc proposal --in workspace/blueshift/clients/acme/
+      md-doc new doc q1-report --in workspace/blueshift/products/nova/
+    """
+    parent = Path(parent).resolve()
+
+    # Strip .md suffix if user included it
+    stem = name[:-3] if name.lower().endswith(".md") else name
+    doc_path = parent / f"{stem}.md"
+
+    if doc_path.exists():
+        raise click.ClickException(f"{doc_path} already exists.")
+
+    # Load cascade context so we can show inherited values
+    config = load_config(parent, repo_root=None)
+    available_fields = load_merge_fields(parent, repo_root=None)
+
+    click.echo(f"\nCreating {doc_path.name}\n")
+    if config:
+        click.echo("Inherited config: " + ", ".join(f"{k}={v!r}" for k, v in sorted(config.items())))
+    if available_fields:
+        click.echo("Available [[fields]]: " + ", ".join(f"[[{k}]]" for k in sorted(available_fields)))
+    click.echo()
+
+    fmt = click.prompt(
+        "Output format",
+        type=click.Choice(["pdf", "docx", "dotx"], case_sensitive=False),
+        default=config.get("outputs", ["pdf"])[0] if isinstance(config.get("outputs"), list) else config.get("outputs", "pdf"),
+    )
+    cover = click.confirm("Include cover page?", default=True)
+
+    title = stem.replace("-", " ").replace("_", " ").title()
+
+    frontmatter = (
+        f"---\n"
+        f"title: {title}\n"
+        f"outputs: [{fmt}]\n"
+        f"cover_page: {'true' if cover else 'false'}\n"
+        f"---\n"
+        f"\n"
+        f"# {title}\n"
+        f"\n"
+    )
+
+    doc_path.write_text(frontmatter, encoding="utf-8")
+    click.echo(f"\n  created  {doc_path}")
+    click.echo("\nEdit the file to add your content.")
 
 
 # ---------------------------------------------------------------------------
