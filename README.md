@@ -238,18 +238,32 @@ css_theme: themes/my-company/pdf-theme.css
 
 ## Development
 
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
+
 ```bash
 git clone https://github.com/blackdog308/md-doc-pipeline
 cd md-doc-pipeline
-pip install -e ".[dev]"
-pytest
+
+# Create venv, install all deps (including dev group) and the package itself
+uv sync --group dev
+
+# Run a command inside the venv
+uv run md-doc --help
 ```
 
 ### Running tests
 
 ```bash
-pytest                  # all tests
-pytest tests/test_renderer.py -v
+uv run pytest                        # all tests
+uv run pytest tests/test_renderer.py -v
+```
+
+### Linting / formatting
+
+```bash
+uv run ruff check .
+uv run black --check .
+uv run mypy md_doc/
 ```
 
 ---
