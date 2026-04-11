@@ -134,7 +134,7 @@ def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool
             try:
                 if format_name == "pdf":
                     from .builders.pdf import build as build_pdf  # type: ignore[import]
-                    build_pdf(rendered_md, config, out_path)
+                    build_pdf(rendered_md, config, out_path, doc_path=doc_path)
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx  # type: ignore[import]
                     build_docx(rendered_md, config, out_path)

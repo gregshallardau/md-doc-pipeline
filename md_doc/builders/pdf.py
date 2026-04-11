@@ -136,8 +136,22 @@ def _build_html(title: str, date_str: str, author: str, html_body: str, css_path
 </html>"""
 
 
-def _resolve_css(config: dict[str, Any], repo_root: Path | None) -> Path:
-    """Resolve the CSS theme path from config, repo root, or package default."""
+def _resolve_css(
+    config: dict[str, Any],
+    repo_root: Path | None,
+    doc_path: Path | None = None,
+) -> Path:
+    """Resolve the CSS theme path from config, nested project dirs, or package default.
+
+    Resolution order:
+    1. ``pdf_theme`` config key (absolute path or relative to repo_root)
+    2. ``pdf-theme.css`` in each directory from doc_path up to repo_root (deepest wins)
+    3. ``themes/default/pdf-theme.css`` at repo root
+    4. Package-bundled default theme
+
+    This mirrors the cascading behaviour of ``_meta.yml`` — a CSS file placed
+    next to (or near) a document overrides the repo-level default.
+    """
     theme_val = config.get("pdf_theme")
     if theme_val:
         p = Path(theme_val)
@@ -146,7 +160,24 @@ def _resolve_css(config: dict[str, Any], repo_root: Path | None) -> Path:
         if repo_root and (repo_root / p).exists():
             return (repo_root / p).resolve()
 
-    # Walk up from repo_root to find themes/default/pdf-theme.css
+    # Walk from doc_path up to repo_root looking for pdf-theme.css (deepest wins)
+    if doc_path is not None and repo_root is not None:
+        doc_dir = doc_path.parent if doc_path.is_file() else doc_path
+        try:
+            rel = doc_dir.relative_to(repo_root)
+            # All dirs from repo_root to doc_dir (inclusive), deepest first
+            candidate_dirs = [
+                repo_root / Path(*rel.parts[:i])
+                for i in range(len(rel.parts), 0, -1)
+            ]
+        except ValueError:
+            candidate_dirs = [doc_dir]
+        for directory in candidate_dirs:
+            candidate = directory / "pdf-theme.css"
+            if candidate.exists():
+                return candidate.resolve()
+
+    # Fallback: repo-level themes/default/pdf-theme.css
     if repo_root and (repo_root / "themes" / "default" / "pdf-theme.css").exists():
         return (repo_root / "themes" / "default" / "pdf-theme.css").resolve()
 
@@ -183,6 +214,7 @@ def build(
     out_path: Path,
     *,
     repo_root: Path | None = None,
+    doc_path: Path | None = None,
 ) -> None:
     """
     Convert rendered Markdown to a PDF file using WeasyPrint.
@@ -198,6 +230,10 @@ def build(
     repo_root:
         Optional repo root for resolving the CSS theme path. Auto-detected
         from out_path if not provided.
+    doc_path:
+        Optional path to the source .md file. When provided, enables nested
+        CSS resolution — a ``pdf-theme.css`` placed in any ancestor directory
+        between the document and the repo root will be used (deepest wins).
     """
     out_path = Path(out_path).resolve()
 
@@ -217,7 +253,7 @@ def build(
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html_body = md_engine.convert(body)
 
-    css_path = _resolve_css(config, repo_root)
+    css_path = _resolve_css(config, repo_root, doc_path=doc_path)
     html = _build_html(title, date_str, author, html_body, css_path)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

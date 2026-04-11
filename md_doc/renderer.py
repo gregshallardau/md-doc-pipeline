@@ -35,8 +35,9 @@ class _MarkdownLoader(BaseLoader):
 
     1. The document's own directory
     2. A ``templates/`` subdirectory inside the document's directory
-    3. A ``templates/`` subdirectory at the repo root
-    4. Any additional ``search_dirs`` supplied by the caller
+    3. ``templates/`` subdirectories in each ancestor directory (deepest first)
+    4. A ``templates/`` subdirectory at the repo root
+    5. Any additional ``search_dirs`` supplied by the caller
     """
 
     def __init__(self, search_dirs: list[Path]) -> None:
@@ -66,19 +67,36 @@ class _MarkdownLoader(BaseLoader):
 def _build_search_dirs(doc_path: Path, repo_root: Path) -> list[Path]:
     """Return ordered list of directories to search for included fragments.
 
-    Resolution order:
+    Resolution order (deepest/most-specific first):
     1. Document's own directory  ({% include "fragment.md" %})
     2. doc-local templates/ subdir  ({% include "templates/x.md" %} via local override)
-    3. repo root  ({% include "templates/fragment.md" %} resolves to repo_root/templates/...)
-    4. repo-root templates/ subdir  ({% include "fragment.md" %} falls back to shared)
+    3. templates/ subdirs in intermediate ancestor dirs (deepest first)
+    4. repo root  ({% include "templates/fragment.md" %} resolves to repo_root/templates/...)
+    5. repo-root templates/ subdir  ({% include "fragment.md" %} falls back to shared)
+
+    This mirrors the cascading behaviour of ``_meta.yml`` — deeper directories
+    take precedence over shallower ones, so a project-level ``templates/``
+    overrides the repo-level one.
     """
     doc_dir = doc_path.parent if doc_path.is_file() else doc_path
-    dirs: list[Path] = [
-        doc_dir,
-        doc_dir / "templates",
-        repo_root,
-        repo_root / "templates",
-    ]
+
+    # Collect intermediate ancestor dirs between repo_root and doc_dir (exclusive)
+    try:
+        rel = doc_dir.relative_to(repo_root)
+        # Parts from shallowest to deepest, not including repo_root or doc_dir itself
+        ancestor_dirs = [
+            repo_root / Path(*rel.parts[:i])
+            for i in range(1, len(rel.parts))
+        ]
+    except ValueError:
+        ancestor_dirs = []
+
+    dirs: list[Path] = [doc_dir, doc_dir / "templates"]
+    # Intermediate templates/ dirs, deepest first (override shallower ancestors)
+    for ancestor in reversed(ancestor_dirs):
+        dirs.append(ancestor / "templates")
+    dirs.extend([repo_root, repo_root / "templates"])
+
     return [d for d in dict.fromkeys(dirs)]  # deduplicate, preserve order
 
 

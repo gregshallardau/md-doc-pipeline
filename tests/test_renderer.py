@@ -124,3 +124,30 @@ class TestRender:
         doc.write_text("# Hello {{ name }}\n")
         result = render(doc, repo_root=tmp_repo, extra_context={"name": "World"})
         assert result == "# Hello World\n"
+
+    def test_nested_templates_intermediate_dir(self, tmp_repo):
+        """templates/ in an intermediate ancestor dir is found (deepest wins)."""
+        mid = tmp_repo / "products"
+        deep = mid / "renewals"
+        deep.mkdir(parents=True)
+        (mid / "templates").mkdir()
+        (mid / "templates" / "mid-header.md").write_text("## Mid Header\n")
+        doc = deep / "letter.md"
+        doc.write_text("{% include 'mid-header.md' %}\n# Body\n")
+        result = render(doc, repo_root=tmp_repo)
+        assert "## Mid Header" in result
+
+    def test_nested_templates_deeper_overrides_ancestor(self, tmp_repo):
+        """A templates/fragment.md closer to the document overrides the same name higher up."""
+        mid = tmp_repo / "products"
+        deep = mid / "renewals"
+        deep.mkdir(parents=True)
+        (mid / "templates").mkdir()
+        (mid / "templates" / "header.md").write_text("## Mid Header\n")
+        (deep / "templates").mkdir()
+        (deep / "templates" / "header.md").write_text("## Deep Header\n")
+        doc = deep / "letter.md"
+        doc.write_text("{% include 'header.md' %}\n# Body\n")
+        result = render(doc, repo_root=tmp_repo)
+        assert "## Deep Header" in result
+        assert "## Mid Header" not in result
