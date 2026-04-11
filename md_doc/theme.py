@@ -316,6 +316,57 @@ h2 + * { page-break-before: avoid; break-before: avoid; }
 table, figure, blockquote, pre { page-break-inside: avoid; }
 .appendix-template-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }
 .report-body h1 { page-break-before: always; break-before: page; }
+
+/* ============================================
+   FORM FIELDS
+   ============================================ */
+form {
+  display: block;
+}
+
+input[type="text"],
+input[type="date"],
+input[type="number"],
+input[type="email"],
+textarea,
+select {
+  appearance: auto;
+  display: inline-block;
+  width: 100%;
+  padding: 4pt 6pt;
+  margin: 2pt 0 8pt 0;
+  border: 1pt solid $muted;
+  border-radius: 2pt;
+  font-family: $body_font;
+  font-size: 10pt;
+  color: $body_text;
+  background: #fafafa;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: auto;
+  width: auto;
+  margin-right: 4pt;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 48pt;
+}
+
+input[type="submit"],
+button[type="submit"] {
+  appearance: auto;
+  display: inline-block;
+  padding: 6pt 18pt;
+  background: $primary;
+  color: white;
+  border: none;
+  border-radius: 2pt;
+  font-size: 10pt;
+  cursor: pointer;
+}
 """)
 
 
