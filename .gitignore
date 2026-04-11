@@ -18,6 +18,10 @@ register.json
 register.md
 register.csv
 
+# Workspace (document libraries are separate git repos)
+workspace/
+examples/*/  # individual example projects too
+
 # Editor
 .DS_Store
 *.swp
