@@ -28,14 +28,37 @@ from .renderer import render
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Directories never containing buildable documents
+_SKIP_DIRS = {
+    ".git", ".venv", "venv", ".tox",
+    "node_modules", "__pycache__", "site-packages",
+    "dist", "build", ".mypy_cache", ".ruff_cache",
+}
+
+# Well-known repo infrastructure files that are not documents
+_SKIP_FILES = {
+    "readme.md", "changelog.md", "license.md", "licence.md",
+    "claude.md", "contributing.md", "history.md", "authors.md",
+    "install.md", "security.md", "code_of_conduct.md",
+}
+
+
 def _discover_markdown(root: Path) -> list[Path]:
-    """Return all .md files under root, excluding _meta files and templates."""
+    """Return all buildable .md files under root.
+
+    Excludes:
+    - Files whose name starts with ``_`` (config/meta files)
+    - Files inside ``templates/`` or ``themes/`` directories
+    - Files inside dependency/tooling directories (.venv, node_modules, etc.)
+    - Well-known repo infrastructure files (README.md, CLAUDE.md, etc.)
+    """
     return sorted(
         p for p in root.rglob("*.md")
         if not p.name.startswith("_")
+        and p.name.lower() not in _SKIP_FILES
+        and not _SKIP_DIRS.intersection(p.parts)
         and "templates" not in p.parts
         and "themes" not in p.parts
-        and ".git" not in p.parts
     )
 
 

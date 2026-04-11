@@ -92,10 +92,14 @@ def _build_search_dirs(doc_path: Path, repo_root: Path) -> list[Path]:
         ancestor_dirs = []
 
     dirs: list[Path] = [doc_dir, doc_dir / "templates"]
-    # Intermediate templates/ dirs, deepest first (override shallower ancestors)
+    # Intermediate ancestor dirs, deepest first.
+    # Each ancestor is added both as-is (so "templates/x.md" resolves as
+    # ancestor/templates/x.md) and as its templates/ subdir (so "x.md"
+    # resolves as ancestor/templates/x.md directly).
     for ancestor in reversed(ancestor_dirs):
         dirs.append(ancestor / "templates")
-    dirs.extend([repo_root, repo_root / "templates"])
+        dirs.append(ancestor)
+    dirs.extend([repo_root / "templates", repo_root])
 
     return [d for d in dict.fromkeys(dirs)]  # deduplicate, preserve order
 
