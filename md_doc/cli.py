@@ -72,7 +72,7 @@ def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ex
     ext can be ".pdf", ".docx", etc., or "-form.pdf" for PDF forms.
     """
     # Handle "-form.pdf" style extensions that don't start with a dot
-    if ext.startswith("-"):
+    if ext.startswith("-") and "." in ext:
         stem_addition, file_ext = ext.rsplit(".", 1)
         file_ext = "." + file_ext
         if output_dir is not None:
