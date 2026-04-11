@@ -2,14 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repo layout
+
+```
+workspace/          ← all live client/company projects go here
+  acme/
+  blueshift/
+examples/           ← reference examples, not production documents
+md_doc/             ← pipeline source code
+tests/
+```
+
+Build a specific company: `md-doc build workspace/acme/`
+Build everything: `md-doc build workspace/`
+
+`md-doc build` without a path defaults to `.` (current directory) — run from a project folder or pass the path explicitly.
+
 ## Commands
 
 ```bash
 # Install dependencies (uses uv package manager)
 uv sync --group dev
 
-# CLI usage
-uv run md-doc build [PATH]       # Build PDFs/DOCX from Markdown
+# Build
+uv run md-doc build workspace/acme/          # one company
+uv run md-doc build workspace/               # all workspace projects
+uv run md-doc build workspace/acme/ --format dotx  # merge templates only
+
+# Theme
+uv run md-doc theme init workspace/acme/     # full branded theme
+uv run md-doc theme override workspace/acme/clients/stormfront/  # colour override
+
+# Other
 uv run md-doc sync [PATH]        # Push outputs to remote storage
 uv run md-doc register [PATH]    # Generate document registry
 
