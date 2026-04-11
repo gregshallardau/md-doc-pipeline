@@ -272,4 +272,5 @@ def build(
     html = _build_html(title, date_str, author, html_body, css_path, cover_page=cover_page)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(str(out_path))
+    wp_kwargs = {"pdf_forms": True} if config.get("pdf_forms") else {}
+    weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(str(out_path), **wp_kwargs)

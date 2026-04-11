@@ -1,10 +1,11 @@
 """Tests for the PDF builder — focused on CSS resolution."""
 
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from md_doc.builders.pdf import _resolve_css
+from md_doc.builders.pdf import _resolve_css, build as build_pdf
 
 
 @pytest.fixture()
@@ -85,3 +86,43 @@ class TestResolveCss:
         doc.write_text("# Report\n")
         result = _resolve_css({"pdf_theme": str(explicit_css)}, tmp_repo, doc_path=doc)
         assert result == explicit_css.resolve()
+
+
+class TestPdfFormsFlag:
+    def test_pdf_forms_true_passed_to_weasyprint(self, tmp_repo):
+        (tmp_repo / "_pdf-theme.css").write_text("body {}")
+        doc = tmp_repo / "form.md"
+        doc.write_text("# My Form\n")
+
+        mock_html_inst = MagicMock()
+        with patch("md_doc.builders.pdf.weasyprint") as mock_wp:
+            mock_wp.HTML.return_value = mock_html_inst
+            build_pdf(
+                "# My Form\n",
+                {"pdf_forms": True},
+                tmp_repo / "form-form.pdf",
+                repo_root=tmp_repo,
+                doc_path=doc,
+            )
+
+        _, kwargs = mock_html_inst.write_pdf.call_args
+        assert kwargs.get("pdf_forms") is True
+
+    def test_pdf_forms_not_passed_when_unset(self, tmp_repo):
+        (tmp_repo / "_pdf-theme.css").write_text("body {}")
+        doc = tmp_repo / "report.md"
+        doc.write_text("# My Report\n")
+
+        mock_html_inst = MagicMock()
+        with patch("md_doc.builders.pdf.weasyprint") as mock_wp:
+            mock_wp.HTML.return_value = mock_html_inst
+            build_pdf(
+                "# My Report\n",
+                {},
+                tmp_repo / "report.pdf",
+                repo_root=tmp_repo,
+                doc_path=doc,
+            )
+
+        _, kwargs = mock_html_inst.write_pdf.call_args
+        assert "pdf_forms" not in kwargs
