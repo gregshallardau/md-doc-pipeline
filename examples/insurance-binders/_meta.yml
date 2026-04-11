@@ -1,0 +1,7 @@
+author: Acme Insurance Brokers
+outputs: [pdf, docx]
+include_md_in_share: false
+sync_target: local
+sync_config:
+  path: /tmp/binder-outputs/
+css_theme: themes/default/pdf-theme.css

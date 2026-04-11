@@ -64,11 +64,19 @@ class _MarkdownLoader(BaseLoader):
 
 
 def _build_search_dirs(doc_path: Path, repo_root: Path) -> list[Path]:
-    """Return ordered list of directories to search for included fragments."""
+    """Return ordered list of directories to search for included fragments.
+
+    Resolution order:
+    1. Document's own directory  ({% include "fragment.md" %})
+    2. doc-local templates/ subdir  ({% include "templates/x.md" %} via local override)
+    3. repo root  ({% include "templates/fragment.md" %} resolves to repo_root/templates/...)
+    4. repo-root templates/ subdir  ({% include "fragment.md" %} falls back to shared)
+    """
     doc_dir = doc_path.parent if doc_path.is_file() else doc_path
     dirs: list[Path] = [
         doc_dir,
         doc_dir / "templates",
+        repo_root,
         repo_root / "templates",
     ]
     return [d for d in dict.fromkeys(dirs)]  # deduplicate, preserve order
