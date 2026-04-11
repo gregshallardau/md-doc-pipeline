@@ -1,0 +1,7 @@
+# Stormfront Inc — client-specific config
+# Overrides clients/_meta.yml which overrides root _meta.yml
+client: Stormfront Inc
+client_abn: 99 888 777 666
+client_contact: Jamie Rowe, Head of Engineering
+account_manager: Alex Chen
+status: final

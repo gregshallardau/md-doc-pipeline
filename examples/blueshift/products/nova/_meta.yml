@@ -1,0 +1,6 @@
+# Nova Analytics — product-specific config
+# Overrides products/_meta.yml which overrides root _meta.yml
+product: Nova Analytics
+version: "3.2"
+codename: Supernova
+support_email: nova-support@blueshift.io

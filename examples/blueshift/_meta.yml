@@ -1,0 +1,8 @@
+# Blueshift Labs — root config
+# All documents inherit these defaults unless overridden by nested _meta.yml
+author: Blueshift Labs
+outputs: [pdf]
+include_md_in_share: false
+sync_target: local
+sync_config:
+  path: /tmp/blueshift-outputs/

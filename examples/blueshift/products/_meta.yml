@@ -1,0 +1,4 @@
+# Products division — overrides root defaults
+# All product docs are versioned and carry a product disclaimer
+document_type: product_document
+status: current

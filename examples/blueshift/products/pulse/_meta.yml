@@ -1,0 +1,5 @@
+# Pulse Monitor — product-specific config
+product: Pulse Monitor
+version: "1.8"
+support_email: pulse-support@blueshift.io
+alert_email: alerts@blueshift.io

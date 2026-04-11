@@ -1,0 +1,4 @@
+# Client engagement docs — defaults for all client-facing documents
+document_type: client_document
+status: draft
+outputs: [pdf]
