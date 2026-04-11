@@ -62,24 +62,55 @@ All `_` prefixed files (`_meta.yml`, `_pdf-theme.css`, `_merge_fields.yml`) are 
 
 ---
 
-## Quick start
+## Getting Started
+
+### 1. Set up your first project
 
 ```bash
-# Set up a new company project
+# Create a branded project folder and theme
 md-doc theme init workspace/acme/
 
-# Build all documents under a project
+# Create your first document
+md-doc new doc proposal --in workspace/acme/
+
+# Build it
+cd workspace/acme/
+md-doc build
+```
+
+This generates `proposal.pdf` — a branded, professional document with cover page, headers, footers, and pagination.
+
+### 2. Choose your output format
+
+| Format | Best for | Features |
+|---|---|---|
+| **PDF** | Reports, proposals, final documents | Branded cover pages, custom themes, professional formatting |
+| **DOCX** | Documents to email or edit in Word | Editable format, preserves formatting, good for drafts |
+| **DOTX** | Mail merge templates, personalized letters | `[[field_name]]` becomes Word MERGEFIELD for bulk generation |
+| **PDF Forms** | Interactive surveys, intake forms, applications | `<input>`, `<select>`, `<textarea>` become fillable form fields |
+
+See the [Output Types Guide](docs/quickstart.md#output-types) for detailed examples of each format.
+
+### 3. Common commands
+
+```bash
+# Build all documents
 md-doc build workspace/acme/
 
-# Build a specific format only
-md-doc build workspace/acme/ --format dotx
+# Build only PDFs
+md-doc build workspace/acme/ --format pdf
 
-# Sync outputs to remote storage
-md-doc sync workspace/acme/
+# Check documents before building
+md-doc lint workspace/acme/
+
+# Sync to cloud storage
+md-doc sync workspace/acme/ --backend azure
 
 # Generate a document register
 md-doc register workspace/acme/
 ```
+
+**→ [Full Quickstart Guide](docs/quickstart.md)** — Installation, all output types, cascading config, Jinja2 variables, merge fields, PDF forms, troubleshooting, and more.
 
 ---
 
@@ -290,12 +321,26 @@ The `.dotx` file is ready to open in Word or pass to your merge system — all `
 ## CLI reference
 
 ```
+md-doc lint [ROOT]
+  ROOT                  Directory to lint (default: current directory)
+
 md-doc build [ROOT] [OPTIONS]
   ROOT                  Directory to build (default: current directory)
   -o, --output DIR      Mirror source tree under DIR instead of alongside source
   -f, --format          pdf | docx | dotx | all  (default: from outputs config)
   --strict              Fail on undefined Jinja2 variables
   --dry-run             Show what would be built without building
+
+md-doc new folder NAME [--in DIR]
+  NAME                  Relative path for the new folder (e.g. clients/acme)
+  --in DIR              Parent directory (default: current directory)
+
+md-doc new doc NAME [--in DIR]
+  NAME                  Document stem — creates NAME.md
+  --in DIR              Directory to create document in (default: current directory)
+
+md-doc fields [DIRECTORY]
+  DIRECTORY             Show all [[fields]] available at this level (default: current directory)
 
 md-doc theme init [DIR]
   DIR                   Directory to create _pdf-theme.css and _meta.yml in
