@@ -62,9 +62,7 @@ my-docs/
 │   ├── org-header.md
 │   ├── confidentiality-footer.md
 │   └── section-intro.md
-├── themes/
-│   └── default/
-│       └── _pdf-theme.css          # WeasyPrint CSS theme
+├── _pdf-theme.css                 # PDF theme (auto-generated on first build)
 ├── docs/
 │   └── projects/
 │       ├── _meta.yml              # Project-specific defaults (product, status)
@@ -228,10 +226,14 @@ The default PDF theme is a professional A4 layout with:
 - Running header/footer with page numbers
 - Tables, code blocks, blockquotes styled for print
 
-Place a custom CSS file at `themes/default/_pdf-theme.css` in your repo root, or specify via `css_theme` in `_meta.yml`:
+On first `md-doc build`, a default `_pdf-theme.css` is generated at your repo root.
+Run `md-doc theme init` to replace it with a branded theme, or place a `_pdf-theme.css`
+in any subdirectory to override the parent — the deepest one wins.
+
+To point to a specific file instead, use `pdf_theme` in `_meta.yml`:
 
 ```yaml
-css_theme: themes/my-company/_pdf-theme.css
+pdf_theme: path/to/custom/_pdf-theme.css
 ```
 
 ---

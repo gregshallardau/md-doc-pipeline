@@ -49,7 +49,7 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
 2. **Rendering** (`renderer.py`) — strips frontmatter (preserved verbatim), processes Markdown body through Jinja2. Template fragment search order: doc dir → `doc/templates/` → ancestor `templates/` dirs (deepest first) → repo-root `templates/`. A custom `_MarkdownLoader` handles `{% include %}` resolution.
 
 3. **Building** (`builders/`):
-   - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Resolves CSS theme with same cascading search (doc dir → ancestors → repo → bundled `themes/default/_pdf-theme.css`). Extracts first H1 as cover page title when `cover_page: true`.
+   - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Resolves CSS theme with same cascading search (doc dir → ancestors → repo root). If no `_pdf-theme.css` found anywhere, auto-generates one at repo root from built-in defaults. Extracts first H1 as cover page title when `cover_page: true`.
    - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use.
    - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word MERGEFIELD XML. Patches the saved file's ZIP content type from `.docx` → `.dotx`. For downstream mail merge use.
 
@@ -63,7 +63,7 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
 title, product, document_type, version, status, author
 outputs: [pdf, docx]          # default: [pdf]
 output_pdf: Custom-Name.pdf   # override output filename
-css_theme: themes/custom/theme.css
+pdf_theme: path/to/custom/_pdf-theme.css
 include_md_in_share: false
 sync_target: azure | s3 | local
 sync_config: { ... }          # backend-specific connection params

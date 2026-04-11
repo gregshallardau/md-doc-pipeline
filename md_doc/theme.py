@@ -1,7 +1,8 @@
 """
 PDF theme generation utilities.
 
-Used by ``md-doc theme init`` and ``md-doc theme override`` CLI commands.
+Used by ``md-doc theme init`` and ``md-doc theme override`` CLI commands,
+and by the PDF builder when no _pdf-theme.css exists in the project tree.
 """
 
 from __future__ import annotations
@@ -9,6 +10,27 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from string import Template
+
+
+# ---------------------------------------------------------------------------
+# Built-in defaults  (used when auto-generating on first build)
+# ---------------------------------------------------------------------------
+
+DEFAULTS = {
+    "org_name":   "My Organisation",
+    "primary":    "#1b4f72",
+    "accent":     "#2e86c1",
+    "body_text":  "#1a1a2e",
+    "muted":      "#5d6d7e",
+    "body_font":  "'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+    "mono_font":  "'Consolas', 'Courier New', 'Liberation Mono', monospace",
+    "page_size":  "A4",
+}
+
+
+def generate_default_theme() -> str:
+    """Return a complete _pdf-theme.css using built-in defaults."""
+    return generate_base_theme(**DEFAULTS)
 
 
 # ---------------------------------------------------------------------------

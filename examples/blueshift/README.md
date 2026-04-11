@@ -67,7 +67,7 @@ no deeper override exists.
 
 Pulse documents automatically pick up `products/pulse/_pdf-theme.css` (amber/orange
 palette) without any `pdf_theme` config key. All other documents fall through to
-the repo default at `themes/default/_pdf-theme.css` (blue palette).
+the repo-root default (blue palette), auto-generated on first build.
 
 ## Building
 

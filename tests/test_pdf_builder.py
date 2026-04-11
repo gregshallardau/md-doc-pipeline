@@ -28,13 +28,12 @@ class TestResolveCss:
         result = _resolve_css({"pdf_theme": "themes/custom/theme.css"}, tmp_repo)
         assert result == css.resolve()
 
-    def test_repo_default_theme_fallback(self, tmp_repo):
-        default_dir = tmp_repo / "themes" / "default"
-        default_dir.mkdir(parents=True)
-        css = default_dir / "_pdf-theme.css"
-        css.write_text("body {}")
+    def test_auto_generates_default_theme(self, tmp_repo):
+        """When no _pdf-theme.css exists anywhere, one is generated at the repo root."""
         result = _resolve_css({}, tmp_repo)
-        assert result == css.resolve()
+        generated = tmp_repo / "_pdf-theme.css"
+        assert generated.exists()
+        assert result == generated.resolve()
 
     def test_nested_css_in_doc_dir(self, tmp_repo):
         """_pdf-theme.css placed next to the document is picked up."""

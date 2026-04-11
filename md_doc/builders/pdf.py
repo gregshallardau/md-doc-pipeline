@@ -17,7 +17,7 @@ Config keys consumed
   author       — author name shown on cover/footer  (default: "Document Producer")
   date         — date string for cover page          (default: today)
   pdf_theme    — path to CSS file, relative to repo root or absolute
-                  (default: themes/default/_pdf-theme.css)
+                  (default: auto-generated _pdf-theme.css at repo root on first build)
 """
 
 from __future__ import annotations
@@ -152,16 +152,16 @@ def _resolve_css(
     repo_root: Path | None,
     doc_path: Path | None = None,
 ) -> Path:
-    """Resolve the CSS theme path from config, nested project dirs, or package default.
+    """Resolve the CSS theme path, auto-generating a default if none exists.
 
     Resolution order:
     1. ``pdf_theme`` config key (absolute path or relative to repo_root)
     2. ``_pdf-theme.css`` in each directory from doc_path up to repo_root (deepest wins)
-    3. ``themes/default/_pdf-theme.css`` at repo root
-    4. Package-bundled default theme
+    3. Auto-generate ``_pdf-theme.css`` at repo root on first build
 
     This mirrors the cascading behaviour of ``_meta.yml`` — a CSS file placed
     next to (or near) a document overrides the repo-level default.
+    Run ``md-doc theme init`` to replace the generated default with a branded theme.
     """
     theme_val = config.get("pdf_theme")
     if theme_val:
@@ -188,19 +188,20 @@ def _resolve_css(
             if candidate.exists():
                 return candidate.resolve()
 
-    # Fallback: repo-level themes/default/_pdf-theme.css
-    if repo_root and (repo_root / "themes" / "default" / "_pdf-theme.css").exists():
-        return (repo_root / "themes" / "default" / "_pdf-theme.css").resolve()
+    # Nothing found — generate a default _pdf-theme.css at the repo root
+    # (or alongside the document if there is no repo root) and inform the user.
+    generate_at = (repo_root if repo_root else (doc_path.parent if doc_path else Path.cwd()))
+    default_path = generate_at / "_pdf-theme.css"
 
-    # Package fallback: look relative to this file's location
-    pkg_default = Path(__file__).parent.parent.parent / "themes" / "default" / "_pdf-theme.css"
-    if pkg_default.exists():
-        return pkg_default.resolve()
+    from ..theme import generate_default_theme  # avoid circular import at module level
+    default_path.write_text(generate_default_theme(), encoding="utf-8")
 
-    raise FileNotFoundError(
-        "PDF theme CSS not found. Set 'pdf_theme' in _meta.yml or place "
-        "themes/default/_pdf-theme.css at the repo root."
+    logging.getLogger(__name__).warning(
+        "No _pdf-theme.css found — created default theme at %s. "
+        "Run 'md-doc theme init' to customise it.",
+        default_path,
     )
+    return default_path.resolve()
 
 
 def _find_repo_root(start: Path) -> Path:
