@@ -239,7 +239,7 @@ css_theme: themes/my-company/pdf-theme.css
 ## Development
 
 ```bash
-git clone <repo>
+git clone https://github.com/blackdog308/md-doc-pipeline
 cd md-doc-pipeline
 pip install -e ".[dev]"
 pytest
