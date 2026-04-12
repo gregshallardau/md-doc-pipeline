@@ -654,3 +654,57 @@ def theme_override(directory: Path) -> None:
     css_path = directory / "_pdf-theme.css"
     css_path.write_text(css, encoding="utf-8")
     click.echo(f"\n  wrote {css_path}")
+
+
+# ---------------------------------------------------------------------------
+# extract
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option(
+    "--dest",
+    type=str,
+    default="templates/",
+    help="Destination folder or path pattern for extracted Markdown. Default: templates/",
+)
+def extract(file_path: str, dest: str) -> None:
+    """
+    Extract Markdown from a PDF or DOCX file.
+
+    Converts a PDF or DOCX file to Markdown and saves it to the specified destination.
+    Output filename is derived from the source filename (with .md extension).
+
+    Examples:
+        md-doc extract proposal.pdf --dest templates/
+        md-doc extract contract.docx --dest snippets/
+        md-doc extract form.pdf  # defaults to templates/
+    """
+    from md_doc.extractors import extract_file
+
+    try:
+        # Extract content
+        markdown_content = extract_file(file_path)
+
+        # Resolve output path
+        source_path = Path(file_path)
+        dest_path = Path(dest)
+
+        # Create destination folder if it doesn't exist
+        dest_path.mkdir(parents=True, exist_ok=True)
+
+        # Output filename: source name with .md extension
+        output_name = source_path.stem + ".md"
+        output_file = dest_path / output_name
+
+        # Write extracted content
+        output_file.write_text(markdown_content, encoding="utf-8")
+
+        click.echo(f"✓ Extracted: {source_path.name} → {output_file}")
+
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise click.Exit(1)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise click.Exit(1)
