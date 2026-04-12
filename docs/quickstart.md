@@ -6,18 +6,22 @@ Get up and running with your first document in 10 minutes.
 
 ## Installation
 
-```bash
-# Install the pipeline
-pip install md-doc-pipeline
-
-# Optional: cloud sync support
-pip install "md-doc-pipeline[azure]"  # Azure File Share
-pip install "md-doc-pipeline[s3]"     # AWS S3
-```
-
 **Prerequisites:**
 - Python 3.11+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 - For PDF output: WeasyPrint system libraries. [Installation guide →](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation)
+
+```bash
+git clone https://github.com/blackdog308/md-doc-pipeline
+cd md-doc-pipeline
+
+# Create and activate virtual environment
+uv venv
+source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+
+# Install dependencies
+uv sync --group dev
+```
 
 ---
 

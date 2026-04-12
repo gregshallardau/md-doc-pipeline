@@ -9,6 +9,8 @@ build/
 .mypy_cache/
 .ruff_cache/
 .tox/
+.coverage
+.pytest_cache/
 
 # Generated build outputs
 *.pdf
@@ -24,3 +26,7 @@ workspace/
 # Editor
 .DS_Store
 *.swp
+
+# Auto-generated agent config
+AGENTS.md
+GEMINI.md
