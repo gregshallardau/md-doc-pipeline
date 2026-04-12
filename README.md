@@ -29,19 +29,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 - PDF generation requires WeasyPrint system libraries — see the [WeasyPrint docs](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation) for platform setup.
 
-### For end users (install from PyPI)
-
-```bash
-pip install md-doc-pipeline
-
-# Optional: Azure File Share sync
-pip install "md-doc-pipeline[azure]"
-
-# Optional: AWS S3 sync
-pip install "md-doc-pipeline[s3]"
-```
-
-### For development (work with source code)
+**Setup:**
 
 ```bash
 git clone https://github.com/blackdog308/md-doc-pipeline
