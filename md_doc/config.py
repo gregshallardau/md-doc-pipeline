@@ -141,6 +141,48 @@ def load_config(doc_path: Path, repo_root: Path | None = None) -> dict[str, Any]
     return merged
 
 
+def load_merge_fields(doc_path: Path, repo_root: Path | None = None) -> dict[str, Any]:
+    """
+    Build the merged ``[[field]]`` schema for *doc_path*.
+
+    Walks from repo root to the document's directory, loading each
+    ``_merge_fields.yml`` file it finds and merging them additively.
+    Deeper files override shallower ones when the same key appears.
+
+    Parameters
+    ----------
+    doc_path:
+        Path to the target Markdown file or its directory.
+    repo_root:
+        Optional repo root override.  Auto-detected if not supplied.
+
+    Returns
+    -------
+    dict
+        Mapping of field name → description string.
+    """
+    doc_path = Path(doc_path).resolve()
+    doc_dir = doc_path.parent if doc_path.is_file() else doc_path
+
+    if repo_root is None:
+        repo_root = _find_repo_root(doc_dir)
+    else:
+        repo_root = Path(repo_root).resolve()
+
+    try:
+        rel = doc_dir.relative_to(repo_root)
+        parts = [repo_root] + [repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)]
+    except ValueError:
+        parts = [doc_dir]
+
+    merged: dict[str, Any] = {}
+    for directory in parts:
+        layer = _load_yaml_file(directory / "_merge_fields.yml")
+        merged = _merge(merged, layer)
+
+    return merged
+
+
 def get_output_formats(config: dict[str, Any]) -> list[str]:
     """Return the list of output formats from config (defaults to ['pdf'])."""
     outputs = config.get("outputs", ["pdf"])
