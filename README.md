@@ -35,15 +35,21 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 git clone https://github.com/blackdog308/md-doc-pipeline
 cd md-doc-pipeline
 
-# Create and activate virtual environment
+# Linux / macOS
+./init.sh
+source .venv/bin/activate
+
+# Windows
+init.bat
+.venv\Scripts\activate
+```
+
+The init script checks prerequisites, creates the virtual environment, and installs all dependencies. Or do it manually:
+
+```bash
 uv venv
 source .venv/bin/activate  # on Windows: .venv\Scripts\activate
-
-# Install dependencies (like npm install / composer install)
 uv sync --group dev
-
-# Verify it works
-uv run md-doc --help
 ```
 
 ---
