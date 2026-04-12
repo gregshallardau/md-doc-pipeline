@@ -51,13 +51,29 @@ echo "Dependencies installed."
 
 # Install WeasyPrint system libraries (Linux only)
 if [[ "$(uname)" == "Linux" ]]; then
-    echo ""
-    if ! python3 -c "import weasyprint" &>/dev/null 2>&1; then
-        echo "Note: WeasyPrint system libraries may be needed for PDF generation."
-        echo "If PDF builds fail, run:"
-        echo "  sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0"
+    WEASY_OK=false
+    if .venv/bin/python -c "import weasyprint" 2>/dev/null; then
+        WEASY_OK=true
+    fi
+
+    if [ "$WEASY_OK" = false ]; then
         echo ""
-        echo "See: https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation"
+        echo "WeasyPrint needs system libraries for PDF generation."
+        echo "Packages: libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0"
+        echo ""
+        read -rp "Install them now? (requires sudo) [Y/n] " answer
+        answer=${answer:-Y}
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0
+            echo "WeasyPrint system libraries installed."
+        else
+            echo "Skipped. PDF builds may fail without these libraries."
+            echo "Install later with:"
+            echo "  sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0"
+        fi
+    else
+        echo ""
+        echo "WeasyPrint system libraries detected."
     fi
 fi
 
