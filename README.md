@@ -42,9 +42,8 @@ source .venv/bin/activate  # on Windows: .venv\Scripts\activate
 # Install dependencies (like npm install / composer install)
 uv sync --group dev
 
-# Run commands
+# Verify it works
 uv run md-doc --help
-uv run md-doc build workspace/acme/
 ```
 
 ---

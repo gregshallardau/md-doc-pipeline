@@ -115,7 +115,59 @@ def test_extract_file_not_found(tmp_path):
     ])
 
     assert result.exit_code != 0
-    assert "does not exist" in result.output.lower() or "not found" in result.output.lower()
+    assert "not found" in result.output.lower()
+
+
+def test_extract_refuses_overwrite_without_force(tmp_path):
+    """Extract should refuse to overwrite an existing file."""
+    (tmp_path / ".git").mkdir()
+
+    doc = Document()
+    doc.add_heading("Overwrite Test", 0)
+    source_docx = tmp_path / "existing.docx"
+    doc.save(str(source_docx))
+
+    dest_folder = tmp_path / "out"
+    dest_folder.mkdir()
+    existing_file = dest_folder / "existing.md"
+    existing_file.write_text("original content")
+
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "extract",
+        str(source_docx),
+        "--dest", str(dest_folder),
+    ])
+
+    assert result.exit_code != 0
+    assert "already exists" in result.output.lower()
+    assert existing_file.read_text() == "original content"
+
+
+def test_extract_overwrites_with_force(tmp_path):
+    """Extract should overwrite when --force is used."""
+    (tmp_path / ".git").mkdir()
+
+    doc = Document()
+    doc.add_heading("Force Overwrite", 0)
+    source_docx = tmp_path / "forceme.docx"
+    doc.save(str(source_docx))
+
+    dest_folder = tmp_path / "out"
+    dest_folder.mkdir()
+    existing_file = dest_folder / "forceme.md"
+    existing_file.write_text("old content")
+
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "extract",
+        str(source_docx),
+        "--dest", str(dest_folder),
+        "--force",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert existing_file.read_text() != "old content"
 
 
 def test_extract_default_destination_is_templates(tmp_path):

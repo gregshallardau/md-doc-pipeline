@@ -31,4 +31,4 @@ def extract_file(file_path: str) -> str:
     converter = MarkItDown()
     result = converter.convert(file_path)
 
-    return result.text_content
+    return result.text_content or ""
