@@ -145,6 +145,33 @@ def _keep_heading_with_next(html_body: str) -> str:
     return "".join(result)
 
 
+def _resolve_logo(logo_val: str | None, repo_root: Path | None, doc_path: Path | None) -> Path | None:
+    """Resolve header_logo to an absolute path, searching doc dir → ancestors → repo root."""
+    if not logo_val:
+        return None
+    p = Path(logo_val)
+    if p.is_absolute() and p.exists():
+        return p
+    search_dirs: list[Path] = []
+    if doc_path is not None:
+        doc_dir = doc_path.parent if doc_path.is_file() else doc_path
+        search_dirs.append(doc_dir)
+        if repo_root:
+            try:
+                rel = doc_dir.relative_to(repo_root)
+                for i in range(len(rel.parts) - 1, 0, -1):
+                    search_dirs.append(repo_root / Path(*rel.parts[:i]))
+            except ValueError:
+                pass
+    if repo_root:
+        search_dirs.append(repo_root)
+    for d in search_dirs:
+        candidate = d / logo_val
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
 def _build_html(
     title: str,
     date_str: str,
@@ -153,8 +180,19 @@ def _build_html(
     css_path: Path,
     *,
     cover_page: bool = True,
+    cover_label: str = "Report",
+    header_logo_uri: str | None = None,
+    header_logo_position: str = "right",
+    header_text: str | None = None,
+    header_text_position: str = "left",
 ) -> str:
     css_uri = css_path.as_uri()
+
+    header_style = _build_header_style(
+        header_logo_uri, header_logo_position,
+        header_text, header_text_position,
+    )
+
     cover_html = ""
     if cover_page:
         cover_html = f"""
@@ -163,7 +201,7 @@ def _build_html(
     <div class="cover-bar"></div>
     <div class="cover-stripe"></div>
     <div class="cover-content">
-      <p class="cover-label">Report</p>
+      <p class="cover-label">{_escape_html(cover_label)}</p>
       <h1 class="cover-title">{_escape_html(title)}</h1>
       <hr class="cover-divider">
       <p class="cover-meta">
@@ -182,6 +220,7 @@ def _build_html(
   <meta charset="utf-8">
   <title>{_escape_html(title)}</title>
   <link rel="stylesheet" href="{css_uri}">
+  {header_style}
 </head>
 <body>
 {cover_html}
@@ -193,6 +232,45 @@ def _build_html(
 
 </body>
 </html>"""
+
+
+_HEADER_POSITIONS = {"left": "@top-left", "center": "@top-center", "right": "@top-right"}
+
+
+def _build_header_style(
+    logo_uri: str | None,
+    logo_position: str,
+    text: str | None,
+    text_position: str,
+) -> str:
+    """Generate an inline <style> block for page header margin boxes."""
+    if not logo_uri and not text:
+        return ""
+    rules: list[str] = []
+    cover_overrides: list[str] = []
+
+    if logo_uri:
+        pos = _HEADER_POSITIONS.get(logo_position, "@top-right")
+        rules.append(f"  {pos} {{ content: url('{logo_uri}'); vertical-align: middle; }}")
+        cover_overrides.append(f"  {pos} {{ content: none; }}")
+
+    if text:
+        pos = _HEADER_POSITIONS.get(text_position, "@top-left")
+        rules.append(
+            f"  {pos} {{ content: '{_escape_html(text)}'; "
+            f"font-size: 8pt; color: #5d6d7e; vertical-align: middle; }}"
+        )
+        cover_overrides.append(f"  {pos} {{ content: none; }}")
+
+    lines = ["<style>", "@page {"]
+    lines.extend(rules)
+    lines.append("}")
+    if cover_overrides:
+        lines.append("@page cover {")
+        lines.extend(cover_overrides)
+        lines.append("}")
+    lines.append("</style>")
+    return "\n".join(lines)
 
 
 def _resolve_css(
@@ -306,8 +384,15 @@ def build(
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     author: str = config.get("author", "Document Producer")
     date_str: str = config.get("date") or datetime.date.today().strftime("%-d %B %Y")
+    cover_label: str = config.get("cover_label", "Report")
 
     cover_page: bool = bool(config.get("cover_page", True))
+
+    header_logo_path = _resolve_logo(config.get("header_logo"), repo_root, doc_path)
+    header_logo_uri = header_logo_path.as_uri() if header_logo_path else None
+    header_logo_position: str = config.get("header_logo_position", "right")
+    header_text: str | None = config.get("header_text")
+    header_text_position: str = config.get("header_text_position", "left")
 
     if cover_page:
         body = _strip_leading_h1(body)
@@ -317,7 +402,15 @@ def build(
     html_body = _keep_heading_with_next(md_engine.convert(body))
 
     css_path = _resolve_css(config, repo_root, doc_path=doc_path)
-    html = _build_html(title, date_str, author, html_body, css_path, cover_page=cover_page)
+    html = _build_html(
+        title, date_str, author, html_body, css_path,
+        cover_page=cover_page,
+        cover_label=cover_label,
+        header_logo_uri=header_logo_uri,
+        header_logo_position=header_logo_position,
+        header_text=header_text,
+        header_text_position=header_text_position,
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wp_kwargs = {"pdf_forms": True} if config.get("pdf_forms") else {}

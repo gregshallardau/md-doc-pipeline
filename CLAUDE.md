@@ -117,6 +117,12 @@ outputs: [pdf, docx]          # default: [pdf]
 output_pdf: Custom-Name.pdf   # override output filename
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
 pdf_theme: path/to/custom/_pdf-theme.css
+cover_page: true              # default true — set false to omit cover
+cover_label: Report           # text above the title on cover page (default: "Report")
+header_logo: assets/logo.png  # logo image in page header (resolved doc dir → ancestors → repo root)
+header_logo_position: right   # left | center | right (default: right)
+header_text: "Company Name"   # text in page header
+header_text_position: left    # left | center | right (default: left)
 include_md_in_share: false
 sync_target: azure | s3 | local
 sync_config: { ... }          # backend-specific connection params

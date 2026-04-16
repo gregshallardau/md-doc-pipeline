@@ -85,6 +85,33 @@ _BASE_TEMPLATE = Template(r"""/* PDF Theme — $org_name
   size: $page_size;
   margin: 25mm 20mm 22mm 25mm;
 
+  @top-left {
+    font-size: 8pt;
+    color: #5d6d7e;
+    font-family: $body_font;
+    border-bottom: 0.5pt solid #d5d8dc;
+    padding-bottom: 3pt;
+    vertical-align: middle;
+  }
+
+  @top-center {
+    font-size: 8pt;
+    color: #5d6d7e;
+    font-family: $body_font;
+    border-bottom: 0.5pt solid #d5d8dc;
+    padding-bottom: 3pt;
+    vertical-align: middle;
+  }
+
+  @top-right {
+    font-size: 8pt;
+    color: #5d6d7e;
+    font-family: $body_font;
+    border-bottom: 0.5pt solid #d5d8dc;
+    padding-bottom: 3pt;
+    vertical-align: middle;
+  }
+
   @bottom-left {
     content: "$org_name";
     font-size: 7.5pt;
@@ -115,6 +142,9 @@ _BASE_TEMPLATE = Template(r"""/* PDF Theme — $org_name
 
 @page cover {
   margin: 0;
+  @top-left    { content: none; border: none; }
+  @top-center  { content: none; border: none; }
+  @top-right   { content: none; border: none; }
   @bottom-left  { content: none; border: none; }
   @bottom-center { content: none; border: none; }
   @bottom-right { content: none; border: none; }

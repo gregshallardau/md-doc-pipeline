@@ -158,6 +158,12 @@ outputs: [pdf, dotx]              # pdf | docx | dotx — default: [pdf]
 output_pdf: Alpha-Report.pdf      # override output filename
 output_dotx: Alpha-Template.dotx
 cover_page: true                  # default true — set false to omit cover
+cover_label: Report               # text above cover title (default: "Report")
+
+header_logo: assets/logo.png      # logo in page header (resolved doc dir → repo root)
+header_logo_position: right       # left | center | right (default: right)
+header_text: "Acme Corp"          # text in page header
+header_text_position: left        # left | center | right (default: left)
 
 pdf_theme: path/to/_pdf-theme.css # explicit theme override (optional)
 include_md_in_share: false        # sync source .md files too?

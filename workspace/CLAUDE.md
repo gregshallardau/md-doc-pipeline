@@ -67,8 +67,13 @@ cover_page: true
 
 - **`outputs`** — `pdf`, `docx`, or `dotx`. Multiple: `[pdf, dotx]`
 - **`cover_page`** — `true` adds a branded cover; `false` starts with the body. Default is `true`
+- **`cover_label`** — text above the title on the cover page. Default: `"Report"`. Set to `"Concept"`, `"Proposal"`, etc.
 - **`document_type`** — informational label used in the document register
 - **`status`** — `draft`, `final`, or `superseded`
+- **`header_logo`** — path to a logo image for page headers (resolved from doc dir → ancestors → repo root)
+- **`header_logo_position`** — `left`, `center`, or `right`. Default: `right`
+- **`header_text`** — text shown in page header on every page
+- **`header_text_position`** — `left`, `center`, or `right`. Default: `left`
 
 Values already set in a parent `_meta.yml` don't need to be repeated here. Only set what's different or new for this specific document.
 
