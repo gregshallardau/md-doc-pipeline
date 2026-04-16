@@ -46,7 +46,7 @@ This plan covers **Phase 1 (CLI-only)** only. Phase 2 will be a separate feature
 
 Run:
 ```bash
-cd /home/user/md-doc-pipeline
+cd /path/to/md-doc-pipeline
 uv run pip show markitdown
 ```
 

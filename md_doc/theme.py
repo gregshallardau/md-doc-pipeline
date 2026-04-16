@@ -379,8 +379,11 @@ select {
 input[type="checkbox"],
 input[type="radio"] {
   appearance: auto;
-  width: auto;
+  width: 12pt;
+  height: 12pt;
+  display: inline-block;
   margin-right: 4pt;
+  vertical-align: middle;
 }
 
 textarea {
@@ -399,6 +402,38 @@ button[type="submit"] {
   border-radius: 2pt;
   font-size: 10pt;
   cursor: pointer;
+}
+
+/* Signature field */
+.signature-field {
+  margin: 8pt 0 12pt 0;
+  width: 60%;
+}
+
+.signature-input {
+  appearance: auto;
+  width: 100%;
+  height: 40pt;
+  border: none;
+  border-bottom: 1.5pt solid $body_text;
+  background: transparent;
+  font-family: 'Segoe Script', 'Bradley Hand', 'Brush Script MT', cursive;
+  font-size: 14pt;
+  padding: 4pt 0;
+  resize: none;
+}
+
+.signature-line {
+  border-top: 1pt solid $muted;
+  margin-top: -1pt;
+}
+
+.signature-label {
+  font-size: 7pt;
+  color: $muted;
+  text-transform: uppercase;
+  letter-spacing: 1pt;
+  margin-top: 2pt;
 }
 """)
 

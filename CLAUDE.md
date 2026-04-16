@@ -123,6 +123,21 @@ header_logo: assets/logo.png  # logo image in page header (resolved doc dir → 
 header_logo_position: right   # left | center | right (default: right)
 header_text: "Company Name"   # text in page header
 header_text_position: left    # left | center | right (default: left)
+section_bar: true              # coloured background bars on H1/H2 headings
+section_bar_color: "#2563eb"   # bar colour (default: "#2563eb")
+section_bar_text_on_bar: true  # true = white text on bar, false = border-top line
+section_bar_text_color: "#ffffff"  # text colour when text_on_bar is true
+section_bar_headings: "h1,h2" # which headings get bars (default: "h1,h2")
+page_header_bar: true          # solid coloured bar on every content page
+page_header_bar_color: "#2563eb"
+page_header_bar_text_color: "#ffffff"
+page_header_bar_height: "12mm"
+page_header_bar_padding: "6mm" # gap between bar and content
+page_header_bar_logo: path.png # single logo in bar (falls back to header_logo)
+page_header_bar_logo_position: right
+page_header_bar_logos:         # multi-logo: list of {path, position} objects
+  - path: logo.png
+    position: left
 include_md_in_share: false
 sync_target: azure | s3 | local
 sync_config: { ... }          # backend-specific connection params

@@ -74,6 +74,17 @@ cover_page: true
 - **`header_logo_position`** — `left`, `center`, or `right`. Default: `right`
 - **`header_text`** — text shown in page header on every page
 - **`header_text_position`** — `left`, `center`, or `right`. Default: `left`
+- **`section_bar`** — `true` to add coloured background bars on H1/H2 headings
+- **`section_bar_color`** — bar colour. Default: `"#2563eb"`
+- **`section_bar_text_on_bar`** — `true` for white text on coloured bar, `false` for border-top line mode. Default: `true`
+- **`section_bar_text_color`** — text colour when text_on_bar is true. Default: `"#ffffff"`
+- **`section_bar_headings`** — comma-separated heading tags to style. Default: `"h1,h2"`
+- **`page_header_bar`** — `true` to add a solid coloured bar on every content page (not cover)
+- **`page_header_bar_color`** — bar colour. Default: `"#2563eb"`
+- **`page_header_bar_text_color`** — text colour inside the bar. Default: `"#ffffff"`
+- **`page_header_bar_height`** — bar height. Default: `"12mm"`
+- **`page_header_bar_padding`** — gap between bar and content. Default: `"6mm"`
+- **`page_header_bar_logos`** — list of `{path, position}` objects for multi-logo support
 
 Values already set in a parent `_meta.yml` don't need to be repeated here. Only set what's different or new for this specific document.
 
