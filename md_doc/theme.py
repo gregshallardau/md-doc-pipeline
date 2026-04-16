@@ -313,6 +313,9 @@ dd { margin-left: 14pt; margin-bottom: 4pt; color: $body_text; }
 img { max-width: 100%; height: auto; display: block; margin: 8pt auto 12pt auto; page-break-inside: avoid; }
 h1 + * { page-break-before: avoid; break-before: avoid; }
 h2 + * { page-break-before: avoid; break-before: avoid; }
+h3 + * { page-break-before: avoid; break-before: avoid; }
+h4 + * { page-break-before: avoid; break-before: avoid; }
+.keep-with-next { page-break-inside: avoid; break-inside: avoid; }
 table, figure, blockquote, pre { page-break-inside: avoid; }
 .appendix-template-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }
 .report-body h1 { page-break-before: always; break-before: page; }

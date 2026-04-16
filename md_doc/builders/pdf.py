@@ -97,6 +97,54 @@ def _inject_appendix_breaks(md_content: str) -> str:
     return "\n".join(result)
 
 
+_BLOCK_TAG = r"(?:p|pre|ul|ol|table|blockquote|div|dl)"
+_BLOCK_RE = re.compile(
+    rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL
+)
+
+
+def _keep_heading_with_next(html_body: str) -> str:
+    """Wrap each heading + up to two following block elements in a keep-together div.
+
+    WeasyPrint can ignore CSS break-after:avoid on headings when the next
+    element is large.  Wrapping both in a container with break-inside:avoid
+    forces them onto the same page.  We grab up to two siblings to handle
+    the common pattern: heading → short intro paragraph → code/table block.
+    """
+    heading_re = re.compile(r"(<h[2-4][^>]*>.*?</h[2-4]>)", re.DOTALL)
+    parts = heading_re.split(html_body)
+    result: list[str] = []
+
+    i = 0
+    while i < len(parts):
+        if heading_re.fullmatch(parts[i]):
+            heading = parts[i]
+            tail = parts[i + 1] if i + 1 < len(parts) else ""
+            blocks = _BLOCK_RE.findall(tail)
+            if len(blocks) >= 2:
+                keep = blocks[0] + blocks[1]
+                rest = tail[tail.index(blocks[0]) + len(blocks[0]) + tail[tail.index(blocks[0]) + len(blocks[0]):].index(blocks[1]) + len(blocks[1]):]
+                before = tail[:tail.index(blocks[0])]
+                result.append(before)
+                result.append(f'<div class="keep-with-next">{heading}{blocks[0]}{blocks[1]}</div>')
+                result.append(rest)
+            elif len(blocks) == 1:
+                before = tail[:tail.index(blocks[0])]
+                after = tail[tail.index(blocks[0]) + len(blocks[0]):]
+                result.append(before)
+                result.append(f'<div class="keep-with-next">{heading}{blocks[0]}</div>')
+                result.append(after)
+            else:
+                result.append(heading)
+                result.append(tail)
+            i += 2
+        else:
+            result.append(parts[i])
+            i += 1
+
+    return "".join(result)
+
+
 def _build_html(
     title: str,
     date_str: str,
@@ -266,7 +314,7 @@ def build(
     body = _inject_appendix_breaks(body)
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
-    html_body = md_engine.convert(body)
+    html_body = _keep_heading_with_next(md_engine.convert(body))
 
     css_path = _resolve_css(config, repo_root, doc_path=doc_path)
     html = _build_html(title, date_str, author, html_body, css_path, cover_page=cover_page)
