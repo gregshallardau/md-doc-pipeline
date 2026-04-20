@@ -32,6 +32,7 @@ uv run md-doc lint workspace/                # lint everything
 uv run md-doc build workspace/acme/          # one company
 uv run md-doc build workspace/               # all workspace projects
 uv run md-doc build workspace/acme/ --format dotx  # merge templates only
+uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
 
 # Scaffold
 uv run md-doc new folder clients/acme --in workspace/blueshift/  # new folder + _meta.yml
@@ -43,6 +44,11 @@ uv run md-doc fields workspace/blueshift/clients/acme/  # show available [[field
 # Theme
 uv run md-doc theme init workspace/acme/     # full branded theme
 uv run md-doc theme override workspace/acme/clients/stormfront/  # colour override
+
+# Export (scan for export: true in frontmatter, build, collect outputs)
+uv run md-doc export /path/to/vault              # scan vault, output to vault/Exports/
+uv run md-doc export /path/to/vault -o /output   # custom output directory
+uv run md-doc export /path/to/vault --dry-run    # show what would be exported
 
 # Other
 uv run md-doc sync [PATH]        # Push outputs to remote storage
@@ -117,6 +123,7 @@ outputs: [pdf, docx]          # default: [pdf]
 output_pdf: Custom-Name.pdf   # override output filename
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
 pdf_theme: path/to/custom/_pdf-theme.css
+                               # also available as CLI flag: --theme / -t
 cover_page: true              # default true — set false to omit cover
 cover_label: Report           # text above the title on cover page (default: "Report")
 header_logo: assets/logo.png  # logo image in page header (resolved doc dir → ancestors → repo root)

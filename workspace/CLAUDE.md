@@ -134,6 +134,7 @@ uv run md-doc lint workspace/acme/
 # Build
 uv run md-doc build workspace/acme/
 uv run md-doc build workspace/acme/ --format dotx
+uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
 
 # See available merge fields at a folder level
 uv run md-doc fields workspace/acme/clients/stormfront/

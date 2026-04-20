@@ -3,6 +3,7 @@ md-doc CLI entrypoint.
 
 Commands:
   md-doc build [ROOT] [--output DIR] [--format pdf|docx|dotx|all]
+  md-doc export [SOURCE] [--output DIR] [--format pdf|docx|dotx|all]
   md-doc register [ROOT]
   md-doc sync [ROOT] [--backend azure|s3|local]
   md-doc theme init [DIR]
@@ -118,9 +119,15 @@ def main() -> None:
     type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
     help="Output format(s). Overrides per-document 'outputs' config when set explicitly.",
 )
+@click.option(
+    "--theme", "-t",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to a _pdf-theme.css file. Overrides the normal theme cascade for this build.",
+)
 @click.option("--strict", is_flag=True, default=False, help="Fail on undefined Jinja2 variables.")
 @click.option("--dry-run", is_flag=True, default=False, help="Print what would be built without building.")
-def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool) -> None:
+def build(root: Path, output: Path | None, fmt: str, theme: Path | None, strict: bool, dry_run: bool) -> None:
     """Build all Markdown documents under ROOT to PDF and/or DOCX.
 
     ROOT defaults to the current directory.
@@ -146,6 +153,9 @@ def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool
 
     for doc_path in docs:
         config = load_config(doc_path, repo_root=root)
+
+        if theme is not None:
+            config["pdf_theme"] = str(theme.resolve())
 
         # Determine formats for this document
         if fmt == "all":
@@ -202,6 +212,146 @@ def build(root: Path, output: Path | None, fmt: str, strict: bool, dry_run: bool
 
     if not dry_run:
         click.echo("Build complete.")
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("source", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "--output", "-o",
+    default=None,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Destination directory for built outputs. Defaults to SOURCE/Exports/.",
+)
+@click.option(
+    "--format", "-f", "fmt",
+    default="all",
+    type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
+    help="Output format(s). Defaults to per-document 'export_format' or 'pdf'.",
+)
+@click.option("--tag", "-t", "tags", multiple=True, help="Only export notes with this tag. Repeatable.")
+@click.option("--no-symlinks", is_flag=True, default=False, help="Copy files instead of symlinking.")
+@click.option("--dry-run", is_flag=True, default=False, help="Show what would be exported without building.")
+def export(source: Path, output: Path | None, fmt: str, tags: tuple[str, ...], no_symlinks: bool, dry_run: bool) -> None:
+    """Scan SOURCE for Markdown files with ``export: true`` and build them.
+
+    Searches SOURCE recursively for any .md file with ``export: true`` in
+    its YAML frontmatter. Notes with ``draft: true`` are skipped. Use --tag
+    to filter by tags.
+
+    Matching files are staged into an internal workspace, built to the
+    requested format(s), and outputs are copied to the destination.
+
+    \b
+    Examples:
+      md-doc export /mnt/NAS/Obsidian/MyVault
+      md-doc export /mnt/NAS/Obsidian/MyVault --output /mnt/NAS/Exports
+      md-doc export /mnt/NAS/Obsidian/MyVault --tag cheatsheet
+      md-doc export . --format pdf --dry-run
+    """
+    from .exporter import find_exportable, stage_files, collect_outputs
+
+    source = source.resolve()
+    dest = (output or source / "Exports").resolve()
+
+    # Scan for exportable notes
+    tag_list = list(tags) if tags else None
+    exportable = find_exportable(source, tags=tag_list)
+    if not exportable:
+        click.echo(f"No Markdown files with 'export: true' found under {source}")
+        sys.exit(0)
+
+    click.echo(f"Found {len(exportable)} exportable note(s):")
+    for f, fm in exportable:
+        try:
+            rel = f.relative_to(source)
+        except ValueError:
+            rel = f
+        export_path = fm.get("export_path")
+        suffix = f"  → {export_path}/" if export_path else ""
+        click.echo(f"  {rel}{suffix}")
+
+    if dry_run:
+        click.echo(f"\nWould export to: {dest}")
+        return
+
+    # Stage into a temporary workspace inside the pipeline
+    pipeline_root = Path(__file__).resolve().parent.parent
+    staging_dir = pipeline_root / "workspace" / "obsidian-exports" / "docs"
+
+    staged = stage_files(exportable, staging_dir, use_symlinks=not no_symlinks)
+    click.echo(f"\nStaged {len(staged)} file(s) for build.")
+
+    # Build using the same logic as the build command
+    errors: list[str] = []
+    for doc_path, fm in staged:
+        config = load_config(doc_path, repo_root=staging_dir)
+
+        # Determine formats: CLI flag > frontmatter export_format > outputs > pdf
+        if fmt == "all":
+            export_fmt = fm.get("export_format") or config.get("export_format")
+            if export_fmt:
+                formats = [export_fmt] if isinstance(export_fmt, str) else export_fmt
+            else:
+                formats = get_output_formats(config)
+        else:
+            formats = [fmt]
+
+        click.echo(f"  {doc_path.name}  →  {', '.join(formats)}")
+
+        try:
+            rendered_md = render(doc_path, repo_root=staging_dir, strict=False)
+        except Exception as exc:
+            click.echo(f"    [ERROR] render failed: {exc}", err=True)
+            errors.append(str(doc_path))
+            continue
+
+        for format_name in formats:
+            if format_name == "pdf" and config.get("pdf_forms"):
+                ext = "-form.pdf"
+            else:
+                ext = f".{format_name}"
+            out_path = _resolve_output_path(doc_path, staging_dir, None, ext)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                if format_name == "pdf":
+                    from .builders.pdf import build as build_pdf
+                    build_pdf(rendered_md, config, out_path, doc_path=doc_path)
+                elif format_name == "docx":
+                    from .builders.docx import build as build_docx
+                    build_docx(rendered_md, config, out_path)
+                elif format_name == "dotx":
+                    from .builders.dotx import build as build_dotx
+                    build_dotx(rendered_md, config, out_path, doc_path=doc_path)
+                else:
+                    click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
+                    continue
+                click.echo(f"    built {out_path.name}")
+            except ImportError as exc:
+                click.echo(f"    [ERROR] builder not available for '{format_name}': {exc}", err=True)
+                errors.append(str(doc_path))
+            except Exception as exc:
+                click.echo(f"    [ERROR] build failed ({format_name}): {exc}", err=True)
+                errors.append(str(doc_path))
+
+    # Collect outputs to destination, preserving folder structure
+    copied = collect_outputs(staging_dir, dest, source, staged, exportable)
+    click.echo(f"\n{len(copied)} output(s) exported to {dest}")
+    for p in copied:
+        try:
+            click.echo(f"  {p.relative_to(dest)}")
+        except ValueError:
+            click.echo(f"  {p}")
+
+    if errors:
+        click.echo(f"{len(errors)} error(s) — check output above.", err=True)
+        sys.exit(1)
+
+    click.echo("Export complete.")
 
 
 # ---------------------------------------------------------------------------

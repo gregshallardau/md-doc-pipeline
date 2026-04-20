@@ -351,11 +351,14 @@ def _build_cover(
     date_str: str,
     cover_cfg: dict[str, Any],
     logo_uri: str | None,
+    bar_logo_uri: str | None = None,
 ) -> str:
     """Build a composable cover page from individual element config keys."""
     label = cover_cfg.get("cover_label", "Report")
     text_align = cover_cfg.get("cover_text_align", "left")
     bg = cover_cfg.get("cover_background", "white")
+    meta_label = cover_cfg.get("cover_meta_label", "Prepared by")
+    meta_author = cover_cfg.get("cover_meta_author", author)
     footer_text = cover_cfg.get("cover_footer_text") or f"{author}  ·  Confidential"
     show_footer = cover_cfg.get("cover_footer", True)
     show_footer_line = cover_cfg.get("cover_footer_line", True)
@@ -408,7 +411,7 @@ def _build_cover(
       <h1 class="cover-title">{_escape_html(title)}</h1>
       {divider_html}
       <p class="cover-meta">
-        <strong>Prepared by</strong> {_escape_html(author)}<br>
+        <strong>{_escape_html(meta_label)}</strong> {_escape_html(meta_author)}<br>
         <strong>Date</strong> {_escape_html(date_str)}
       </p>
     </div>"""
@@ -424,11 +427,21 @@ def _build_cover(
     {stripe_html}
 {content_block}"""
 
+    bar_logo_html = f'<img class="cover-bar-logo" src="{bar_logo_uri}">' if bar_logo_uri else ""
+
     has_bottom_bar = show_bar and bar_pos in ("bottom", "both")
     if has_bottom_bar and show_footer:
         bottom_section = f"""\
     <div class="cover-bar cover-bar-bottom cover-bar-footer" style="height: {bar_bottom_height};">
+      <div class="cover-bar-decor"></div>
       {footer_inner}
+      {bar_logo_html}
+    </div>"""
+    elif has_bottom_bar and bar_logo_html:
+        bottom_section = f"""\
+    <div class="cover-bar cover-bar-bottom" style="height: {bar_bottom_height};">
+      <div class="cover-bar-decor"></div>
+      {bar_logo_html}
     </div>"""
     else:
         bottom_section = f"    {bar_bottom}\n    {footer_inner}"
@@ -451,6 +464,7 @@ def _build_html(
     cover_page: bool = True,
     cover_cfg: dict[str, Any] | None = None,
     cover_logo_uri: str | None = None,
+    cover_bar_logo_uri: str | None = None,
     header_logo_uri: str | None = None,
     header_logo_position: str = "right",
     header_text: str | None = None,
@@ -477,7 +491,7 @@ def _build_html(
 
     cover_html = ""
     if cover_page:
-        cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri)}"
+        cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri)}"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -736,14 +750,14 @@ def _resolve_css(
     generate_at = (repo_root if repo_root else (doc_path.parent if doc_path else Path.cwd()))
     default_path = generate_at / "_pdf-theme.css"
 
-    from ..theme import generate_default_theme  # avoid circular import at module level
-    default_path.write_text(generate_default_theme(), encoding="utf-8")
-
-    logging.getLogger(__name__).warning(
-        "No _pdf-theme.css found — created default theme at %s. "
-        "Run 'md-doc theme init' to customise it.",
-        default_path,
-    )
+    if not default_path.exists():
+        from ..theme import generate_default_theme  # avoid circular import at module level
+        default_path.write_text(generate_default_theme(), encoding="utf-8")
+        logging.getLogger(__name__).warning(
+            "No _pdf-theme.css found — created default theme at %s. "
+            "Run 'md-doc theme init' to customise it.",
+            default_path,
+        )
     return default_path.resolve()
 
 
@@ -807,6 +821,9 @@ def build(
     cover_logo_path = _resolve_logo(config.get("cover_logo"), repo_root, doc_path)
     cover_logo_uri = cover_logo_path.as_uri() if cover_logo_path else None
 
+    cover_bar_logo_path = _resolve_logo(config.get("cover_bar_logo"), repo_root, doc_path)
+    cover_bar_logo_uri = cover_bar_logo_path.as_uri() if cover_bar_logo_path else None
+
     header_logo_path = _resolve_logo(config.get("header_logo"), repo_root, doc_path)
     header_logo_uri = header_logo_path.as_uri() if header_logo_path else None
     header_logo_position: str = config.get("header_logo_position", "right")
@@ -848,7 +865,13 @@ def build(
     body = _expand_form_fields(body, is_form)
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
-    html_body = _keep_heading_with_next(md_engine.convert(body))
+    html_body = md_engine.convert(body)
+
+    # Render Mermaid flowchart blocks to inline SVGs
+    from ..mermaid import process_html as _process_mermaid
+    html_body = _process_mermaid(html_body)
+
+    html_body = _keep_heading_with_next(html_body)
 
     css_path = _resolve_css(config, repo_root, doc_path=doc_path)
     html = _build_html(
@@ -856,6 +879,7 @@ def build(
         cover_page=cover_page,
         cover_cfg=config,
         cover_logo_uri=cover_logo_uri,
+        cover_bar_logo_uri=cover_bar_logo_uri,
         header_logo_uri=header_logo_uri,
         header_logo_position=header_logo_position,
         header_text=header_text,
