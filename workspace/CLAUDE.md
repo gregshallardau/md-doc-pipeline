@@ -68,6 +68,24 @@ cover_page: true
 - **`outputs`** — `pdf`, `docx`, or `dotx`. Multiple: `[pdf, dotx]`
 - **`cover_page`** — `true` adds a branded cover; `false` starts with the body. Default is `true`
 - **`cover_label`** — text above the title on the cover page. Default: `"Report"`. Set to `"Concept"`, `"Proposal"`, etc.
+- **`cover_text_align`** — `left` or `right`. Default: `"left"`
+- **`cover_background`** — cover page background colour. Default: `"white"`
+- **`cover_divider`** — show horizontal rule under title. Default: `true`
+- **`cover_meta_label`** — label before the author name on cover. Default: `"Prepared by"`
+- **`cover_meta_author`** — override the author name shown on cover only. Default: inherits `author`
+- **`cover_bar`** — show coloured bar(s) on cover. Default: `true`
+- **`cover_bar_position`** — `top`, `bottom`, or `both`. Default: `"top"`
+- **`cover_bar_height`** — bar height. Default: `"10mm"`
+- **`cover_bar_top_height`** — top bar height (overrides `cover_bar_height`). Default: same as `cover_bar_height`
+- **`cover_bar_bottom_height`** — bottom bar height (overrides `cover_bar_height`). Default: same as `cover_bar_height`
+- **`cover_bar_logo`** — logo image inside the cover bar (resolved like `header_logo`)
+- **`cover_text_on_bar`** — `true` to place cover content inside the top bar. Default: `false`
+- **`cover_stripe`** — vertical accent stripe on cover. Default: `false`
+- **`cover_stripe_height`** — stripe height. Default: `"120mm"`
+- **`cover_stripe_width`** — stripe width. Default: `"6mm"`
+- **`cover_footer_text`** — footer text on cover. Default: `"{author} · Confidential"`. Supports `\n` for line breaks
+- **`cover_footer_line`** — show border-top line on footer. Default: `true`
+- **`cover_footer_color`** — footer text colour
 - **`document_type`** — informational label used in the document register
 - **`status`** — `draft`, `final`, or `superseded`
 - **`header_logo`** — path to a logo image for page headers (resolved from doc dir → ancestors → repo root)
@@ -84,6 +102,8 @@ cover_page: true
 - **`page_header_bar_text_color`** — text colour inside the bar. Default: `"#ffffff"`
 - **`page_header_bar_height`** — bar height. Default: `"12mm"`
 - **`page_header_bar_padding`** — gap between bar and content. Default: `"6mm"`
+- **`page_header_bar_logo`** — single logo in the page header bar (falls back to `header_logo`)
+- **`page_header_bar_logo_position`** — `left`, `center`, or `right`. Default: `right`
 - **`page_header_bar_logos`** — list of `{path, position}` objects for multi-logo support
 
 Values already set in a parent `_meta.yml` don't need to be repeated here. Only set what's different or new for this specific document.
@@ -157,6 +177,21 @@ uv run md-doc theme override workspace/acme/products/pulse/
 - Recipient-specific data in `.dotx` documents always uses `[[field]]` syntax
 - For `.dotx` files, set `cover_page: false` unless the template genuinely needs one
 - Run `md-doc lint` before `md-doc build` — it catches broken variables, missing includes, and undefined fields without invoking WeasyPrint
+
+---
+
+## Mermaid Diagrams
+
+Fenced `mermaid` code blocks are automatically rendered to inline SVGs in PDF output. No external tools needed.
+
+````markdown
+```mermaid
+flowchart LR
+    A["Step 1"] --> B["Step 2"] --> C["Step 3"]
+```
+````
+
+Supported chart types: `flowchart`/`graph`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`.
 
 ---
 

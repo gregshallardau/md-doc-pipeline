@@ -48,6 +48,9 @@ uv run md-doc theme override workspace/acme/clients/stormfront/  # colour overri
 # Export (scan for export: true in frontmatter, build, collect outputs)
 uv run md-doc export /path/to/vault              # scan vault, output to vault/Exports/
 uv run md-doc export /path/to/vault -o /output   # custom output directory
+uv run md-doc export /path/to/vault --tag cheatsheet  # filter by tag
+uv run md-doc export /path/to/vault --format pdf  # force format (default: per-doc)
+uv run md-doc export /path/to/vault --no-symlinks # copy files instead of symlinks
 uv run md-doc export /path/to/vault --dry-run    # show what would be exported
 
 # Other
@@ -95,9 +98,11 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
    - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use.
    - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word MERGEFIELD XML. Patches the saved file's ZIP content type from `.docx` → `.dotx`. For downstream mail merge use.
 
-4. **Syncing** (`sync/`) — discovers `*.pdf`, `*.docx` (optionally `*.md`) outputs and uploads via the configured backend: `azure_files.py` (Azure File Share), `s3.py` (AWS S3), or `local.py`. Directory structure is preserved relative to the search root.
+4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Supported chart types: `flowchart`/`graph`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`. The SVGs are embedded directly in the HTML — no external rendering service required.
 
-5. **Registering** (`register.py`) — scans build outputs, resolves metadata from config cascade, writes `register.json` / `register.md` / `register.csv`.
+5. **Syncing** (`sync/`) — discovers `*.pdf`, `*.docx` (optionally `*.md`) outputs and uploads via the configured backend: `azure_files.py` (Azure File Share), `s3.py` (AWS S3), or `local.py`. Directory structure is preserved relative to the search root.
+
+6. **Registering** (`register.py`) — scans build outputs, resolves metadata from config cascade, writes `register.json` / `register.md` / `register.csv`.
 
 ### Merge field schema (`_merge_fields.yml`)
 
@@ -126,6 +131,24 @@ pdf_theme: path/to/custom/_pdf-theme.css
                                # also available as CLI flag: --theme / -t
 cover_page: true              # default true — set false to omit cover
 cover_label: Report           # text above the title on cover page (default: "Report")
+cover_text_align: left        # left | right (default: left) — alignment of cover content
+cover_background: white       # cover page background colour (default: "white")
+cover_divider: true           # show horizontal rule under title (default: true)
+cover_meta_label: "Prepared by"  # label before the author name (default: "Prepared by")
+cover_meta_author: "Custom Name" # override author on cover only (default: author value)
+cover_bar: true               # show coloured bar(s) on cover (default: true)
+cover_bar_position: top       # top | bottom | both (default: "top")
+cover_bar_height: "10mm"      # bar height (default: "10mm")
+cover_bar_top_height: "10mm"  # top bar height (overrides cover_bar_height for top)
+cover_bar_bottom_height: "10mm" # bottom bar height (overrides cover_bar_height for bottom)
+cover_bar_logo: logo.png      # logo inside the cover bar (resolved like header_logo)
+cover_text_on_bar: false      # true = place cover content inside top bar (default: false)
+cover_stripe: false           # vertical accent stripe on cover (default: false)
+cover_stripe_height: "120mm"  # stripe height (default: "120mm")
+cover_stripe_width: "6mm"     # stripe width (default: "6mm")
+cover_footer_text: "Author · Confidential"  # footer text (default: "{author} · Confidential")
+cover_footer_line: true       # show border-top line on footer (default: true)
+cover_footer_color: "#738599" # footer text colour
 header_logo: assets/logo.png  # logo image in page header (resolved doc dir → ancestors → repo root)
 header_logo_position: right   # left | center | right (default: right)
 header_text: "Company Name"   # text in page header
