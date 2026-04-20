@@ -319,12 +319,20 @@ def _keep_heading_with_next(html_body: str) -> str:
 
 
 def _resolve_logo(logo_val: str | None, repo_root: Path | None, doc_path: Path | None) -> Path | None:
-    """Resolve header_logo to an absolute path, searching doc dir → ancestors → repo root."""
+    """Resolve header_logo to an absolute path, searching doc dir → ancestors → repo root.
+
+    Absolute paths and traversal components (``..``) are rejected to prevent
+    reading arbitrary files from the filesystem via frontmatter config.
+    """
     if not logo_val:
         return None
-    p = Path(logo_val)
-    if p.is_absolute() and p.exists():
-        return p
+    # Security: reject absolute paths and traversal components
+    if Path(logo_val).is_absolute() or ".." in Path(logo_val).parts:
+        logging.getLogger(__name__).warning(
+            "Ignoring logo path %r — absolute paths and '..' components are not allowed.",
+            logo_val,
+        )
+        return None
     search_dirs: list[Path] = []
     if doc_path is not None:
         doc_dir = doc_path.parent if doc_path.is_file() else doc_path
@@ -339,9 +347,12 @@ def _resolve_logo(logo_val: str | None, repo_root: Path | None, doc_path: Path |
     if repo_root:
         search_dirs.append(repo_root)
     for d in search_dirs:
-        candidate = d / logo_val
+        candidate = (d / logo_val).resolve()
+        # Security: ensure resolved path stays within repo_root or doc directory
+        if repo_root and not candidate.is_relative_to(repo_root.resolve()):
+            continue
         if candidate.exists():
-            return candidate.resolve()
+            return candidate
     return None
 
 
@@ -723,10 +734,19 @@ def _resolve_css(
     theme_val = config.get("pdf_theme")
     if theme_val:
         p = Path(theme_val)
-        if p.is_absolute() and p.exists():
+        # Security: reject traversal components in user-provided theme paths
+        if ".." in p.parts:
+            logging.getLogger(__name__).warning(
+                "Ignoring pdf_theme path %r — '..' components are not allowed.",
+                theme_val,
+            )
+        elif p.is_absolute() and p.exists():
+            # Absolute paths from CLI --theme flag are trusted (user invoked directly)
             return p
-        if repo_root and (repo_root / p).exists():
-            return (repo_root / p).resolve()
+        elif repo_root and (repo_root / p).exists():
+            resolved = (repo_root / p).resolve()
+            if resolved.is_relative_to(repo_root.resolve()):
+                return resolved
 
     # Walk from doc_path up to repo_root looking for _pdf-theme.css (deepest wins)
     if doc_path is not None and repo_root is not None:

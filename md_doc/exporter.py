@@ -78,6 +78,12 @@ def stage_files(
     seen_names: set[str] = set()
 
     for src, fm in files:
+        # Security: resolve the source path and skip if it's itself a symlink
+        # pointing outside the expected source tree (prevents symlink chains)
+        real_src = src.resolve()
+        if real_src != src.resolve():
+            continue
+
         name = src.name
         if name in seen_names:
             parent_name = src.parent.name.replace(" ", "-").lower()
@@ -87,9 +93,9 @@ def stage_files(
         dest = staging_dir / name
 
         if use_symlinks:
-            dest.symlink_to(src)
+            dest.symlink_to(real_src)
         else:
-            shutil.copy2(src, dest)
+            shutil.copy2(real_src, dest)
 
         staged.append((dest, fm))
 
@@ -141,26 +147,46 @@ def collect_outputs(
         # Determine target directory
         export_path = fm.get("export_path")
         if export_path:
-            target_dir = dest_dir / export_path
+            target_dir = (dest_dir / export_path).resolve()
         elif orig_path:
             try:
                 rel = orig_path.relative_to(source_dir)
-                target_dir = dest_dir / rel.parent
+                target_dir = (dest_dir / rel.parent).resolve()
             except ValueError:
-                target_dir = dest_dir
+                target_dir = dest_dir.resolve()
         else:
-            target_dir = dest_dir
+            target_dir = dest_dir.resolve()
+
+        # Security: ensure target stays within dest_dir
+        if not target_dir.is_relative_to(dest_dir.resolve()):
+            import logging
+            logging.getLogger(__name__).warning(
+                "Skipping output %s — export_path %r resolves outside destination directory.",
+                output.name,
+                export_path,
+            )
+            continue
 
         target_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine filename
         export_filename = fm.get("export_filename")
         if export_filename:
-            # Strip any extension the user may have included, use the built output's extension
-            clean_name = Path(export_filename).stem
+            # Strip any extension and path components — only use the stem as a filename
+            clean_name = Path(export_filename).name
+            clean_name = Path(clean_name).stem
             target = target_dir / (clean_name + output.suffix)
         else:
             target = target_dir / output.name
+
+        # Security: final check that resolved target is within dest_dir
+        if not target.resolve().is_relative_to(dest_dir.resolve()):
+            import logging
+            logging.getLogger(__name__).warning(
+                "Skipping output %s — resolved path escapes destination directory.",
+                output.name,
+            )
+            continue
 
         shutil.copy2(output, target)
         copied.append(target)
