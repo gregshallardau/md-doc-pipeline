@@ -79,11 +79,15 @@ def _discover_markdown(root: Path) -> list[Path]:
     )
 
 
-def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ext: str) -> Path:
+def _resolve_output_path(
+    doc_path: Path, root: Path, output_dir: Path | None, ext: str, *, flat: bool = False
+) -> Path:
     """
     Compute output file path.
 
-    If output_dir is given, mirror the source tree under it.
+    If output_dir is given and flat=False (CLI --output), mirror the source tree under it.
+    If output_dir is given and flat=True (config output_dir), place the file directly in
+    output_dir without mirroring the source tree.
     Otherwise, write output alongside the source file.
 
     ext can be ".pdf", ".docx", etc., or "-form.pdf" for PDF forms.
@@ -92,16 +96,18 @@ def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ex
     if ext.startswith("-") and "." in ext:
         stem_addition, file_ext = ext.rsplit(".", 1)
         file_ext = "." + file_ext
+        new_stem = doc_path.stem + stem_addition
         if output_dir is not None:
+            if flat:
+                return output_dir / (new_stem + file_ext)
             rel = doc_path.relative_to(root)
-            new_stem = rel.stem + stem_addition
             return output_dir / rel.parent / (new_stem + file_ext)
-        else:
-            new_stem = doc_path.stem + stem_addition
-            return doc_path.parent / (new_stem + file_ext)
+        return doc_path.parent / (new_stem + file_ext)
     else:
         # Standard suffix (e.g., ".pdf", ".docx")
         if output_dir is not None:
+            if flat:
+                return output_dir / (doc_path.stem + ext)
             rel = doc_path.relative_to(root)
             return output_dir / rel.with_suffix(ext)
         return doc_path.with_suffix(ext)
@@ -202,13 +208,22 @@ def build(
             errors.append(str(doc_path))
             continue
 
+        # Resolve effective output dir: CLI --output wins; config output_dir is flat fallback
+        effective_output = output
+        flat = False
+        if effective_output is None:
+            cfg_out = config.get("output_dir")
+            if cfg_out:
+                effective_output = Path(str(cfg_out)).expanduser().resolve()
+                flat = True
+
         # Build each format
         for format_name in formats:
             if format_name == "pdf" and config.get("pdf_forms"):
                 ext = "-form.pdf"
             else:
                 ext = f".{format_name}"
-            out_path = _resolve_output_path(doc_path, root, output, ext)
+            out_path = _resolve_output_path(doc_path, root, effective_output, ext, flat=flat)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
