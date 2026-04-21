@@ -233,16 +233,24 @@ class _DotxBuilder(_DocxBuilder):
         for i, part in enumerate(parts):
             if i % 2 == 0:
                 if part:
-                    if part.strip():
-                        self._para_has_literal_text = True
-                    run = paragraph.add_run(part)
-                    if bold:
-                        run.bold = True
-                    if italic:
-                        run.italic = True
-                    if code:
-                        run.font.name = self._theme.get("font_code", "Courier New")
-                        run.font.size = Pt(9)
+                    # Split on \n so consecutive fields on separate Markdown
+                    # lines each get their own Word line break (no paragraph gap).
+                    lines = part.split("\n")
+                    for j, line in enumerate(lines):
+                        if j > 0:
+                            br_run = paragraph.add_run()
+                            br_run._r.append(OxmlElement("w:br"))
+                        if line:
+                            if line.strip():
+                                self._para_has_literal_text = True
+                            run = paragraph.add_run(line)
+                            if bold:
+                                run.bold = True
+                            if italic:
+                                run.italic = True
+                            if code:
+                                run.font.name = self._theme.get("font_code", "Courier New")
+                                run.font.size = Pt(9)
             else:
                 if self._field_type == "merge":
                     _insert_merge_field(paragraph, part, bold=bold, italic=italic)
