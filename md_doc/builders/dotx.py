@@ -79,8 +79,10 @@ def _insert_merge_field(
 ) -> None:
     """Append a Word MERGEFIELD for *field_name* to *paragraph*."""
     run = paragraph.add_run()
-    run.bold = bold
-    run.italic = italic
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
     run._r.append(fld_begin)
@@ -97,8 +99,10 @@ def _insert_merge_field(
     run._r.append(fld_sep)
 
     run = paragraph.add_run(f"«{field_name}»")
-    run.bold = bold
-    run.italic = italic
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
 
     run = paragraph.add_run()
     fld_end = OxmlElement("w:fldChar")
@@ -130,8 +134,10 @@ def _insert_form_field(
 
     # fldChar begin — carries the ffData (form field metadata)
     run = paragraph.add_run()
-    run.bold = bold
-    run.italic = italic
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
     ff_data = OxmlElement("w:ffData")
@@ -161,8 +167,10 @@ def _insert_form_field(
 
     # display text shown in Word before the field is filled
     run = paragraph.add_run(f"«{field_name}»")
-    run.bold = bold
-    run.italic = italic
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
 
     # end
     run = paragraph.add_run()
@@ -221,8 +229,10 @@ class _DotxBuilder(_DocxBuilder):
             if i % 2 == 0:
                 if part:
                     run = paragraph.add_run(part)
-                    run.bold = bold
-                    run.italic = italic
+                    if bold:
+                        run.bold = True
+                    if italic:
+                        run.italic = True
                     if code:
                         run.font.name = self._theme.get("font_code", "Courier New")
                         run.font.size = Pt(9)
