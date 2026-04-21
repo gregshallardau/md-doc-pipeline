@@ -1,0 +1,59 @@
+name: Build and Sync Documents
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'products/**'
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies (WeasyPrint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpango-1.0-0 \
+            libpangoft2-1.0-0 \
+            libpangocairo-1.0-0 \
+            libgdk-pixbuf2.0-0 \
+            libffi-dev \
+            shared-mime-info
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ".[azure]"
+
+      - name: Build documents (PDF + DOCX)
+        run: md-doc build products/
+
+      - name: Update document register
+        run: md-doc register products/
+
+      - name: Sync to Azure Files
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_FILE_SHARE_NAME: ${{ secrets.AZURE_FILE_SHARE_NAME }}
+        run: md-doc sync products/
+
+      - name: Commit updated register
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add products/register.json products/register.md 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: update document register [skip ci]"
+          git push

@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.pytest_cache/
+
+# Generated build outputs
+*.pdf
+*.docx
+*.dotx
+register.json
+register.md
+register.csv
+
+# Workspace (document libraries are separate git repos)
+workspace/
+
+# Editor
+.DS_Store
+*.swp
+
+# Auto-generated agent config
+AGENTS.md
+GEMINI.md
+/_pdf-theme.css

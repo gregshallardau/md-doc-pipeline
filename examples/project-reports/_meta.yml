@@ -1,0 +1,6 @@
+author: Acme Corp
+outputs: [pdf, docx]
+include_md_in_share: false
+sync_target: local
+sync_config:
+  path: /tmp/report-outputs/

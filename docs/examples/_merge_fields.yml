@@ -1,0 +1,19 @@
+contact_name: Full name of the primary contact
+contact_title: Contact's job title
+company: Client company name
+company_address: Client company address
+engagement_date: Date of the engagement letter
+service_type: Type of service being provided
+start_date: Project start date
+phase1_date: Phase 1 completion date
+phase2_date: Phase 2 completion date
+end_date: Final delivery date
+total_fee: Total engagement fee amount
+payment_terms: Payment terms description
+account_manager: Account manager name
+am_email: Account manager email
+am_phone: Account manager phone number
+project_manager: Project manager name
+pm_email: Project manager email
+tech_lead: Technical lead name
+tl_email: Technical lead email
