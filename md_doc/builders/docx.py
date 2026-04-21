@@ -421,7 +421,7 @@ def _add_page_header_bar(
     tr = row._tr
     trPr = tr.get_or_add_trPr()
     trHeight = OxmlElement("w:trHeight")
-    trHeight.set(qn("w:val"), str(int(Mm(height_mm) / 914.4 * 1440 * 20)))
+    trHeight.set(qn("w:val"), str(int(Mm(height_mm).pt * 20)))
     trHeight.set(qn("w:hRule"), "atLeast")
     trPr.append(trHeight)
 
