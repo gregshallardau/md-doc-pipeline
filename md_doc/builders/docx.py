@@ -426,7 +426,7 @@ def _add_page_header_bar(
     trHeight.set(qn("w:hRule"), "atLeast")
     trPr.append(trHeight)
 
-    # Shade cells and remove borders
+    # Shade cells, remove borders, and vertically centre content
     for cell in row.cells:
         set_cell_shading(cell, color_hex)
         tcPr = cell._tc.get_or_add_tcPr()
@@ -436,6 +436,9 @@ def _add_page_header_bar(
             b.set(qn("w:val"), "none")
             tcBorders.append(b)
         tcPr.append(tcBorders)
+        vAlign = OxmlElement("w:vAlign")
+        vAlign.set(qn("w:val"), "center")
+        tcPr.append(vAlign)
 
     # Header text in left cell
     if header_text:
@@ -446,11 +449,12 @@ def _add_page_header_bar(
         para.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     # Logo in right cell (or only cell if no text)
+    # Use 70% of bar height for the logo — padding config is horizontal, not vertical
     if logo_path:
         para = row.cells[-1].paragraphs[0]
         para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         run = para.add_run()
-        logo_h = Mm(max(height_mm - padding_mm * 2, 4))
+        logo_h = Mm(max(height_mm * 0.7, 4))
         run.add_picture(str(logo_path), height=logo_h)
 
 
