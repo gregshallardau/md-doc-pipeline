@@ -55,7 +55,9 @@ from docx.shared import Pt
 from .docx import (
     _DocxBuilder,
     _MD_EXTENSIONS,
+    _add_page_header_bar,
     _extract_title,
+    _resolve_asset,
     _resolve_docx_theme,
     _strip_frontmatter,
     _strip_leading_h1,
@@ -235,6 +237,8 @@ class _DotxBuilder(_DocxBuilder):
     def _add_text(self, text: str) -> None:
         if not text:
             return
+        if self._paragraph is None and not text.strip():
+            return
         self._write_text(
             self._current_para(),
             text,
@@ -395,6 +399,9 @@ def build(
     props.title = re.sub(r"\[\[\w+\]\]", "", title).strip()
     if author:
         props.author = re.sub(r"\[\[\w+\]\]", "", author).strip()
+
+    # Page header bar (coloured bar + logo on every page)
+    _add_page_header_bar(doc, config, doc_path, repo_root)
 
     builder = _DotxBuilder(doc, field_type=field_type, theme=theme)
 
