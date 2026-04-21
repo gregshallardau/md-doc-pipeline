@@ -211,6 +211,11 @@ class _DotxBuilder(_DocxBuilder):
         super().__init__(doc, theme=theme)
         self._field_type = field_type
         self._bookmark_id = 0
+        self._para_has_literal_text = False  # True once a non-field text run is written
+
+    def _new_para(self, style: str = "Normal") -> None:
+        self._para_has_literal_text = False
+        super()._new_para(style)
 
     def _write_text(
         self,
@@ -228,6 +233,8 @@ class _DotxBuilder(_DocxBuilder):
         for i, part in enumerate(parts):
             if i % 2 == 0:
                 if part:
+                    if part.strip():
+                        self._para_has_literal_text = True
                     run = paragraph.add_run(part)
                     if bold:
                         run.bold = True
@@ -255,6 +262,19 @@ class _DotxBuilder(_DocxBuilder):
             italic=self._italic,
             code=self._in_code,
         )
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "p" and self._paragraph is not None and not self._para_has_literal_text:
+            # Paragraph contains only form/merge fields — strip spacing so
+            # consecutive field lines (address blocks etc.) don't have gaps.
+            from docx.oxml.ns import qn as _qn
+
+            has_field = self._paragraph._p.find(".//" + _qn("w:fldChar")) is not None
+            if has_field:
+                self._paragraph.paragraph_format.space_after = Pt(0)
+                self._paragraph.paragraph_format.space_before = Pt(0)
+        self._para_has_literal_text = False
+        super().handle_endtag(tag)
 
     def _flush_table(self) -> None:
         rows = getattr(self, "_table_rows", [])
