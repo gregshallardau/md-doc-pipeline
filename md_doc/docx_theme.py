@@ -209,7 +209,7 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if "text-align" in props and "text_align_body" not in theme:
             theme["text_align_body"] = props["text-align"].strip().lower()
 
-    # p — paragraph spacing
+    # p — paragraph spacing and alignment
     for sel in ("p", "body p"):
         props = blocks.get(sel, {})
         for css_prop, theme_key in (
@@ -220,11 +220,15 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
                 pt = _parse_pt(props[css_prop])
                 if pt is not None:
                     theme[theme_key] = pt
+        if "text-align" in props and "text_align_body" not in theme:
+            theme["text_align_body"] = props["text-align"].strip().lower()
 
     # headings
     for level in range(1, 5):
         tag = f"h{level}"
         props = blocks.get(tag, {})
+        if "font-family" in props:
+            theme[f"font_{tag}"] = _first_font(props["font-family"])
         if "color" in props:
             col = _first_color(props["color"])
             if col:
@@ -334,8 +338,8 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         except KeyError:
             continue
 
-        # Font name — use body font as fallback
-        heading_font = font_body
+        # Font name — only set if explicitly declared for this heading level
+        heading_font = theme.get(f"font_{tag}")
         if heading_font:
             heading_style.font.name = heading_font
 
