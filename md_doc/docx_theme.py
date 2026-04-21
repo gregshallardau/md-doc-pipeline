@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
@@ -205,6 +206,8 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             pt = _parse_pt(props["font-size"])
             if pt is not None:
                 theme["font_size_body"] = pt
+        if "text-align" in props and "text_align_body" not in theme:
+            theme["text_align_body"] = props["text-align"].strip().lower()
 
     # headings
     for level in range(1, 5):
@@ -267,6 +270,14 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
     font_body = theme.get("font_body")
     font_size_body = theme.get("font_size_body")
 
+    _ALIGN_MAP = {
+        "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "centre": WD_ALIGN_PARAGRAPH.CENTER,
+    }
+
     # Normal style
     try:
         normal = doc.styles["Normal"]
@@ -274,6 +285,10 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
             normal.font.name = font_body
         if font_size_body is not None:
             normal.font.size = Pt(font_size_body)
+        if "text_align_body" in theme:
+            align = _ALIGN_MAP.get(theme["text_align_body"])
+            if align is not None:
+                normal.paragraph_format.alignment = align
     except KeyError:
         pass
 

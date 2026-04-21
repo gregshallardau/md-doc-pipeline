@@ -57,7 +57,6 @@ from .docx import (
     _MD_EXTENSIONS,
     _add_page_header_bar,
     _extract_title,
-    _resolve_asset,
     _resolve_docx_theme,
     _strip_frontmatter,
     _strip_leading_h1,
