@@ -24,6 +24,7 @@ outputs: [pdf]
 | `output_pdf` | string | `<filename>.pdf` | Override the output PDF filename. |
 | `pdf_theme` | string | Auto-resolved | Path to a custom `_pdf-theme.css` (absolute or relative to repo root). |
 | `pdf_forms` | boolean | `false` | Enable interactive form fields in PDF output. Output gets a `-form` suffix. |
+| `dotx_field_type` | string | `"form"` | `.dotx` field type: `"form"` (Word Text Form Fields, directly fillable in Word) or `"merge"` (classic MERGEFIELDs, require a mail merge data source). |
 
 ---
 
