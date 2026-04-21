@@ -212,6 +212,12 @@ class _DocxBuilder(HTMLParser):
         # Field-mode state
         self._bookmark_id = 0
 
+        # Set to True after a <br> element is written so the leading \n of the
+        # next handle_data call (which is just HTML formatting whitespace after
+        # the <br> tag, not a meaningful line break) is stripped rather than
+        # converted to an extra <w:br/>.
+        self._last_was_br = False
+
     # ------------------------------------------------------------------
     # Paragraph helpers
     # ------------------------------------------------------------------
@@ -290,6 +296,9 @@ class _DocxBuilder(HTMLParser):
     def _add_text(self, text: str) -> None:
         if not text:
             return
+        if self._last_was_br:
+            text = text.lstrip("\n")
+            self._last_was_br = False
         if self._paragraph is None and not text.strip():
             return
         self._write_text(
@@ -349,6 +358,7 @@ class _DocxBuilder(HTMLParser):
         elif tag == "br":
             run = self._current_para().add_run()
             run._r.append(OxmlElement("w:br"))
+            self._last_was_br = True
 
         elif tag == "hr":
             self._paragraph = self.doc.add_paragraph()
