@@ -12,7 +12,7 @@ Get up and running with your first document in 10 minutes.
 - For PDF output: WeasyPrint system libraries. [Installation guide →](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation)
 
 ```bash
-git clone https://github.com/blackdog308/md-doc-pipeline
+git clone https://github.com/gregshallardau/md-doc-pipeline
 cd md-doc-pipeline
 
 # Create and activate virtual environment
@@ -496,6 +496,6 @@ cover_page: false
 
 ## Help & Feedback
 
-- **Issues:** [GitHub Issues](https://github.com/blackdog308/md-doc-pipeline/issues)
+- **Issues:** [GitHub Issues](https://github.com/gregshallardau/md-doc-pipeline/issues)
 - **Docs:** Check `CLAUDE.md` and `workspace/CLAUDE.md` in the repo
 - **Examples:** See `examples/` folder for sample projects
