@@ -1,32 +1,33 @@
 """
-python-docx DOCX builder.
+python-docx builder for .docx and .dotx output.
 
-Converts rendered Markdown to a .docx file.
+Converts rendered Markdown to a Word document.  When ``output_format="dotx"``
+the builder also converts ``[[field_name]]`` markers to Word fields and patches
+the saved ZIP's content type so Word opens it as a template.
 
 Public API
 ----------
-    build(rendered_md, config, out_path)
+    build(rendered_md, config, out_path, *, doc_path, repo_root, output_format)
 
-The ``rendered_md`` string is the Jinja2-processed Markdown body (including
-frontmatter). Config comes from the cascading _meta.yml + frontmatter merge.
+Field syntax (.dotx only)
+-------------------------
+Use ``[[field_name]]`` in Markdown source alongside Jinja2 ``{{ }}``:
 
-Config keys consumed
---------------------
-  title        — document title (falls back to first H1 in body)
-  author       — author name
-  output_docx  — output filename hint (the CLI already resolves out_path,
-                  so this key is informational only in this function)
+    Dear [[contact_name]],          # Word field in .dotx
+    This is version {{ version }}.  # resolved at build time
 
-Conversion approach
--------------------
-Markdown is converted to HTML via the ``markdown`` library, then the HTML
-element tree is walked to populate a python-docx Document with styled runs,
-paragraphs, tables, and lists. This avoids pandoc/external-tool dependencies.
+``dotx_field_type`` config key controls field type:
+  "form"  (default) — Text Form Fields with Bookmark; fillable in Word without
+                       a mail merge data source.
+  "merge"           — Classic MERGEFIELD (``«field_name»``); requires a data
+                       source and a mail merge run.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
+import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,7 @@ from docx.shared import Mm, Pt, RGBColor
 
 from ..docx_theme import apply_theme_to_doc, resolve_docx_theme, set_cell_shading
 
-# Markdown extensions to enable (consistent with pdf builder)
+# Markdown extensions (consistent with pdf builder)
 _MD_EXTENSIONS = [
     "tables",
     "fenced_code",
@@ -51,6 +52,119 @@ _MD_EXTENSIONS = [
     "md_in_html",
     "toc",
 ]
+
+_MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
+
+
+# ---------------------------------------------------------------------------
+# Field helpers — MERGEFIELD and Text Form Field
+# ---------------------------------------------------------------------------
+
+
+def _insert_merge_field(
+    paragraph: Any,
+    field_name: str,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+) -> None:
+    """Append a Word MERGEFIELD for *field_name* to *paragraph*."""
+    run = paragraph.add_run()
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    run._r.append(fld_begin)
+
+    run = paragraph.add_run()
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f" MERGEFIELD {field_name} "
+    run._r.append(instr)
+
+    run = paragraph.add_run()
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    run._r.append(fld_sep)
+
+    run = paragraph.add_run(f"«{field_name}»")
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
+
+    run = paragraph.add_run()
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_end)
+
+
+def _insert_form_field(
+    paragraph: Any,
+    field_name: str,
+    bookmark_id: int,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+) -> None:
+    """Append a Word Text Form Field with Bookmark=*field_name* to *paragraph*.
+
+    The bookmark name IS the variable name. Fill-in is enabled so the template
+    is directly fillable in Word without a mail merge data source.
+    """
+    p = paragraph._p
+
+    bk_start = OxmlElement("w:bookmarkStart")
+    bk_start.set(qn("w:id"), str(bookmark_id))
+    bk_start.set(qn("w:name"), field_name)
+    p.append(bk_start)
+
+    run = paragraph.add_run()
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    ff_data = OxmlElement("w:ffData")
+    ff_name = OxmlElement("w:name")
+    ff_name.set(qn("w:val"), field_name)
+    ff_data.append(ff_name)
+    ff_data.append(OxmlElement("w:enabled"))
+    ff_calc = OxmlElement("w:calcOnExit")
+    ff_calc.set(qn("w:val"), "0")
+    ff_data.append(ff_calc)
+    ff_data.append(OxmlElement("w:textInput"))
+    fld_begin.append(ff_data)
+    run._r.append(fld_begin)
+
+    run = paragraph.add_run()
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = " FORMTEXT "
+    run._r.append(instr)
+
+    run = paragraph.add_run()
+    fld_sep = OxmlElement("w:fldChar")
+    fld_sep.set(qn("w:fldCharType"), "separate")
+    run._r.append(fld_sep)
+
+    run = paragraph.add_run(f"«{field_name}»")
+    if bold:
+        run.bold = True
+    if italic:
+        run.italic = True
+
+    run = paragraph.add_run()
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_end)
+
+    bk_end = OxmlElement("w:bookmarkEnd")
+    bk_end.set(qn("w:id"), str(bookmark_id))
+    p.append(bk_end)
 
 
 # ---------------------------------------------------------------------------
@@ -64,83 +178,144 @@ class _DocxBuilder(HTMLParser):
 
     Handles: h1–h4, p, ul/ol/li, table/thead/tbody/tr/th/td,
              pre/code, blockquote, strong/b, em/i, hr, br.
+
+    When *field_type* is ``"form"`` or ``"merge"``, ``[[field_name]]``
+    markers in text are converted to the appropriate Word field type
+    instead of being written as literal text.
     """
 
-    def __init__(self, doc: Document, theme: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        doc: Document,
+        theme: dict[str, Any] | None = None,
+        field_type: str | None = None,
+    ) -> None:
         super().__init__()
         self.doc = doc
         self._theme: dict[str, Any] = theme or {}
+        self._field_type = field_type  # None | "form" | "merge"
 
-        # Apply CSS theme to document styles
         apply_theme_to_doc(self.doc, self._theme)
 
         # State tracking
-        self._paragraph = None  # current paragraph being built
-        self._run = None  # current run
+        self._paragraph = None
+        self._run = None
         self._bold = False
         self._italic = False
         self._in_pre = False
-        self._in_code = False  # inline code inside paragraph
+        self._in_code = False
         self._in_blockquote = False
-        self._list_stack: list[str] = []  # "ul" or "ol" per level
+        self._list_stack: list[str] = []
         self._list_counters: list[int] = []
 
         # Table state
-        self._table = None
-        self._row = None
-        self._cell = None
         self._in_table = False
         self._in_th = False
+        self._table_rows: list[list[tuple[bool, str]]] = []
+        self._current_row: list[tuple[bool, str]] = []
+        self._current_cell_text = ""
 
-        # Accumulate text in pre/code blocks
         self._pre_text = ""
-
-        # Tag stack for nesting
         self._tag_stack: list[str] = []
+
+        # Field-mode state
+        self._bookmark_id = 0
+        self._para_has_literal_text = False
+        # Last consecutive field-only paragraph — used to retroactively zero
+        # its space_after only when the NEXT paragraph is also field-only.
+        # This keeps normal spacing after the last field line in a block.
+        self._last_field_only_para: Any = None
 
     # ------------------------------------------------------------------
     # Paragraph helpers
     # ------------------------------------------------------------------
 
     def _new_para(self, style: str = "Normal") -> None:
-        """Start a new paragraph, flushing any current one."""
         self._paragraph = self.doc.add_paragraph(style=style)
         self._run = None
+        self._para_has_literal_text = False
 
     def _current_para(self) -> Any:
         if self._paragraph is None:
             self._paragraph = self.doc.add_paragraph()
         return self._paragraph
 
-    def _add_text(self, text: str) -> None:
-        """Add text to the current paragraph with current bold/italic state.
-
-        Bare ``\\n`` characters within a paragraph are converted to Word line
-        breaks (``<w:br/>``) so that fields written on consecutive lines in the
-        Markdown source each appear on their own line in the Word output without
-        any inter-paragraph spacing.
+    def _write_text(
+        self,
+        paragraph: Any,
+        text: str,
+        *,
+        bold: bool = False,
+        italic: bool = False,
+        code: bool = False,
+    ) -> None:
+        """Write *text* to *paragraph*, handling ``[[field]]`` markers when
+        field_type is set, and converting bare ``\\n`` to Word line breaks.
         """
         if not text:
             return
-        # Whitespace-only text between block elements must not create a phantom
-        # empty paragraph.
+
+        if self._field_type:
+            # Field-aware path: split on [[field]] markers
+            parts = _MERGE_RE.split(text)
+            for i, part in enumerate(parts):
+                if i % 2 == 0:
+                    # Literal text segment — split on \n for line breaks
+                    if part:
+                        lines = part.split("\n")
+                        for j, line in enumerate(lines):
+                            if j > 0:
+                                br_run = paragraph.add_run()
+                                br_run._r.append(OxmlElement("w:br"))
+                            if line:
+                                if line.strip():
+                                    self._para_has_literal_text = True
+                                run = paragraph.add_run(line)
+                                if bold:
+                                    run.bold = True
+                                if italic:
+                                    run.italic = True
+                                if code:
+                                    run.font.name = self._theme.get("font_code", "Courier New")
+                                    run.font.size = Pt(9)
+                else:
+                    # Field marker
+                    if self._field_type == "merge":
+                        _insert_merge_field(paragraph, part, bold=bold, italic=italic)
+                    else:
+                        _insert_form_field(
+                            paragraph, part, self._bookmark_id, bold=bold, italic=italic
+                        )
+                        self._bookmark_id += 1
+        else:
+            # Plain text path: split on \n for line breaks
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if i > 0:
+                    br_run = paragraph.add_run()
+                    br_run._r.append(OxmlElement("w:br"))
+                if line:
+                    run = paragraph.add_run(line)
+                    if bold:
+                        run.bold = True
+                    if italic:
+                        run.italic = True
+                    if code:
+                        run.font.name = self._theme.get("font_code", "Courier New")
+                        run.font.size = Pt(9)
+
+    def _add_text(self, text: str) -> None:
+        if not text:
+            return
         if self._paragraph is None and not text.strip():
             return
-        para = self._current_para()
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            if i > 0:
-                run = para.add_run()
-                run._r.append(OxmlElement("w:br"))
-            if line:
-                run = para.add_run(line)
-                if self._bold:
-                    run.bold = True
-                if self._italic:
-                    run.italic = True
-                if self._in_code:
-                    run.font.name = self._theme.get("font_code", "Courier New")
-                    run.font.size = Pt(9)
+        self._write_text(
+            self._current_para(),
+            text,
+            bold=self._bold,
+            italic=self._italic,
+            code=self._in_code,
+        )
 
     # ------------------------------------------------------------------
     # HTMLParser callbacks
@@ -151,15 +326,10 @@ class _DocxBuilder(HTMLParser):
         tag = tag.lower()
 
         if tag in ("h1", "h2", "h3", "h4"):
-            level = int(tag[1])
-            style = f"Heading {level}"
-            self._new_para(style)
+            self._new_para(f"Heading {int(tag[1])}")
 
         elif tag == "p":
-            if self._in_blockquote:
-                self._new_para("Intense Quote")
-            else:
-                self._new_para("Normal")
+            self._new_para("Intense Quote" if self._in_blockquote else "Normal")
 
         elif tag in ("ul", "ol"):
             self._list_stack.append(tag)
@@ -181,9 +351,7 @@ class _DocxBuilder(HTMLParser):
             self._pre_text = ""
 
         elif tag == "code":
-            if self._in_pre:
-                pass  # handled in handle_data / endtag
-            else:
+            if not self._in_pre:
                 self._in_code = True
 
         elif tag == "blockquote":
@@ -196,17 +364,13 @@ class _DocxBuilder(HTMLParser):
             self._italic = True
 
         elif tag == "br":
-            # Markdown hard line break (two trailing spaces) → Word line break.
-            # Keeps fields in the same paragraph so no inter-paragraph spacing.
-            para = self._current_para()
-            run = para.add_run()
+            run = self._current_para().add_run()
             run._r.append(OxmlElement("w:br"))
 
         elif tag == "hr":
             self._paragraph = self.doc.add_paragraph()
             self._paragraph.paragraph_format.space_before = Pt(6)
             self._paragraph.paragraph_format.space_after = Pt(6)
-            # Add a bottom border as a horizontal rule (OxmlElement works on all versions)
             pPr = self._paragraph._p.get_or_add_pPr()
             pBdr = pPr.find(qn("w:pBdr"))
             if pBdr is None:
@@ -221,14 +385,10 @@ class _DocxBuilder(HTMLParser):
             bottom.set(qn("w:space"), "1")
             bottom.set(qn("w:color"), "AAAAAA")
 
-        elif tag == "br":
-            self._add_text("\n")
-
         elif tag == "table":
             self._in_table = True
-            # We'll build the table after parsing — collect rows first
-            self._table_rows: list[list[tuple[bool, str]]] = []  # [(is_header, text), ...]
-            self._current_row: list[tuple[bool, str]] = []
+            self._table_rows = []
+            self._current_row = []
             self._current_cell_text = ""
             self._in_th = False
 
@@ -245,6 +405,22 @@ class _DocxBuilder(HTMLParser):
         tag = tag.lower()
 
         if tag in ("h1", "h2", "h3", "h4", "p"):
+            if tag == "p" and self._field_type and self._paragraph is not None:
+                has_field = self._paragraph._p.find(".//" + qn("w:fldChar")) is not None
+                if has_field and not self._para_has_literal_text:
+                    # Field-only paragraph: collapse gap *before* it so consecutive
+                    # field lines render tight.  Space *after* is only zeroed
+                    # retroactively when the NEXT paragraph is also field-only,
+                    # preserving normal spacing after the last line in the block.
+                    self._paragraph.paragraph_format.space_before = Pt(0)
+                    if self._last_field_only_para is not None:
+                        self._last_field_only_para.paragraph_format.space_after = Pt(0)
+                    self._last_field_only_para = self._paragraph
+                else:
+                    self._last_field_only_para = None
+            elif tag != "p":
+                self._last_field_only_para = None
+            self._para_has_literal_text = False
             self._paragraph = None
 
         elif tag in ("ul", "ol"):
@@ -296,7 +472,7 @@ class _DocxBuilder(HTMLParser):
         if self._in_pre:
             self._pre_text += data
             return
-        if self._in_table and not self._in_pre:
+        if self._in_table:
             self._current_cell_text += data
             return
         self._add_text(data)
@@ -306,7 +482,7 @@ class _DocxBuilder(HTMLParser):
     # ------------------------------------------------------------------
 
     def _flush_table(self) -> None:
-        rows = getattr(self, "_table_rows", [])
+        rows = self._table_rows
         if not rows:
             return
         max_cols = max(len(r) for r in rows)
@@ -324,14 +500,14 @@ class _DocxBuilder(HTMLParser):
                 if c_idx >= max_cols:
                     break
                 cell = table.cell(r_idx, c_idx)
-                cell.text = text.strip()
+                cell.text = ""
+                self._write_text(cell.paragraphs[0], text.strip(), bold=is_header)
                 if is_header:
-                    for run in cell.paragraphs[0].runs:
-                        run.bold = True
-                        if header_text_color:
-                            from ..docx_theme import _hex_to_rgb
+                    if header_text_color:
+                        from ..docx_theme import _hex_to_rgb
 
-                            r, g, b = _hex_to_rgb(header_text_color)
+                        r, g, b = _hex_to_rgb(header_text_color)
+                        for run in cell.paragraphs[0].runs:
                             run.font.color.rgb = RGBColor(r, g, b)
                     if header_bg:
                         set_cell_shading(cell, header_bg)
@@ -340,12 +516,80 @@ class _DocxBuilder(HTMLParser):
 
 
 # ---------------------------------------------------------------------------
-# Markdown stripping helpers
+# Cover page (.dotx only)
+# ---------------------------------------------------------------------------
+
+
+def _add_cover_page(doc: Document, config: dict[str, Any], builder: _DocxBuilder) -> None:
+    """Insert a cover page section followed by a page break.
+
+    All text values may contain ``[[field]]`` markers — rendered via *builder*
+    so the correct field type (form/merge) and bookmark ID counter are used.
+    """
+    title = config.get("title", "")
+    author = config.get("author", "")
+    date = config.get("date", "")
+    product = config.get("product", "")
+
+    title_para = doc.add_paragraph(style="Title")
+    builder._write_text(title_para, title or "«Document Title»")
+
+    if product:
+        sub_para = doc.add_paragraph(style="Subtitle")
+        builder._write_text(sub_para, product)
+
+    if author or date:
+        doc.add_paragraph()  # spacer
+        if author:
+            meta = doc.add_paragraph()
+            meta.add_run("Prepared by: ").bold = True
+            builder._write_text(meta, author)
+        if date:
+            meta = doc.add_paragraph()
+            meta.add_run("Date: ").bold = True
+            builder._write_text(meta, date)
+
+    doc.add_page_break()
+
+
+# ---------------------------------------------------------------------------
+# .dotx content-type patch
+# ---------------------------------------------------------------------------
+
+
+def _patch_to_dotx(path: Path) -> None:
+    """Re-write *path* with the Word Template content type.
+
+    python-docx always saves with the .docx content type. A .dotx differs
+    only in one attribute inside ``[Content_Types].xml`` inside the ZIP.
+    """
+    tmp = path.with_suffix(".tmp")
+    shutil.move(str(path), str(tmp))
+    try:
+        with zipfile.ZipFile(tmp, "r") as zin:
+            with zipfile.ZipFile(path, "w") as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "[Content_Types].xml":
+                        data = data.replace(
+                            b"wordprocessingml.document.main+xml",
+                            b"wordprocessingml.template.main+xml",
+                        )
+                    zout.writestr(item, data)
+    except Exception:
+        shutil.move(str(tmp), str(path))
+        raise
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 
 def _strip_frontmatter(md_content: str) -> str:
-    """Remove YAML frontmatter if present."""
     return re.sub(r"^---\s*\n.*?\n---\s*\n", "", md_content, count=1, flags=re.DOTALL)
 
 
@@ -364,17 +608,7 @@ def _strip_leading_h1(md_content: str) -> str:
     return re.sub(r"^#\s+.+\n?", "", md_content, count=1, flags=re.MULTILINE)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[str, Any]:
-    """Walk from doc_path up to repo_root looking for _docx-theme.css or _pdf-theme.css.
-
-    Delegates to ``resolve_docx_theme`` from ``docx_theme`` module.
-    Returns a parsed theme dict, or an empty dict if no theme file is found.
-    """
     if doc_path is None or repo_root is None:
         return {}
     result = resolve_docx_theme(doc_path, repo_root)
@@ -382,7 +616,6 @@ def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[s
 
 
 def _resolve_asset(filename: str, doc_path: Path | None, repo_root: Path | None) -> Path | None:
-    """Find an asset (logo etc.) by walking from doc dir up to repo root."""
     p = Path(filename)
     if p.is_absolute():
         return p if p.exists() else None
@@ -411,14 +644,14 @@ def _add_page_header_bar(
     doc_path: Path | None,
     repo_root: Path | None,
 ) -> None:
-    """Add a coloured header bar with optional logo to every page of the Word doc."""
+    """Add a coloured header bar with optional logo to every page."""
     if not config.get("page_header_bar"):
         return
 
     color_hex = str(config.get("page_header_bar_color", "#2563eb")).lstrip("#")
     text_color_hex = str(config.get("page_header_bar_text_color", "#ffffff")).lstrip("#")
     height_str = str(config.get("page_header_bar_height", "12mm"))
-    padding_str = str(config.get("page_header_bar_padding", "3mm"))
+    padding_str = str(config.get("page_header_bar_padding", "6mm"))
     logo_file = config.get("page_header_bar_logo") or config.get("header_logo")
     header_text = config.get("header_text", "")
 
@@ -430,12 +663,9 @@ def _add_page_header_bar(
     section = doc.sections[0]
     header = section.header
 
-    # Expand top margin so body text doesn't sit flush against the bar.
-    # header_distance (default ~12.7mm) + bar height + gap = new top margin.
     header_distance_mm = section.header_distance / 914400 * 25.4  # EMU → mm
     section.top_margin = Mm(header_distance_mm + height_mm + gap_mm)
 
-    # Remove the default empty paragraph python-docx adds
     for para in list(header.paragraphs):
         para._p.getparent().remove(para._p)
 
@@ -443,7 +673,6 @@ def _add_page_header_bar(
     cols = 2 if logo_path else 1
     table = header.add_table(rows=1, cols=cols, width=text_width)
 
-    # Remove table-level borders (Table Normal may still have some in style)
     tbl = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
     if tblPr is None:
@@ -456,7 +685,6 @@ def _add_page_header_bar(
         tblBorders.append(b)
     tblPr.append(tblBorders)
 
-    # Fix row height
     row = table.rows[0]
     tr = row._tr
     trPr = tr.get_or_add_trPr()
@@ -465,7 +693,6 @@ def _add_page_header_bar(
     trHeight.set(qn("w:hRule"), "atLeast")
     trPr.append(trHeight)
 
-    # Shade cells, remove cell borders, and vertically centre content
     for cell in row.cells:
         set_cell_shading(cell, color_hex)
         tcPr = cell._tc.get_or_add_tcPr()
@@ -479,7 +706,6 @@ def _add_page_header_bar(
         vAlign.set(qn("w:val"), "center")
         tcPr.append(vAlign)
 
-    # Header text in left cell
     if header_text:
         para = row.cells[0].paragraphs[0]
         run = para.add_run(str(header_text))
@@ -487,28 +713,28 @@ def _add_page_header_bar(
         run.font.color.rgb = RGBColor.from_string(text_color_hex)
         para.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
-    # Logo in right cell (or only cell if no text)
-    # Use 70% of bar height for the logo — padding config is horizontal, not vertical
     if logo_path:
         para = row.cells[-1].paragraphs[0]
         para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         run = para.add_run()
-        logo_h = Mm(max(height_mm * 0.7, 4))
-        run.add_picture(str(logo_path), height=logo_h)
+        run.add_picture(str(logo_path), height=Mm(max(height_mm * 0.7, 4)))
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def build(
     rendered_md: str,
     config: dict[str, Any],
     out_path: Path,
+    *,
     doc_path: Path | None = None,
     repo_root: Path | None = None,
+    output_format: str = "docx",
 ) -> None:
-    """
-    Convert rendered Markdown to a .docx file.
-
-    Only called when 'docx' is in the document's ``outputs`` config list —
-    the CLI enforces this before calling this function.
+    """Convert rendered Markdown to a .docx or .dotx file.
 
     Parameters
     ----------
@@ -517,46 +743,67 @@ def build(
     config:
         Merged config dict from load_config().
     out_path:
-        Destination path for the generated .docx file.
+        Destination path for the generated file.
     doc_path:
-        Source .md path. Used to resolve the CSS theme cascade.
+        Source .md path — used to resolve the CSS theme cascade.
     repo_root:
-        Repo root path. Used to bound the CSS theme cascade.
+        Repo root — used to bound the CSS theme cascade.
+    output_format:
+        ``"docx"`` (default) or ``"dotx"``.  When ``"dotx"``, ``[[field]]``
+        markers are converted to Word fields and the saved file is patched to
+        the Word Template content type.
     """
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    is_dotx = output_format == "dotx"
+
+    field_type: str | None = None
+    cover_page = False
+
+    if is_dotx:
+        ft = str(config.get("dotx_field_type", "form")).lower()
+        field_type = ft if ft in ("form", "merge") else "form"
+        cover_page = bool(config.get("cover_page", True))
 
     body = _strip_frontmatter(rendered_md)
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     author: str = config.get("author", "")
 
-    body = _strip_leading_h1(body)
+    if is_dotx:
+        if cover_page:
+            body = _strip_leading_h1(body)
+    else:
+        body = _strip_leading_h1(body)
 
-    # Convert markdown → HTML
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)
 
-    # Resolve CSS theme for Word styling
     theme = _resolve_docx_theme(doc_path, repo_root)
-
-    # Build document
     doc = Document()
 
-    # Core properties
     props = doc.core_properties
-    props.title = title
-    if author:
-        props.author = author
+    if is_dotx:
+        props.title = re.sub(r"\[\[\w+\]\]", "", title).strip()
+        if author:
+            props.author = re.sub(r"\[\[\w+\]\]", "", author).strip()
+    else:
+        props.title = title
+        if author:
+            props.author = author
 
-    # Page header bar (coloured bar + logo on every page)
     _add_page_header_bar(doc, config, doc_path, repo_root)
 
-    # Title paragraph
-    doc.add_paragraph(title, style="Title")
+    builder = _DocxBuilder(doc, theme=theme, field_type=field_type)
 
-    # Walk the HTML into docx elements
-    builder = _DocxBuilder(doc, theme=theme)
+    if is_dotx and cover_page:
+        _add_cover_page(doc, {**config, "title": title}, builder)
+    elif not is_dotx:
+        doc.add_paragraph(title, style="Title")
+
     builder.feed(html)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))
+
+    if is_dotx:
+        _patch_to_dotx(out_path)
