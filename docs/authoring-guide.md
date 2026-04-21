@@ -65,7 +65,7 @@ Settings flow downward through the folder hierarchy:
 ```
 workspace/acme/
   _meta.yml              ← author: "Acme Corp", outputs: [pdf]
-  _pdf-theme.css         ← brand colours
+  _theme.css         ← shared brand base
   clients/
     stormfront/
       _meta.yml          ← client: "Stormfront Inc"
@@ -86,9 +86,17 @@ outputs: [pdf]
 cover_page: true
 ```
 
-### `_pdf-theme.css`
+### `_theme.css`
 
-Brand colours, fonts, and spacing for PDF output. Created by `md-doc theme init`. The same cascading logic applies — a theme file deeper in the tree overrides the parent.
+Shared brand base — colours, fonts, body text, headings, tables, and code styles that apply to all output formats. Created by `md-doc theme init`. The same cascading logic applies — a theme file deeper in the tree overrides the parent.
+
+### `_pdf-theme.css` _(optional)_
+
+PDF-specific overrides. Must start with `@import '_theme.css';` to pull in shared styles, then add rules that only make sense for PDF output (`@page` margins, running headers/footers, cover page layout, `.cover-*` classes). When absent, the builder uses `_theme.css` directly.
+
+### `_docx-theme.css` _(optional)_
+
+Word-specific overrides. Must start with `@import '_theme.css';`, then add any Word-specific adjustments. Only properties meaningful to python-docx are applied (body font-family/font-size, h1–h4 colour/font-size, code font-family, table header background/colour). When absent, the builder falls back to `_theme.css`.
 
 ### `_merge_fields.yml`
 
@@ -225,13 +233,13 @@ Positions: `left`, `center`, `right`. Logo and text can occupy different positio
 
 ## Page Footers
 
-Page footers are controlled by the `_pdf-theme.css` theme file, not frontmatter. The default theme includes:
+Page footers are controlled by the `_theme.css` theme file, not frontmatter. The default theme includes:
 
 - **Bottom left:** Author name
 - **Bottom center:** Document date
 - **Bottom right:** Page X of Y
 
-To customise, edit the `@page` rules in your `_pdf-theme.css`.
+To customise, edit the `@page` rules in your `_theme.css`.
 
 ---
 
@@ -302,7 +310,7 @@ Supported fields: text, email, date, number, checkbox, radio, select, textarea, 
 md-doc theme init workspace/acme/
 ```
 
-This generates `_pdf-theme.css` with your brand colours, fonts, and page setup.
+This generates `_theme.css` with your brand colours, fonts, and page setup.
 
 ### Create a sub-theme (colour override only)
 
@@ -314,11 +322,22 @@ Generates a minimal CSS file that `@import`s the parent theme and overrides only
 
 ### Theme structure
 
-The CSS theme controls every visual aspect of the PDF:
+The theme system uses three tiers:
 
+| File | Required | Purpose |
+|------|----------|---------|
+| `_theme.css` | Yes (primary) | Shared brand base — colours, fonts, body text, headings, tables, code |
+| `_pdf-theme.css` | Optional | PDF-specific rules — `@page`, cover layout, running headers/footers |
+| `_docx-theme.css` | Optional | Word-specific rules — any python-docx relevant overrides |
+
+Both `_pdf-theme.css` and `_docx-theme.css` must `@import '_theme.css';` at the top. When absent, the builder uses `_theme.css` directly.
+
+`_pdf-theme.css` controls:
 - **Page setup** — margins, size (A4/Letter)
 - **Headers and footers** — `@page` margin boxes
 - **Cover page** — bar, stripe, title, label, footer styles
+
+`_theme.css` controls (shared across all formats):
 - **Typography** — headings, body text, links
 - **Tables** — header row, striping, borders
 - **Code blocks** — background, border, font

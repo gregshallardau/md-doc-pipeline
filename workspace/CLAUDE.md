@@ -18,7 +18,8 @@ Every company lives in its own folder under `workspace/`. The structure inside i
 workspace/
   acme/
     _meta.yml              ← author, default outputs, sync target
-    _pdf-theme.css         ← brand colours and fonts
+    _pdf-theme.css         ← brand colours and fonts (PDF + Word fallback)
+    _docx-theme.css        ← Word-specific overrides (optional)
     _merge_fields.yml      ← available [[fields]] for mail merge
     templates/
       company-header.md    ← reusable header fragment
@@ -143,6 +144,22 @@ Run `md-doc fields [DIR]` to see all fields available at any folder level.
 
 ### `_pdf-theme.css`
 Brand colours and fonts for PDF output. Created by `md-doc theme init` (full theme) or `md-doc theme override` (colour-only override that inherits from a parent theme via `@import`). Commit this file — it is config, not a build output.
+
+Also used as the fallback Word theme when `_docx-theme.css` is absent (see below).
+
+### `_docx-theme.css`
+Optional Word-specific CSS overrides for `docx` and `dotx` output. Same format as `_pdf-theme.css`, but only the properties meaningful to python-docx need to be included:
+
+- `body { font-family: ...; font-size: ...pt; }` — body font
+- `code { font-family: ...; }` — monospace font
+- `h1`–`h4 { color: ...; font-size: ...pt; }` — heading colours and sizes
+- `th { background: ...; color: ...; }` — table header shading
+
+**Resolution order:** When building Word output, the pipeline walks from the document directory up to the workspace root. At each level it checks for `_docx-theme.css` first, then `_pdf-theme.css`. The first file found wins — same cascading logic as all other config files.
+
+If no theme file exists in the hierarchy, Word output uses python-docx default styles.
+
+Commit this file alongside `_pdf-theme.css` — it is config, not a build output.
 
 ---
 

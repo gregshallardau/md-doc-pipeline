@@ -1,0 +1,7 @@
+/* Word Theme — Blueshift Labs
+   Word-specific overrides. Shared brand values live in _theme.css, which is
+   imported below. Only properties meaningful to python-docx are needed here
+   (body font-family/font-size, h1–h4 color/font-size, code font-family,
+   th background/color). Add Word-specific rules below the import if needed.
+*/
+@import '_theme.css';

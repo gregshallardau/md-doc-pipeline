@@ -36,7 +36,7 @@ md-doc theme init workspace/acme/
 
 This creates:
 - `workspace/acme/_meta.yml` — company defaults (author, logo, etc.)
-- `workspace/acme/_pdf-theme.css` — branded PDF styling
+- `workspace/acme/_theme.css` — shared brand base (colours, fonts, body styles)
 
 ### 2. Create a document
 
@@ -75,14 +75,21 @@ md-doc build
 Output: `proposal.pdf` — a branded, professional PDF with:
 - Cover page with your company name and theme colours
 - Automatic page numbering
-- Inherited styling from `_pdf-theme.css`
+- Inherited styling from `_theme.css`
 
 ### 4. Customize the theme
 
-Edit `workspace/acme/_pdf-theme.css` to change:
+Edit `workspace/acme/_theme.css` to change:
 - Colours (`#primary`, `#accent`, etc.)
 - Fonts
 - Spacing and sizing
+
+The theme system has three tiers:
+- `_theme.css` — shared brand base (colours, fonts, body text). **Required.**
+- `_pdf-theme.css` — PDF-specific overrides (`@page`, cover layout). Optional; imports `_theme.css`.
+- `_docx-theme.css` — Word-specific overrides. Optional; imports `_theme.css`.
+
+If only `_theme.css` is present, both PDF and DOCX output use it directly. Add the type-specific files only when you need format-specific rules.
 
 Run `md-doc build` again — changes apply automatically.
 
@@ -215,7 +222,7 @@ Documents inherit settings from parent folders. You can override at any level.
 ```
 workspace/acme/
   _meta.yml                  ← company defaults
-  _pdf-theme.css             ← company branding
+  _theme.css             ← shared brand base
   clients/
     stormfront/
       _meta.yml              ← client overrides
@@ -479,7 +486,7 @@ cover_page: false
 
 **PDF looks wrong**
 - Run `md-doc theme init` to regenerate the default theme (you may have corrupted CSS)
-- Check `_pdf-theme.css` for syntax errors
+- Check `_theme.css` for syntax errors (shared base); also check `_pdf-theme.css` if present
 - Check that image paths are absolute or relative to the document
 
 **Linting fails on undefined variables**

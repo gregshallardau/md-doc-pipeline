@@ -14,7 +14,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **PDF output** — WeasyPrint builder with branded cover page, headers, footers, and pagination
 - **DOCX output** — python-docx builder for copy-to-email Word documents
 - **DOTX output** — Word merge template builder; your other application fills the fields
-- **Cascading PDF themes** — `_pdf-theme.css` at any folder level; deepest wins. Run `md-doc theme init` to generate a full theme or `md-doc theme override` for a minimal colour override
+- **Cascading PDF themes** — `_theme.css` at any folder level; deepest wins. Run `md-doc theme init` to generate a full theme or `md-doc theme override` for a minimal colour override
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
 - **Pluggable sync** — push outputs to Azure File Share, AWS S3, or a local path
@@ -60,7 +60,7 @@ uv sync --group dev
 workspace/                  ← all live client/company projects
   acme/
     _meta.yml
-    _pdf-theme.css
+    _theme.css
     _merge_fields.yml
     templates/
     clients/
@@ -74,7 +74,7 @@ md_doc/                     ← pipeline source code
 tests/
 ```
 
-All `_` prefixed files (`_meta.yml`, `_pdf-theme.css`, `_merge_fields.yml`) are pipeline config — **commit them**. Built outputs (`*.pdf`, `*.docx`, `*.dotx`) are gitignored.
+All `_` prefixed files (`_meta.yml`, `_theme.css`, `_merge_fields.yml`) are pipeline config — **commit them**. Built outputs (`*.pdf`, `*.docx`, `*.dotx`) are gitignored.
 
 ---
 
@@ -166,7 +166,7 @@ header_logo_position: right       # left | center | right (default: right)
 header_text: "Acme Corp"          # text in page header
 header_text_position: left        # left | center | right (default: left)
 
-pdf_theme: path/to/_pdf-theme.css # explicit theme override (optional)
+pdf_theme: path/to/_theme.css # explicit theme override (optional)
 include_md_in_share: false        # sync source .md files too?
 
 sync_target: azure                # azure | s3 | local
@@ -273,7 +273,7 @@ A document at the `website` level has all fields from all three files available.
 
 ## PDF themes
 
-`_pdf-theme.css` controls the visual output for PDF. Place one at any directory level — the deepest one wins, mirroring `_meta.yml` cascade.
+`_theme.css` controls the visual output for PDF. Place one at any directory level — the deepest one wins, mirroring `_meta.yml` cascade.
 
 ### Create a full brand theme
 
@@ -281,7 +281,7 @@ A document at the `website` level has all fields from all three files available.
 md-doc theme init workspace/acme/
 ```
 
-Asks for org name, primary colour, accent colour, fonts, and page size. Writes a complete `_pdf-theme.css` and a starter `_meta.yml`.
+Asks for org name, primary colour, accent colour, fonts, and page size. Writes a complete `_theme.css` and a starter `_meta.yml`.
 
 ### Create a sub-brand override
 
@@ -289,11 +289,11 @@ Asks for org name, primary colour, accent colour, fonts, and page size. Writes a
 md-doc theme override workspace/acme/products/pulse/
 ```
 
-Finds the nearest parent `_pdf-theme.css` automatically, asks only for the colours that differ, and writes a minimal file using CSS `@import`:
+Finds the nearest parent `_theme.css` automatically, asks only for the colours that differ, and writes a minimal file using CSS `@import`:
 
 ```css
 /* Pulse Monitor — brand colour overrides */
-@import "../../_pdf-theme.css";
+@import "../../_theme.css";
 
 .cover-bar    { background: #7d3c00; }
 .cover-stripe { background: #e67e22; }
@@ -369,10 +369,10 @@ md-doc fields [DIRECTORY]
   DIRECTORY             Show all [[fields]] available at this level (default: current directory)
 
 md-doc theme init [DIR]
-  DIR                   Directory to create _pdf-theme.css and _meta.yml in
+  DIR                   Directory to create _theme.css and _meta.yml in
 
 md-doc theme override [DIR]
-  DIR                   Directory to create a minimal colour-override _pdf-theme.css in
+  DIR                   Directory to create a minimal colour-override _theme.css in
 
 md-doc sync [ROOT] [OPTIONS]
   ROOT                  Directory to sync (default: current directory)
@@ -394,7 +394,7 @@ The [`examples/blueshift/`](examples/blueshift/) example demonstrates the full c
 ```
 blueshift/
 ├── _meta.yml                    # author, outputs, sync
-├── _pdf-theme.css               # Blueshift navy/blue base theme
+├── _theme.css               # Blueshift navy/blue base theme
 ├── templates/
 │   ├── company-header.md
 │   └── legal-footer.md
@@ -402,7 +402,7 @@ blueshift/
 │   ├── _meta.yml                # document_type, status
 │   ├── pulse/
 │   │   ├── _meta.yml            # product: Pulse Monitor, version
-│   │   ├── _pdf-theme.css       # amber/orange override — @import ../../_pdf-theme.css
+│   │   ├── _theme.css       # amber/orange override — @import ../../_theme.css
 │   │   └── on-call-handbook.md
 │   └── nova/
 │       ├── _meta.yml            # product: Nova Analytics, version
@@ -417,7 +417,7 @@ blueshift/
 
 A Pulse document resolves:
 - Config: `blueshift/_meta.yml` → `products/_meta.yml` → `products/pulse/_meta.yml` → frontmatter
-- Theme: `products/pulse/_pdf-theme.css` (amber) → imports `blueshift/_pdf-theme.css` (navy base)
+- Theme: `products/pulse/_theme.css` (amber) → imports `blueshift/_theme.css` (navy base)
 - Templates: `products/pulse/templates/` → `products/templates/` → `blueshift/templates/`
 
 ---

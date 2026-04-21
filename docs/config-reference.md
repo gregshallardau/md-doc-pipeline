@@ -23,7 +23,7 @@ outputs: [pdf]
 | `outputs` | list | `[pdf]` | Output formats to generate. Values: `pdf`, `docx`, `dotx`. |
 | `output_pdf` | string | `<filename>.pdf` | Override the output PDF filename. |
 | `output_dir` | string | *(alongside source)* | Directory to write built outputs into. Set at any `_meta.yml` level — cascades down, overridden by deeper levels or document frontmatter. CLI `--output` always takes precedence. Supports `~` expansion. |
-| `pdf_theme` | string | Auto-resolved | Path to a custom `_pdf-theme.css` (absolute or relative to repo root). |
+| `pdf_theme` | string | Auto-resolved | Path to a custom theme file (absolute or relative to repo root). Point to `_theme.css` (shared base, used for all formats) or `_pdf-theme.css` (PDF-specific overrides that `@import '_theme.css'`). For Word output, place a `_docx-theme.css` alongside `_pdf-theme.css` — the builder picks it up automatically. |
 | `pdf_forms` | boolean | `false` | Enable interactive form fields in PDF output. Output gets a `-form` suffix. |
 | `dotx_field_type` | string | `"form"` | `.dotx` field type: `"form"` (Word Text Form Fields, directly fillable in Word) or `"merge"` (classic MERGEFIELDs, require a mail merge data source). |
 

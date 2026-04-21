@@ -757,7 +757,7 @@ def _resolve_css(
             if resolved.is_relative_to(repo_root.resolve()):
                 return resolved
 
-    # Walk from doc_path up to repo_root looking for _pdf-theme.css (deepest wins)
+    # Walk from doc_path up to repo_root looking for _pdf-theme.css. Deepest wins.
     if doc_path is not None and repo_root is not None:
         doc_dir = doc_path.parent if doc_path.is_file() else doc_path
         try:
@@ -769,9 +769,10 @@ def _resolve_css(
         except ValueError:
             candidate_dirs = [doc_dir]
         for directory in candidate_dirs:
-            candidate = directory / "_pdf-theme.css"
-            if candidate.exists():
-                return candidate.resolve()
+            for name in ("_pdf-theme.css", "_theme.css"):
+                candidate = directory / name
+                if candidate.exists():
+                    return candidate.resolve()
 
     # Nothing found — generate a default _pdf-theme.css at the repo root
     # (or alongside the document if there is no repo root) and inform the user.

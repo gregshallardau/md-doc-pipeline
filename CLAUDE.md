@@ -97,10 +97,10 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
 2. **Rendering** (`renderer.py`) — strips frontmatter (preserved verbatim), processes Markdown body through Jinja2. Template fragment search order: doc dir → `doc/templates/` → ancestor `templates/` dirs (deepest first) → repo-root `templates/`. A custom `_MarkdownLoader` handles `{% include %}` resolution.
 
 3. **Building** (`builders/`):
-   - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Resolves CSS theme with same cascading search (doc dir → ancestors → repo root). If no `_pdf-theme.css` found anywhere, auto-generates one at repo root from built-in defaults. Extracts first H1 as cover page title when `cover_page: true`. Key call: `weasyprint.HTML(...).write_pdf(path)`.
+   - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Theme cascade: at each directory level (doc dir → ancestors → repo root) looks for `_pdf-theme.css` first, then `_theme.css` (shared base). Auto-generates `_theme.css` at repo root if nothing found anywhere. Extracts first H1 as cover page title when `cover_page: true`. Key call: `weasyprint.HTML(...).write_pdf(path)`.
    - PDF forms — Add `pdf_forms: true` to any document's frontmatter or parent `_meta.yml` to produce interactive fillable PDFs. The standard `pdf.py` builder passes `pdf_forms=True` to WeasyPrint 68.x, which natively supports AcroForm fields. HTML `<input>`, `<select>`, `<textarea>` elements become real interactive fields. Output file gets a `-form` suffix: `onboarding.md` → `onboarding-form.pdf`. See `workspace/CLAUDE.md` for authoring guidance.
-   - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use.
-   - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word fields (Text Form Fields by default, MERGEFIELDs if `dotx_field_type: merge`). Patches the saved file's ZIP content type from `.docx` → `.dotx`.
+   - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use. Word theme cascade: at each directory level looks for `_docx-theme.css` first, then `_theme.css` (shared base), then `_pdf-theme.css` (legacy fallback). CSS `@import` in any of these files is resolved by `docx_theme.parse_css_for_word`.
+   - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word fields (Text Form Fields by default, MERGEFIELDs if `dotx_field_type: merge`). Patches the saved file's ZIP content type from `.docx` → `.dotx`. Applies Word CSS theme via the same cascade as `docx.py`.
 
 4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Pure Python — no external rendering service required. Supported diagram types:
    - `flowchart`/`graph` — directed graphs with 8 node shapes (rect, diamond, stadium, rounded, circle, cylinder, hexagon, subroutine), edge styles (solid `-->`, dotted `-.->`, thick `==>`, no-arrow `---`), pipe labels (`-->|label|`), and subgraph grouping
@@ -147,6 +147,13 @@ pdf_forms: true               # enable interactive form fields in PDF (uses -for
 dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
 pdf_theme: path/to/custom/_pdf-theme.css
                                # also available as CLI flag: --theme / -t
+                               # _pdf-theme.css is also used as Word theme fallback (see below)
+# _docx-theme.css (filesystem config file, not a _meta.yml key)
+#   Optional Word-specific CSS override file. Place alongside _pdf-theme.css.
+#   If present, it is used instead of _pdf-theme.css for docx/dotx output.
+#   If absent, docx/dotx builders fall back to _pdf-theme.css.
+#   Same CSS format — only properties meaningful to python-docx are needed
+#   (body font-family/font-size, h1–h4 color/font-size, code font-family, th background/color).
 cover_page: true              # default true — set false to omit cover
 cover_label: Report           # text above the title on cover page (default: "Report")
 cover_text_align: left        # left | right (default: left) — alignment of cover content
