@@ -1,0 +1,17 @@
+/* Pulse Monitor — Word theme.
+   Imports the Blueshift base Word theme (which itself imports _theme.css),
+   then swaps the navy/blue palette for Pulse's amber/orange brand.
+   Only properties meaningful to python-docx are applied.
+*/
+@import "../../_docx-theme.css";
+
+/* Headings and body accents */
+h1     { color: #7d3c00; }
+h2     { color: #e67e22; }
+strong { color: #7d3c00; }
+a      { color: #e67e22; }
+
+/* Tables */
+th                     { background: #7d3c00; }
+tr:nth-child(even) td  { background: #fdf3e7; }
+code  { background: #fef5e7; color: #7d3c00; }

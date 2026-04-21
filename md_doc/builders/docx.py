@@ -35,7 +35,9 @@ import markdown
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
+
+from ..docx_theme import apply_theme_to_doc, resolve_docx_theme, set_cell_shading
 
 # Markdown extensions to enable (consistent with pdf builder)
 _MD_EXTENSIONS = [
@@ -63,9 +65,13 @@ class _DocxBuilder(HTMLParser):
              pre/code, blockquote, strong/b, em/i, hr, br.
     """
 
-    def __init__(self, doc: Document) -> None:
+    def __init__(self, doc: Document, theme: dict[str, Any] | None = None) -> None:
         super().__init__()
         self.doc = doc
+        self._theme: dict[str, Any] = theme or {}
+
+        # Apply CSS theme to document styles
+        apply_theme_to_doc(self.doc, self._theme)
 
         # State tracking
         self._paragraph = None  # current paragraph being built
@@ -114,7 +120,7 @@ class _DocxBuilder(HTMLParser):
         run.bold = self._bold
         run.italic = self._italic
         if self._in_code:
-            run.font.name = "Courier New"
+            run.font.name = self._theme.get("font_code", "Courier New")
             run.font.size = Pt(9)
 
     # ------------------------------------------------------------------
@@ -284,6 +290,9 @@ class _DocxBuilder(HTMLParser):
         table = self.doc.add_table(rows=len(rows), cols=max_cols)
         table.style = "Table Grid"
 
+        header_bg = self._theme.get("color_table_header_bg")
+        header_text_color = self._theme.get("color_table_header_text")
+
         for r_idx, row in enumerate(rows):
             for c_idx, (is_header, text) in enumerate(row):
                 if c_idx >= max_cols:
@@ -293,6 +302,12 @@ class _DocxBuilder(HTMLParser):
                 if is_header:
                     for run in cell.paragraphs[0].runs:
                         run.bold = True
+                        if header_text_color:
+                            from ..docx_theme import _hex_to_rgb
+                            r, g, b = _hex_to_rgb(header_text_color)
+                            run.font.color.rgb = RGBColor(r, g, b)
+                    if header_bg:
+                        set_cell_shading(cell, header_bg)
 
         self._paragraph = None
 
@@ -327,10 +342,24 @@ def _strip_leading_h1(md_content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[str, Any]:
+    """Walk from doc_path up to repo_root looking for _docx-theme.css or _pdf-theme.css.
+
+    Delegates to ``resolve_docx_theme`` from ``docx_theme`` module.
+    Returns a parsed theme dict, or an empty dict if no theme file is found.
+    """
+    if doc_path is None or repo_root is None:
+        return {}
+    result = resolve_docx_theme(doc_path, repo_root)
+    return result if result is not None else {}
+
+
 def build(
     rendered_md: str,
     config: dict[str, Any],
     out_path: Path,
+    doc_path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> None:
     """
     Convert rendered Markdown to a .docx file.
@@ -346,6 +375,10 @@ def build(
         Merged config dict from load_config().
     out_path:
         Destination path for the generated .docx file.
+    doc_path:
+        Source .md path. Used to resolve the CSS theme cascade.
+    repo_root:
+        Repo root path. Used to bound the CSS theme cascade.
     """
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,6 +393,9 @@ def build(
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)
 
+    # Resolve CSS theme for Word styling
+    theme = _resolve_docx_theme(doc_path, repo_root)
+
     # Build document
     doc = Document()
 
@@ -373,7 +409,7 @@ def build(
     doc.add_paragraph(title, style="Title")
 
     # Walk the HTML into docx elements
-    builder = _DocxBuilder(doc)
+    builder = _DocxBuilder(doc, theme=theme)
     builder.feed(html)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

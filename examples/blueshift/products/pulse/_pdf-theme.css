@@ -1,6 +1,7 @@
-/* Pulse Monitor — brand colour overrides.
-   Imports the Blueshift base theme, then swaps the navy/blue palette
-   for Pulse's amber/orange brand. Everything else is inherited as-is.
+/* Pulse Monitor — PDF theme.
+   Imports the Blueshift base PDF theme (which itself imports _theme.css),
+   then swaps the navy/blue palette for Pulse's amber/orange brand.
+   Everything else is inherited as-is.
 */
 @import "../../_pdf-theme.css";
 

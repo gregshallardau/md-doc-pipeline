@@ -56,6 +56,7 @@ from .docx import (
     _DocxBuilder,
     _MD_EXTENSIONS,
     _extract_title,
+    _resolve_docx_theme,
     _strip_frontmatter,
     _strip_leading_h1,
 )
@@ -191,8 +192,14 @@ class _DotxBuilder(_DocxBuilder):
     (headings, lists, blockquotes, etc.) is inherited unchanged.
     """
 
-    def __init__(self, doc: Any, *, field_type: str = "form") -> None:
-        super().__init__(doc)
+    def __init__(
+        self,
+        doc: Any,
+        *,
+        field_type: str = "form",
+        theme: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(doc, theme=theme)
         self._field_type = field_type
         self._bookmark_id = 0
 
@@ -216,7 +223,7 @@ class _DotxBuilder(_DocxBuilder):
                     run.bold = bold
                     run.italic = italic
                     if code:
-                        run.font.name = "Courier New"
+                        run.font.name = self._theme.get("font_code", "Courier New")
                         run.font.size = Pt(9)
             else:
                 if self._field_type == "merge":
@@ -340,6 +347,7 @@ def build(
     out_path: Path,
     *,
     doc_path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> None:
     """
     Convert rendered Markdown to a .dotx Word merge template.
@@ -354,7 +362,9 @@ def build(
     out_path:
         Destination path for the generated .dotx file.
     doc_path:
-        Source .md path (unused currently, reserved for future use).
+        Source .md path. Used to resolve the CSS theme cascade.
+    repo_root:
+        Repo root path. Used to bound the CSS theme cascade.
     """
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -375,6 +385,9 @@ def build(
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)
 
+    # Resolve CSS theme for Word styling
+    theme = _resolve_docx_theme(doc_path, repo_root)
+
     # Build document
     doc = Document()
 
@@ -383,7 +396,7 @@ def build(
     if author:
         props.author = re.sub(r"\[\[\w+\]\]", "", author).strip()
 
-    builder = _DotxBuilder(doc, field_type=field_type)
+    builder = _DotxBuilder(doc, field_type=field_type, theme=theme)
 
     if cover_page:
         _add_cover_page(doc, {**config, "title": title}, builder)

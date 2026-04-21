@@ -548,14 +548,16 @@ outputs: [pdf]
 
 def find_parent_theme(from_dir: Path) -> Path | None:
     """
-    Walk up from *from_dir*'s parent looking for a _pdf-theme.css.
+    Walk up from *from_dir*'s parent looking for a _theme.css or _pdf-theme.css.
     Returns the first one found (nearest ancestor), or None.
+    Prefers _theme.css over _pdf-theme.css at each level.
     """
     current = from_dir.resolve().parent
     while True:
-        candidate = current / "_pdf-theme.css"
-        if candidate.exists():
-            return candidate
+        for name in ("_theme.css", "_pdf-theme.css"):
+            candidate = current / name
+            if candidate.exists():
+                return candidate
         parent = current.parent
         if parent == current:
             return None

@@ -297,11 +297,11 @@ def build(
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx  # type: ignore[import]
 
-                    build_docx(rendered_md, config, out_path)
+                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx  # type: ignore[import]
 
-                    build_dotx(rendered_md, config, out_path, doc_path=doc_path)
+                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
@@ -493,11 +493,11 @@ def export(
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx
 
-                    build_docx(rendered_md, config, out_path)
+                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=staging_dir)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx
 
-                    build_dotx(rendered_md, config, out_path, doc_path=doc_path)
+                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=staging_dir)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
