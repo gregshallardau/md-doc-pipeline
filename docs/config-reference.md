@@ -22,6 +22,7 @@ outputs: [pdf]
 | `date` | string | Today's date | Date string for cover page (free-form, e.g. `"April 2026"`). |
 | `outputs` | list | `[pdf]` | Output formats to generate. Values: `pdf`, `docx`, `dotx`. |
 | `output_pdf` | string | `<filename>.pdf` | Override the output PDF filename. |
+| `output_dir` | string | *(alongside source)* | Directory to write built outputs into. Set at any `_meta.yml` level — cascades down, overridden by deeper levels or document frontmatter. CLI `--output` always takes precedence. Supports `~` expansion. |
 | `pdf_theme` | string | Auto-resolved | Path to a custom `_pdf-theme.css` (absolute or relative to repo root). |
 | `pdf_forms` | boolean | `false` | Enable interactive form fields in PDF output. Output gets a `-form` suffix. |
 | `dotx_field_type` | string | `"form"` | `.dotx` field type: `"form"` (Word Text Form Fields, directly fillable in Word) or `"merge"` (classic MERGEFIELDs, require a mail merge data source). |

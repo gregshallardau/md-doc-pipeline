@@ -142,6 +142,7 @@ title, product, document_type, version, status, author
 outputs: [pdf, docx]          # default: [pdf]
                                # valid values: pdf | docx | dotx
 output_pdf: Custom-Name.pdf   # override output filename
+output_dir: /path/to/dest/    # route outputs here; cascades from _meta.yml; CLI --output wins
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
 dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
 pdf_theme: path/to/custom/_pdf-theme.css

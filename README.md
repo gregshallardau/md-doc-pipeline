@@ -157,6 +157,7 @@ date: 1 May 2026
 outputs: [pdf, dotx]              # pdf | docx | dotx — default: [pdf]
 output_pdf: Alpha-Report.pdf      # override output filename
 output_dotx: Alpha-Template.dotx
+output_dir: /path/to/output/      # route built files here (cascades from _meta.yml; CLI --output overrides)
 cover_page: true                  # default true — set false to omit cover
 cover_label: Report               # text above cover title (default: "Report")
 
