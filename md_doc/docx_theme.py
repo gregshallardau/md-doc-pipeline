@@ -270,6 +270,37 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _apply_font_name(font: Any, name: str) -> None:
+    """Set a font name and strip any inherited Word theme-font attributes.
+
+    python-docx's ``font.name`` setter writes ``w:ascii`` / ``w:hAnsi`` but
+    does NOT remove ``w:asciiTheme`` / ``w:hAnsiTheme``.  Word treats theme
+    attributes as higher-priority than explicit names, so Calibri Light keeps
+    appearing even after the setter runs.  We strip the theme attributes here
+    so the explicit name wins.
+    """
+    font.name = name
+    rFonts = font._element.rPr.get_or_add_rFonts() if hasattr(font._element, "rPr") else None
+    # Access rFonts via the lower-level XML when available
+    try:
+        rPr = font._element.rPr
+        if rPr is None:
+            return
+        rFonts = rPr.find(qn("w:rFonts"))
+        if rFonts is None:
+            return
+        for attr in (
+            qn("w:asciiTheme"),
+            qn("w:hAnsiTheme"),
+            qn("w:eastAsiaTheme"),
+            qn("w:cstheme"),
+        ):
+            if rFonts.get(attr) is not None:
+                del rFonts.attrib[attr]
+    except Exception:
+        pass
+
+
 def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
     """Apply a parsed CSS theme dict to Word document styles.
 
@@ -302,7 +333,7 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
     try:
         normal = doc.styles["Normal"]
         if font_body:
-            normal.font.name = font_body
+            _apply_font_name(normal.font, font_body)
         if font_size_body is not None:
             normal.font.size = Pt(font_size_body)
         if "text_align_body" in theme:
@@ -320,7 +351,7 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
     try:
         lp = doc.styles["List Paragraph"]
         if font_body:
-            lp.font.name = font_body
+            _apply_font_name(lp.font, font_body)
         if font_size_body is not None:
             lp.font.size = Pt(font_size_body)
     except KeyError:
@@ -341,7 +372,7 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         # Font name — only set if explicitly declared for this heading level
         heading_font = theme.get(f"font_{tag}")
         if heading_font:
-            heading_style.font.name = heading_font
+            _apply_font_name(heading_style.font, heading_font)
 
         # Font size
         if size_key in theme:
