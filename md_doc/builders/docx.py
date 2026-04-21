@@ -113,22 +113,34 @@ class _DocxBuilder(HTMLParser):
         return self._paragraph
 
     def _add_text(self, text: str) -> None:
-        """Add text to the current paragraph with current bold/italic state."""
+        """Add text to the current paragraph with current bold/italic state.
+
+        Bare ``\\n`` characters within a paragraph are converted to Word line
+        breaks (``<w:br/>``) so that fields written on consecutive lines in the
+        Markdown source each appear on their own line in the Word output without
+        any inter-paragraph spacing.
+        """
         if not text:
             return
-        # Whitespace-only text between block elements (e.g. between </p> and <p>)
-        # must not create a phantom empty paragraph.
+        # Whitespace-only text between block elements must not create a phantom
+        # empty paragraph.
         if self._paragraph is None and not text.strip():
             return
         para = self._current_para()
-        run = para.add_run(text)
-        if self._bold:
-            run.bold = True
-        if self._italic:
-            run.italic = True
-        if self._in_code:
-            run.font.name = self._theme.get("font_code", "Courier New")
-            run.font.size = Pt(9)
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if i > 0:
+                run = para.add_run()
+                run._r.append(OxmlElement("w:br"))
+            if line:
+                run = para.add_run(line)
+                if self._bold:
+                    run.bold = True
+                if self._italic:
+                    run.italic = True
+                if self._in_code:
+                    run.font.name = self._theme.get("font_code", "Courier New")
+                    run.font.size = Pt(9)
 
     # ------------------------------------------------------------------
     # HTMLParser callbacks
