@@ -404,12 +404,18 @@ def _add_page_header_bar(
     header_text = config.get("header_text", "")
 
     height_mm = float(re.sub(r"[^\d.]", "", height_str) or "12")
-    _ = float(re.sub(r"[^\d.]", "", padding_str) or "3")  # consumed by CSS, unused in Word
+    gap_mm = float(re.sub(r"[^\d.]", "", padding_str) or "6")
 
     logo_path = _resolve_asset(str(logo_file), doc_path, repo_root) if logo_file else None
 
     section = doc.sections[0]
     header = section.header
+
+    # Expand top margin so body text doesn't sit flush against the bar.
+    # header_distance (default ~12.7mm) + bar height + gap = new top margin.
+    header_distance_mm = section.header_distance / 914400 * 25.4  # EMU → mm
+    section.top_margin = Mm(header_distance_mm + height_mm + gap_mm)
+
     # Remove the default empty paragraph python-docx adds
     for para in list(header.paragraphs):
         para._p.getparent().remove(para._p)
@@ -417,7 +423,20 @@ def _add_page_header_bar(
     text_width = section.page_width - section.left_margin - section.right_margin
     cols = 2 if logo_path else 1
     table = header.add_table(rows=1, cols=cols, width=text_width)
-    table.style = "Table Grid"
+    table.style = "Table Normal"
+
+    # Remove table-level borders (Table Normal may still have some in style)
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    tblBorders = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"), "none")
+        tblBorders.append(b)
+    tblPr.append(tblBorders)
 
     # Fix row height
     row = table.rows[0]
@@ -428,7 +447,7 @@ def _add_page_header_bar(
     trHeight.set(qn("w:hRule"), "atLeast")
     trPr.append(trHeight)
 
-    # Shade cells, remove borders, and vertically centre content
+    # Shade cells, remove cell borders, and vertically centre content
     for cell in row.cells:
         set_cell_shading(cell, color_hex)
         tcPr = cell._tc.get_or_add_tcPr()
