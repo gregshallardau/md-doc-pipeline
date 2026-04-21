@@ -183,6 +183,13 @@ class _DocxBuilder(HTMLParser):
         elif tag in ("em", "i"):
             self._italic = True
 
+        elif tag == "br":
+            # Markdown hard line break (two trailing spaces) → Word line break.
+            # Keeps fields in the same paragraph so no inter-paragraph spacing.
+            para = self._current_para()
+            run = para.add_run()
+            run._r.append(OxmlElement("w:br"))
+
         elif tag == "hr":
             self._paragraph = self.doc.add_paragraph()
             self._paragraph.paragraph_format.space_before = Pt(6)
