@@ -33,6 +33,7 @@ from typing import Any
 
 import markdown
 from docx import Document
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
 
@@ -173,10 +174,16 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = self.doc.add_paragraph()
             self._paragraph.paragraph_format.space_before = Pt(6)
             self._paragraph.paragraph_format.space_after = Pt(6)
-            # Add a bottom border as a horizontal rule
+            # Add a bottom border as a horizontal rule (OxmlElement works on all versions)
             pPr = self._paragraph._p.get_or_add_pPr()
-            pBdr = pPr.get_or_add_pBdr()
-            bottom = pBdr.get_or_add_bottom()
+            pBdr = pPr.find(qn("w:pBdr"))
+            if pBdr is None:
+                pBdr = OxmlElement("w:pBdr")
+                pPr.append(pBdr)
+            bottom = pBdr.find(qn("w:bottom"))
+            if bottom is None:
+                bottom = OxmlElement("w:bottom")
+                pBdr.append(bottom)
             bottom.set(qn("w:val"), "single")
             bottom.set(qn("w:sz"), "6")
             bottom.set(qn("w:space"), "1")
