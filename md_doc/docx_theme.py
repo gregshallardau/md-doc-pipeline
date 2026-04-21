@@ -222,7 +222,12 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             if pt is not None:
                 theme[f"font_size_{tag}"] = pt
         if "font-weight" in props:
-            theme[f"bold_{tag}"] = props["font-weight"].strip().lower() in ("bold", "700", "800", "900")
+            theme[f"bold_{tag}"] = props["font-weight"].strip().lower() in (
+                "bold",
+                "700",
+                "800",
+                "900",
+            )
 
     # code / pre — use font-family from `code` selector for monospace font
     code_props = blocks.get("code", {})
