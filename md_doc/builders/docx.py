@@ -220,11 +220,6 @@ class _DocxBuilder(HTMLParser):
 
         # Field-mode state
         self._bookmark_id = 0
-        self._para_has_literal_text = False
-        # Last consecutive field-only paragraph — used to retroactively zero
-        # its space_after only when the NEXT paragraph is also field-only.
-        # This keeps normal spacing after the last field line in a block.
-        self._last_field_only_para: Any = None
 
     # ------------------------------------------------------------------
     # Paragraph helpers
@@ -233,7 +228,6 @@ class _DocxBuilder(HTMLParser):
     def _new_para(self, style: str = "Normal") -> None:
         self._paragraph = self.doc.add_paragraph(style=style)
         self._run = None
-        self._para_has_literal_text = False
 
     def _current_para(self) -> Any:
         if self._paragraph is None:
@@ -268,8 +262,6 @@ class _DocxBuilder(HTMLParser):
                                 br_run = paragraph.add_run()
                                 br_run._r.append(OxmlElement("w:br"))
                             if line:
-                                if line.strip():
-                                    self._para_has_literal_text = True
                                 run = paragraph.add_run(line)
                                 if bold:
                                     run.bold = True
@@ -405,22 +397,6 @@ class _DocxBuilder(HTMLParser):
         tag = tag.lower()
 
         if tag in ("h1", "h2", "h3", "h4", "p"):
-            if tag == "p" and self._field_type and self._paragraph is not None:
-                has_field = self._paragraph._p.find(".//" + qn("w:fldChar")) is not None
-                if has_field and not self._para_has_literal_text:
-                    # Field-only paragraph: collapse gap *before* it so consecutive
-                    # field lines render tight.  Space *after* is only zeroed
-                    # retroactively when the NEXT paragraph is also field-only,
-                    # preserving normal spacing after the last line in the block.
-                    self._paragraph.paragraph_format.space_before = Pt(0)
-                    if self._last_field_only_para is not None:
-                        self._last_field_only_para.paragraph_format.space_after = Pt(0)
-                    self._last_field_only_para = self._paragraph
-                else:
-                    self._last_field_only_para = None
-            elif tag != "p":
-                self._last_field_only_para = None
-            self._para_has_literal_text = False
             self._paragraph = None
 
         elif tag in ("ul", "ol"):
