@@ -218,6 +218,8 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             pt = _parse_pt(props["font-size"])
             if pt is not None:
                 theme[f"font_size_{tag}"] = pt
+        if "font-weight" in props:
+            theme[f"bold_{tag}"] = props["font-weight"].strip().lower() in ("bold", "700", "800", "900")
 
     # code / pre — use font-family from `code` selector for monospace font
     code_props = blocks.get("code", {})
@@ -310,6 +312,11 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if color_key in theme:
             r, g, b = _hex_to_rgb(theme[color_key])
             heading_style.font.color.rgb = RGBColor(r, g, b)
+
+        # Bold
+        bold_key = f"bold_{tag}"
+        if bold_key in theme:
+            heading_style.font.bold = theme[bold_key]
 
 
 # ---------------------------------------------------------------------------
