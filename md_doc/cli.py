@@ -2,7 +2,8 @@
 md-doc CLI entrypoint.
 
 Commands:
-  md-doc build [ROOT] [--output DIR] [--format pdf|docx|dotx|all]
+  md-doc build [ROOT] [--workspace NAME] [--output DIR] [--format pdf|docx|dotx|all]
+  md-doc workspaces
   md-doc export [SOURCE] [--output DIR] [--format pdf|docx|dotx|all]
   md-doc register [ROOT]
   md-doc sync [ROOT] [--backend azure|s3|local]
@@ -18,10 +19,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
+import yaml
 
-from .config import load_config, get_output_formats, load_merge_fields
+from .config import load_config, get_output_formats, load_merge_fields, _find_repo_root
 from .renderer import render
 
 # ---------------------------------------------------------------------------
@@ -113,6 +116,42 @@ def _resolve_output_path(
         return doc_path.with_suffix(ext)
 
 
+_REMOTE_WORKSPACES_FILE = "workspace/remote-workspaces.yml"
+
+
+def _load_remote_workspaces(repo_root: Path) -> dict[str, Any]:
+    """Load workspace/remote-workspaces.yml from the repo root. Returns {} if absent."""
+    rw_file = repo_root / _REMOTE_WORKSPACES_FILE
+    if not rw_file.exists():
+        return {}
+    with rw_file.open() as f:
+        data = yaml.safe_load(f) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _resolve_workspace(name: str, repo_root: Path) -> Path:
+    """Resolve a named workspace to a Path. Raises UsageError if not found."""
+    workspaces = _load_remote_workspaces(repo_root)
+    if name not in workspaces:
+        defined = ", ".join(workspaces.keys()) if workspaces else "(none defined)"
+        raise click.UsageError(
+            f"Workspace '{name}' not found in {_REMOTE_WORKSPACES_FILE}. "
+            f"Defined workspaces: {defined}"
+        )
+    entry = workspaces[name]
+    if isinstance(entry, dict):
+        raw_path = entry.get("path", "")
+    else:
+        raw_path = str(entry)
+    resolved = Path(str(raw_path)).expanduser().resolve()
+    if not resolved.exists():
+        raise click.UsageError(
+            f"Workspace '{name}' path does not exist: {resolved}\n"
+            f"Check that the share is mounted."
+        )
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
@@ -130,13 +169,20 @@ def main() -> None:
 
 
 @main.command()
-@click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("root", default=".", type=click.Path(file_okay=False, path_type=Path))
 @click.option(
     "--output",
     "-o",
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
     help="Output directory (mirrors source tree). Defaults to writing alongside source files.",
+)
+@click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    type=str,
+    help="Named workspace from workspace/remote-workspaces.yml. Overrides ROOT.",
 )
 @click.option(
     "--format",
@@ -158,19 +204,36 @@ def main() -> None:
     "--dry-run", is_flag=True, default=False, help="Print what would be built without building."
 )
 def build(
-    root: Path, output: Path | None, fmt: str, theme: Path | None, strict: bool, dry_run: bool
+    root: Path,
+    output: Path | None,
+    workspace: str | None,
+    fmt: str,
+    theme: Path | None,
+    strict: bool,
+    dry_run: bool,
 ) -> None:
     """Build all Markdown documents under ROOT to PDF and/or DOCX.
 
-    ROOT defaults to the current directory.
+    ROOT defaults to the current directory. Use --workspace / -w to build a
+    named remote workspace defined in workspace/remote-workspaces.yml instead.
 
     \b
     Examples:
       md-doc build
       md-doc build products/ --output build/
       md-doc build products/ --format pdf
+      md-doc build --workspace affinity
+      md-doc build -w affinity --format dotx
     """
-    root = root.resolve()
+    repo_root = _find_repo_root(Path.cwd())
+
+    if workspace is not None:
+        root = _resolve_workspace(workspace, repo_root)
+    else:
+        root = root.resolve()
+        if not root.exists():
+            raise click.UsageError(f"Path does not exist: {root}")
+
     if output is not None:
         output = output.resolve()
 
@@ -260,6 +323,44 @@ def build(
 
     if not dry_run:
         click.echo("Build complete.")
+
+
+# ---------------------------------------------------------------------------
+# workspaces
+# ---------------------------------------------------------------------------
+
+
+@main.command("workspaces")
+def workspaces_cmd() -> None:
+    """List remote workspaces defined in workspace/remote-workspaces.yml.
+
+    \b
+    Example:
+      md-doc workspaces
+    """
+    repo_root = _find_repo_root(Path.cwd())
+    data = _load_remote_workspaces(repo_root)
+    rw_file = repo_root / _REMOTE_WORKSPACES_FILE
+
+    if not data:
+        click.echo(f"No remote workspaces defined in {rw_file}")
+        click.echo("Create workspace/remote-workspaces.yml to define named remote paths.")
+        return
+
+    click.echo(f"Remote workspaces ({rw_file}):\n")
+    for name, entry in data.items():
+        if isinstance(entry, dict):
+            path = entry.get("path", "")
+            description = entry.get("description", "")
+        else:
+            path = str(entry)
+            description = ""
+        resolved = Path(str(path)).expanduser().resolve()
+        status = "✓" if resolved.exists() else "✗ (not mounted)"
+        desc_str = f"  {description}" if description else ""
+        click.echo(f"  {name:<20} {status}  {resolved}{desc_str}")
+
+    click.echo("\nUsage: md-doc build --workspace <name>")
 
 
 # ---------------------------------------------------------------------------
