@@ -122,8 +122,10 @@ class _DocxBuilder(HTMLParser):
             return
         para = self._current_para()
         run = para.add_run(text)
-        run.bold = self._bold
-        run.italic = self._italic
+        if self._bold:
+            run.bold = True
+        if self._italic:
+            run.italic = True
         if self._in_code:
             run.font.name = self._theme.get("font_code", "Courier New")
             run.font.size = Pt(9)
@@ -402,7 +404,7 @@ def _add_page_header_bar(
     header_text = config.get("header_text", "")
 
     height_mm = float(re.sub(r"[^\d.]", "", height_str) or "12")
-    padding_mm = float(re.sub(r"[^\d.]", "", padding_str) or "3")
+    _ = float(re.sub(r"[^\d.]", "", padding_str) or "3")  # consumed by CSS, unused in Word
 
     logo_path = _resolve_asset(str(logo_file), doc_path, repo_root) if logo_file else None
 
