@@ -33,9 +33,10 @@ from typing import Any
 
 import markdown
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Mm, Pt, RGBColor
 
 from ..docx_theme import apply_theme_to_doc, resolve_docx_theme, set_cell_shading
 
@@ -114,6 +115,10 @@ class _DocxBuilder(HTMLParser):
     def _add_text(self, text: str) -> None:
         """Add text to the current paragraph with current bold/italic state."""
         if not text:
+            return
+        # Whitespace-only text between block elements (e.g. between </p> and <p>)
+        # must not create a phantom empty paragraph.
+        if self._paragraph is None and not text.strip():
             return
         para = self._current_para()
         run = para.add_run(text)
@@ -354,6 +359,100 @@ def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[s
     return result if result is not None else {}
 
 
+def _resolve_asset(filename: str, doc_path: Path | None, repo_root: Path | None) -> Path | None:
+    """Find an asset (logo etc.) by walking from doc dir up to repo root."""
+    p = Path(filename)
+    if p.is_absolute():
+        return p if p.exists() else None
+    search_dirs: list[Path] = []
+    if doc_path:
+        d = doc_path.parent if doc_path.is_file() else doc_path
+        search_dirs.append(d)
+        if repo_root:
+            try:
+                rel = d.relative_to(repo_root)
+                for i in range(len(rel.parts) - 1, 0, -1):
+                    search_dirs.append(repo_root / Path(*rel.parts[:i]))
+            except ValueError:
+                pass
+            search_dirs.append(repo_root)
+    for d in search_dirs:
+        candidate = d / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _add_page_header_bar(
+    doc: Document,
+    config: dict[str, Any],
+    doc_path: Path | None,
+    repo_root: Path | None,
+) -> None:
+    """Add a coloured header bar with optional logo to every page of the Word doc."""
+    if not config.get("page_header_bar"):
+        return
+
+    color_hex = str(config.get("page_header_bar_color", "#2563eb")).lstrip("#")
+    text_color_hex = str(config.get("page_header_bar_text_color", "#ffffff")).lstrip("#")
+    height_str = str(config.get("page_header_bar_height", "12mm"))
+    padding_str = str(config.get("page_header_bar_padding", "3mm"))
+    logo_file = config.get("page_header_bar_logo") or config.get("header_logo")
+    header_text = config.get("header_text", "")
+
+    height_mm = float(re.sub(r"[^\d.]", "", height_str) or "12")
+    padding_mm = float(re.sub(r"[^\d.]", "", padding_str) or "3")
+
+    logo_path = _resolve_asset(str(logo_file), doc_path, repo_root) if logo_file else None
+
+    section = doc.sections[0]
+    header = section.header
+    # Remove the default empty paragraph python-docx adds
+    for para in list(header.paragraphs):
+        para._p.getparent().remove(para._p)
+
+    text_width = section.page_width - section.left_margin - section.right_margin
+    cols = 2 if logo_path else 1
+    table = header.add_table(rows=1, cols=cols, width=text_width)
+    table.style = "Table Grid"
+
+    # Fix row height
+    row = table.rows[0]
+    tr = row._tr
+    trPr = tr.get_or_add_trPr()
+    trHeight = OxmlElement("w:trHeight")
+    trHeight.set(qn("w:val"), str(int(Mm(height_mm) / 914.4 * 1440 * 20)))
+    trHeight.set(qn("w:hRule"), "atLeast")
+    trPr.append(trHeight)
+
+    # Shade cells and remove borders
+    for cell in row.cells:
+        set_cell_shading(cell, color_hex)
+        tcPr = cell._tc.get_or_add_tcPr()
+        tcBorders = OxmlElement("w:tcBorders")
+        for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            b = OxmlElement(f"w:{side}")
+            b.set(qn("w:val"), "none")
+            tcBorders.append(b)
+        tcPr.append(tcBorders)
+
+    # Header text in left cell
+    if header_text:
+        para = row.cells[0].paragraphs[0]
+        run = para.add_run(str(header_text))
+        run.bold = True
+        run.font.color.rgb = RGBColor.from_string(text_color_hex)
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    # Logo in right cell (or only cell if no text)
+    if logo_path:
+        para = row.cells[-1].paragraphs[0]
+        para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run = para.add_run()
+        logo_h = Mm(max(height_mm - padding_mm * 2, 4))
+        run.add_picture(str(logo_path), height=logo_h)
+
+
 def build(
     rendered_md: str,
     config: dict[str, Any],
@@ -404,6 +503,9 @@ def build(
     props.title = title
     if author:
         props.author = author
+
+    # Page header bar (coloured bar + logo on every page)
+    _add_page_header_bar(doc, config, doc_path, repo_root)
 
     # Title paragraph
     doc.add_paragraph(title, style="Title")
