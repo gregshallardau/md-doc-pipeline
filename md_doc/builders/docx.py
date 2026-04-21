@@ -109,18 +109,13 @@ def _insert_form_field(
     bold: bool = False,
     italic: bool = False,
 ) -> None:
-    """Append a Word Text Form Field with Bookmark=*field_name* to *paragraph*.
+    """Append a Word Text Form Field named *field_name* to *paragraph*.
 
-    The bookmark name IS the variable name. Fill-in is enabled so the template
-    is directly fillable in Word without a mail merge data source.
+    The field name is stored in ffData/name and is directly fillable in Word
+    without a mail merge data source.  Bookmarks are intentionally omitted —
+    they are not needed for fill-in use and cause Word to render extra visual
+    line breaks when multiple fields appear consecutively in the same paragraph.
     """
-    p = paragraph._p
-
-    bk_start = OxmlElement("w:bookmarkStart")
-    bk_start.set(qn("w:id"), str(bookmark_id))
-    bk_start.set(qn("w:name"), field_name)
-    p.append(bk_start)
-
     run = paragraph.add_run()
     if bold:
         run.bold = True
@@ -161,10 +156,6 @@ def _insert_form_field(
     fld_end = OxmlElement("w:fldChar")
     fld_end.set(qn("w:fldCharType"), "end")
     run._r.append(fld_end)
-
-    bk_end = OxmlElement("w:bookmarkEnd")
-    bk_end.set(qn("w:id"), str(bookmark_id))
-    p.append(bk_end)
 
 
 # ---------------------------------------------------------------------------
