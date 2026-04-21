@@ -209,6 +209,18 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if "text-align" in props and "text_align_body" not in theme:
             theme["text_align_body"] = props["text-align"].strip().lower()
 
+    # p — paragraph spacing
+    for sel in ("p", "body p"):
+        props = blocks.get(sel, {})
+        for css_prop, theme_key in (
+            ("margin-bottom", "para_space_after"),
+            ("margin-top", "para_space_before"),
+        ):
+            if css_prop in props and theme_key not in theme:
+                pt = _parse_pt(props[css_prop])
+                if pt is not None:
+                    theme[theme_key] = pt
+
     # headings
     for level in range(1, 5):
         tag = f"h{level}"
@@ -222,12 +234,11 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             if pt is not None:
                 theme[f"font_size_{tag}"] = pt
         if "font-weight" in props:
-            theme[f"bold_{tag}"] = props["font-weight"].strip().lower() in (
-                "bold",
-                "700",
-                "800",
-                "900",
-            )
+            fw = props["font-weight"].strip().lower()
+            try:
+                theme[f"bold_{tag}"] = fw == "bold" or int(fw) >= 600
+            except ValueError:
+                theme[f"bold_{tag}"] = fw in ("bold", "bolder")
 
     # code / pre — use font-family from `code` selector for monospace font
     code_props = blocks.get("code", {})
@@ -294,6 +305,10 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
             align = _ALIGN_MAP.get(theme["text_align_body"])
             if align is not None:
                 normal.paragraph_format.alignment = align
+        if "para_space_after" in theme:
+            normal.paragraph_format.space_after = Pt(theme["para_space_after"])
+        if "para_space_before" in theme:
+            normal.paragraph_format.space_before = Pt(theme["para_space_before"])
     except KeyError:
         pass
 
