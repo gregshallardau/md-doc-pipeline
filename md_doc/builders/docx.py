@@ -423,7 +423,6 @@ def _add_page_header_bar(
     text_width = section.page_width - section.left_margin - section.right_margin
     cols = 2 if logo_path else 1
     table = header.add_table(rows=1, cols=cols, width=text_width)
-    table.style = "Table Normal"
 
     # Remove table-level borders (Table Normal may still have some in style)
     tbl = table._tbl
