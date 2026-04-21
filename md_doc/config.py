@@ -13,7 +13,6 @@ from typing import Any
 
 import yaml
 
-
 # Fields that are merged (list union) rather than overridden
 _LIST_MERGE_FIELDS: set[str] = set()
 
@@ -121,7 +120,9 @@ def load_config(doc_path: Path, repo_root: Path | None = None) -> dict[str, Any]
     # Collect all directories from root → doc_dir (inclusive)
     try:
         rel = doc_dir.relative_to(repo_root)
-        parts = [repo_root] + [repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)]
+        parts = [repo_root] + [
+            repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)
+        ]
     except ValueError:
         # doc_dir is not under repo_root – just use doc_dir alone
         parts = [doc_dir]
@@ -171,7 +172,9 @@ def load_merge_fields(doc_path: Path, repo_root: Path | None = None) -> dict[str
 
     try:
         rel = doc_dir.relative_to(repo_root)
-        parts = [repo_root] + [repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)]
+        parts = [repo_root] + [
+            repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)
+        ]
     except ValueError:
         parts = [doc_dir]
 

@@ -19,7 +19,6 @@ from typing import Any
 from jinja2 import (
     BaseLoader,
     Environment,
-    FileSystemLoader,
     TemplateNotFound,
     Undefined,
     StrictUndefined,
@@ -43,9 +42,7 @@ class _MarkdownLoader(BaseLoader):
     def __init__(self, search_dirs: list[Path]) -> None:
         self._dirs: list[Path] = [Path(d) for d in search_dirs]
 
-    def get_source(
-        self, environment: Environment, template: str
-    ) -> tuple[str, str, Any]:
+    def get_source(self, environment: Environment, template: str) -> tuple[str, str, Any]:
         for directory in self._dirs:
             candidate = directory / template
             if candidate.is_file():
@@ -84,10 +81,7 @@ def _build_search_dirs(doc_path: Path, repo_root: Path) -> list[Path]:
     try:
         rel = doc_dir.relative_to(repo_root)
         # Parts from shallowest to deepest, not including repo_root or doc_dir itself
-        ancestor_dirs = [
-            repo_root / Path(*rel.parts[:i])
-            for i in range(1, len(rel.parts))
-        ]
+        ancestor_dirs = [repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts))]
     except ValueError:
         ancestor_dirs = []
 
@@ -117,7 +111,7 @@ def _strip_frontmatter(md_content: str) -> tuple[str, str]:
     pattern = re.compile(r"^(---\s*\n.*?\n---\s*\n)", re.DOTALL)
     match = pattern.match(md_content)
     if match:
-        return match.group(1), md_content[match.end():]
+        return match.group(1), md_content[match.end() :]
     return "", md_content
 
 
@@ -160,6 +154,7 @@ def render(
 
     if repo_root is None:
         from .config import _find_repo_root
+
         repo_root = _find_repo_root(doc_path.parent)
     else:
         repo_root = Path(repo_root).resolve()

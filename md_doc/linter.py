@@ -17,7 +17,7 @@ Checks performed:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,6 @@ from jinja2 import Environment, TemplateSyntaxError, meta
 
 from .config import _find_repo_root, load_config, load_merge_fields
 from .renderer import _build_search_dirs, _MarkdownLoader, _strip_frontmatter
-
 
 _VALID_FORMATS: frozenset[str] = frozenset({"pdf", "docx", "dotx"})
 _FIELD_RE = re.compile(r"\[\[(\w+)\]\]")
@@ -79,11 +78,13 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
             parsed = yaml.safe_load(inner)
             frontmatter = parsed if isinstance(parsed, dict) else {}
         except yaml.YAMLError as exc:
-            issues.append(LintIssue(
-                path=doc_path,
-                message=f"Frontmatter YAML is invalid: {exc}",
-                severity="error",
-            ))
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=f"Frontmatter YAML is invalid: {exc}",
+                    severity="error",
+                )
+            )
             # Can't continue without valid frontmatter
             return issues
 
@@ -97,11 +98,13 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
             doc_outputs = [doc_outputs]
         for fmt in doc_outputs:
             if fmt not in _VALID_FORMATS:
-                issues.append(LintIssue(
-                    path=doc_path,
-                    message=f"Unknown output format '{fmt}'",
-                    severity="error",
-                ))
+                issues.append(
+                    LintIssue(
+                        path=doc_path,
+                        message=f"Unknown output format '{fmt}'",
+                        severity="error",
+                    )
+                )
 
     # ------------------------------------------------------------------
     # 3. Jinja2 body syntax + undeclared variable scan
@@ -113,11 +116,13 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     try:
         ast = env.parse(body)
     except TemplateSyntaxError as exc:
-        issues.append(LintIssue(
-            path=doc_path,
-            message=f"Jinja2 syntax error: {exc}",
-            severity="error",
-        ))
+        issues.append(
+            LintIssue(
+                path=doc_path,
+                message=f"Jinja2 syntax error: {exc}",
+                severity="error",
+            )
+        )
         # Can't check variables or includes if template doesn't parse
         return issues
 
@@ -125,28 +130,32 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     undeclared = meta.find_undeclared_variables(ast)
     known_vars = set(config.keys())
     for var in sorted(undeclared - known_vars):
-        issues.append(LintIssue(
-            path=doc_path,
-            message=f"Undefined variable '{{{{ {var} }}}}' — not found in config cascade",
-            severity="warning",
-        ))
+        issues.append(
+            LintIssue(
+                path=doc_path,
+                message=f"Undefined variable '{{{{ {var} }}}}' — not found in config cascade",
+                severity="warning",
+            )
+        )
 
     # ------------------------------------------------------------------
     # 4. {% include %} resolution
     # ------------------------------------------------------------------
     referenced_templates = meta.find_referenced_templates(ast)
-    for tmpl_name in sorted(referenced_templates):
+    for tmpl_name in sorted(t for t in referenced_templates if t is not None):
         resolved = False
         for directory in search_dirs:
             if (directory / tmpl_name).is_file():
                 resolved = True
                 break
         if not resolved:
-            issues.append(LintIssue(
-                path=doc_path,
-                message=f"Include not found: '{tmpl_name}'",
-                severity="error",
-            ))
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=f"Include not found: '{tmpl_name}'",
+                    severity="error",
+                )
+            )
 
     # ------------------------------------------------------------------
     # 5. [[field]] references
@@ -156,11 +165,13 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
         used_fields = _FIELD_RE.findall(body)
         for field_name in sorted(set(used_fields)):
             if field_name not in merge_fields:
-                issues.append(LintIssue(
-                    path=doc_path,
-                    message=f"Undefined merge field '[[{field_name}]]' — not in _merge_fields.yml cascade",
-                    severity="warning",
-                ))
+                issues.append(
+                    LintIssue(
+                        path=doc_path,
+                        message=f"Undefined merge field '[[{field_name}]]' — not in _merge_fields.yml cascade",
+                        severity="warning",
+                    )
+                )
 
     return issues
 

@@ -1,8 +1,5 @@
 """Tests for `md-doc fields` CLI command."""
 
-import textwrap
-from pathlib import Path
-
 import pytest
 from click.testing import CliRunner
 

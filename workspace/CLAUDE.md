@@ -182,16 +182,145 @@ uv run md-doc theme override workspace/acme/products/pulse/
 
 ## Mermaid Diagrams
 
-Fenced `mermaid` code blocks are automatically rendered to inline SVGs in PDF output. No external tools needed.
+Fenced `mermaid` code blocks are automatically rendered to inline SVGs in PDF output. No external tools needed. Diagram colours are auto-themed from the document's `_pdf-theme.css`.
+
+### Flowchart
 
 ````markdown
 ```mermaid
 flowchart LR
-    A["Step 1"] --> B["Step 2"] --> C["Step 3"]
+    A["Step 1"] --> B["Step 2"] -.-> C["Step 3"]
 ```
 ````
 
-Supported chart types: `flowchart`/`graph`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`.
+**Node shapes:** `["rect"]`, `{"diamond"}`, `(["stadium"])`, `("rounded")`, `(("circle"))`, `[("cylinder")]`, `{{"hexagon"}}`, `[["subroutine"]]`
+
+**Edge styles:** `-->` solid, `-.->` dotted, `==>` thick, `---` no arrow
+
+**Labels:** `-- "label" -->` or `-->|"label"|` (pipe syntax)
+
+**Subgraphs:** `subgraph id["Label"]` ... `end`
+
+### Pie Chart
+
+````markdown
+```mermaid
+pie
+    title Budget Breakdown
+    "Engineering": 45
+    "Marketing": 30
+    "Operations": 25
+```
+````
+
+### Donut Chart
+
+````markdown
+```mermaid
+donut
+    title Time Allocation
+    "Coding": 40
+    "Meetings": 20
+    "Admin": 10
+```
+````
+
+### Bar Chart
+
+````markdown
+```mermaid
+bar
+    title Monthly Revenue
+    x-axis ["Jan", "Feb", "Mar", "Apr"]
+    bar [35, 48, 52, 61]
+```
+````
+
+### Gauge
+
+````markdown
+```mermaid
+gauge
+    title System Health
+    value 78
+    min 0
+    max 100
+```
+````
+
+### Sequence Diagram
+
+````markdown
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    Client->>API: Request
+    API-->>Client: Response
+```
+````
+
+### Timeline
+
+````markdown
+```mermaid
+timeline
+    title Product Roadmap
+    Q1 2026 : MVP launch
+             : User onboarding
+    Q2 2026 : API v2
+```
+````
+
+### Gantt Chart
+
+````markdown
+```mermaid
+gantt
+    title Project Plan
+    dateFormat YYYY-MM-DD
+    section Design
+    Wireframes :a1, 2026-01-06, 10d
+    section Dev
+    Backend    :b1, after a1, 14d
+```
+````
+
+### Mind Map
+
+````markdown
+```mermaid
+mindmap
+    root((Central Idea))
+        Branch A
+            Leaf 1
+            Leaf 2
+        Branch B
+            Leaf 3
+```
+````
+
+### ER Diagram
+
+````markdown
+```mermaid
+erDiagram
+    USER ||--o{ ORDER : places
+    ORDER ||--|{ LINE_ITEM : contains
+```
+````
+
+### State Diagram
+
+````markdown
+```mermaid
+stateDiagram-v2
+    [*] --> Draft
+    Draft --> Review
+    Review --> Published
+    Published --> [*]
+```
+````
 
 ---
 

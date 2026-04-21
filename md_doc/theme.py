@@ -11,20 +11,19 @@ import os
 from pathlib import Path
 from string import Template
 
-
 # ---------------------------------------------------------------------------
 # Built-in defaults  (used when auto-generating on first build)
 # ---------------------------------------------------------------------------
 
 DEFAULTS = {
-    "org_name":   "My Organisation",
-    "primary":    "#1b4f72",
-    "accent":     "#2e86c1",
-    "body_text":  "#1a1a2e",
-    "muted":      "#5d6d7e",
-    "body_font":  "'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
-    "mono_font":  "'Consolas', 'Courier New', 'Liberation Mono', monospace",
-    "page_size":  "A4",
+    "org_name": "My Organisation",
+    "primary": "#1b4f72",
+    "accent": "#2e86c1",
+    "body_text": "#1a1a2e",
+    "muted": "#5d6d7e",
+    "body_font": "'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
+    "mono_font": "'Consolas', 'Courier New', 'Liberation Mono', monospace",
+    "page_size": "A4",
 }
 
 
@@ -36,6 +35,7 @@ def generate_default_theme() -> str:
 # ---------------------------------------------------------------------------
 # Color helpers
 # ---------------------------------------------------------------------------
+
 
 def _tint(hex_color: str, factor: float = 0.08) -> str:
     """
@@ -532,6 +532,7 @@ def generate_override_theme(
 # _meta.yml generation
 # ---------------------------------------------------------------------------
 
+
 def generate_meta_yml(org_name: str, cover_page: bool) -> str:
     cover_str = "true" if cover_page else "false"
     return f"""author: {org_name}
@@ -543,6 +544,7 @@ outputs: [pdf]
 # ---------------------------------------------------------------------------
 # Parent theme discovery
 # ---------------------------------------------------------------------------
+
 
 def find_parent_theme(from_dir: Path) -> Path | None:
     """

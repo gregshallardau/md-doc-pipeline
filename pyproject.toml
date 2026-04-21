@@ -45,6 +45,8 @@ dev = [
     "black",
     "ruff",
     "mypy",
+    "types-pyyaml>=6.0.12.20260408",
+    "types-markdown>=3.10.2.20260408",
 ]
 
 [tool.ruff]
@@ -57,3 +59,13 @@ target-version = ["py311"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+exclude = [
+    "md_doc/sync/azure_files\\.py",
+    "md_doc/sync/s3\\.py",
+    "md_doc/builders/docx\\.py",
+    "md_doc/builders/dotx\\.py",
+]

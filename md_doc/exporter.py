@@ -142,7 +142,7 @@ def collect_outputs(
         else:
             lookup_stem = output_stem
 
-        orig_path, fm = stem_to_original.get(lookup_stem, (None, {}))
+        orig_path, fm = stem_to_original.get(lookup_stem, (None, {}))  # type: ignore[assignment]
 
         # Determine target directory
         export_path = fm.get("export_path")
@@ -160,6 +160,7 @@ def collect_outputs(
         # Security: ensure target stays within dest_dir
         if not target_dir.is_relative_to(dest_dir.resolve()):
             import logging
+
             logging.getLogger(__name__).warning(
                 "Skipping output %s — export_path %r resolves outside destination directory.",
                 output.name,
@@ -182,6 +183,7 @@ def collect_outputs(
         # Security: final check that resolved target is within dest_dir
         if not target.resolve().is_relative_to(dest_dir.resolve()):
             import logging
+
             logging.getLogger(__name__).warning(
                 "Skipping output %s — resolved path escapes destination directory.",
                 output.name,

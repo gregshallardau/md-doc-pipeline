@@ -98,7 +98,19 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
    - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use.
    - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word MERGEFIELD XML. Patches the saved file's ZIP content type from `.docx` → `.dotx`. For downstream mail merge use.
 
-4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Supported chart types: `flowchart`/`graph`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`. The SVGs are embedded directly in the HTML — no external rendering service required.
+4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Pure Python — no external rendering service required. Supported diagram types:
+   - `flowchart`/`graph` — directed graphs with 8 node shapes (rect, diamond, stadium, rounded, circle, cylinder, hexagon, subroutine), edge styles (solid `-->`, dotted `-.->`, thick `==>`, no-arrow `---`), pipe labels (`-->|label|`), and subgraph grouping
+   - `pie` — pie charts with title, labelled slices, percentage labels, and legend
+   - `donut` — donut charts (same data as pie, with centre hole and total label)
+   - `bar` / `xychart-beta` — bar charts with x-axis labels, y-axis scale, value labels
+   - `gauge` — gauge/meter with arc, value display, min/max labels
+   - `sequenceDiagram` — sequence diagrams with participants, solid/dashed arrows, and labels
+   - `timeline` — vertical timelines with period labels and event cards
+   - `gantt` — Gantt charts with sections, task bars, durations, and dependencies
+   - `mindmap` — hierarchical mind maps with root, branch, and leaf nodes
+   - `erDiagram` — entity-relationship diagrams with entities, attributes, and relationship lines
+   - `stateDiagram` / `stateDiagram-v2` — state diagrams with states, transitions, start/end markers
+   - Diagram colours are auto-extracted from the document's `_pdf-theme.css` (primary, accent, text, muted)
 
 5. **Syncing** (`sync/`) — discovers `*.pdf`, `*.docx` (optionally `*.md`) outputs and uploads via the configured backend: `azure_files.py` (Azure File Share), `s3.py` (AWS S3), or `local.py`. Directory structure is preserved relative to the search root.
 

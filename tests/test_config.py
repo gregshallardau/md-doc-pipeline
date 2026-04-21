@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from md_doc.config import load_config, get_output_formats, should_sync_md, load_merge_fields, load_merge_fields
+from md_doc.config import load_config, get_output_formats, should_sync_md, load_merge_fields
 
 
 @pytest.fixture()
@@ -29,12 +29,15 @@ def write_md(path: Path, frontmatter: str = "", body: str = "# Hello") -> None:
 
 class TestCascadingInheritance:
     def test_root_meta_only(self, tmp_repo):
-        write_meta(tmp_repo, """\
+        write_meta(
+            tmp_repo,
+            """\
             title: Root Title
             product: Acme
             version: "1.0"
             outputs: [pdf]
-        """)
+        """,
+        )
         doc = tmp_repo / "doc.md"
         write_md(doc)
         config = load_config(doc, repo_root=tmp_repo)
@@ -50,7 +53,7 @@ class TestCascadingInheritance:
         doc = subdir / "letter.md"
         write_md(doc)
         config = load_config(doc, repo_root=tmp_repo)
-        assert config["title"] == "Parent"   # inherited from root
+        assert config["title"] == "Parent"  # inherited from root
         assert config["product"] == "NewProduct"  # overridden by subdir
 
     def test_frontmatter_overrides_meta(self, tmp_repo):
@@ -88,62 +91,6 @@ class TestCascadingInheritance:
         write_md(doc)  # no frontmatter
         config = load_config(doc, repo_root=tmp_repo)
         assert config["outputs"] == ["pdf", "docx"]
-
-
-class TestMergeFields:
-    def test_single_file_at_root(self, tmp_repo):
-        (tmp_repo / "_merge_fields.yml").write_text(
-            "contact_name: Full name of the primary contact\ncompany: Client company name\n"
-        )
-        doc = tmp_repo / "doc.md"
-        doc.write_text("# Hello")
-        fields = load_merge_fields(doc, repo_root=tmp_repo)
-        assert fields == {
-            "contact_name": "Full name of the primary contact",
-            "company": "Client company name",
-        }
-
-    def test_cascade_additive(self, tmp_repo):
-        (tmp_repo / "_merge_fields.yml").write_text(
-            "contact_name: Full name\ncompany: Company name\n"
-        )
-        sub = tmp_repo / "clients" / "acme"
-        sub.mkdir(parents=True)
-        (sub / "_merge_fields.yml").write_text("account_manager: Assigned manager\n")
-        doc = sub / "proposal.md"
-        doc.write_text("# Hello")
-        fields = load_merge_fields(doc, repo_root=tmp_repo)
-        assert fields == {
-            "contact_name": "Full name",
-            "company": "Company name",
-            "account_manager": "Assigned manager",
-        }
-
-    def test_deeper_overrides_shallower_for_same_key(self, tmp_repo):
-        (tmp_repo / "_merge_fields.yml").write_text("sign_off: Root signatory\n")
-        sub = tmp_repo / "team"
-        sub.mkdir()
-        (sub / "_merge_fields.yml").write_text("sign_off: Team lead name\n")
-        doc = sub / "letter.md"
-        doc.write_text("# Hello")
-        fields = load_merge_fields(doc, repo_root=tmp_repo)
-        assert fields["sign_off"] == "Team lead name"
-
-    def test_no_merge_fields_files_returns_empty(self, tmp_repo):
-        doc = tmp_repo / "doc.md"
-        doc.write_text("# Hello")
-        fields = load_merge_fields(doc, repo_root=tmp_repo)
-        assert fields == {}
-
-    def test_missing_file_at_level_is_skipped(self, tmp_repo):
-        sub = tmp_repo / "level1" / "level2"
-        sub.mkdir(parents=True)
-        (sub / "_merge_fields.yml").write_text("item: A line item\n")
-        doc = sub / "invoice.md"
-        doc.write_text("# Hello")
-        # no _merge_fields.yml at root or level1 — only level2 has one
-        fields = load_merge_fields(doc, repo_root=tmp_repo)
-        assert fields == {"item": "A line item"}
 
 
 class TestMergeFields:

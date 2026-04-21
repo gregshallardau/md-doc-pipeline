@@ -33,9 +33,8 @@ from typing import Any
 
 import markdown
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Pt
 
 # Markdown extensions to enable (consistent with pdf builder)
 _MD_EXTENSIONS = [
@@ -54,6 +53,7 @@ _MD_EXTENSIONS = [
 # HTML → docx walker
 # ---------------------------------------------------------------------------
 
+
 class _DocxBuilder(HTMLParser):
     """
     Walk an HTML fragment and populate a python-docx Document.
@@ -67,12 +67,12 @@ class _DocxBuilder(HTMLParser):
         self.doc = doc
 
         # State tracking
-        self._paragraph = None          # current paragraph being built
-        self._run = None                # current run
+        self._paragraph = None  # current paragraph being built
+        self._run = None  # current run
         self._bold = False
         self._italic = False
         self._in_pre = False
-        self._in_code = False           # inline code inside paragraph
+        self._in_code = False  # inline code inside paragraph
         self._in_blockquote = False
         self._list_stack: list[str] = []  # "ul" or "ol" per level
         self._list_counters: list[int] = []
@@ -294,6 +294,7 @@ class _DocxBuilder(HTMLParser):
 # Markdown stripping helpers
 # ---------------------------------------------------------------------------
 
+
 def _strip_frontmatter(md_content: str) -> str:
     """Remove YAML frontmatter if present."""
     return re.sub(r"^---\s*\n.*?\n---\s*\n", "", md_content, count=1, flags=re.DOTALL)
@@ -317,6 +318,7 @@ def _strip_leading_h1(md_content: str) -> str:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build(
     rendered_md: str,
@@ -361,7 +363,7 @@ def build(
         props.author = author
 
     # Title paragraph
-    title_para = doc.add_paragraph(title, style="Title")
+    doc.add_paragraph(title, style="Title")
 
     # Walk the HTML into docx elements
     builder = _DocxBuilder(doc)

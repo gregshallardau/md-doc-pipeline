@@ -30,3 +30,4 @@ workspace/
 # Auto-generated agent config
 AGENTS.md
 GEMINI.md
+/_pdf-theme.css

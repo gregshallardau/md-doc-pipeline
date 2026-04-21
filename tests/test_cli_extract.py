@@ -28,11 +28,15 @@ def test_extract_docx_to_templates(tmp_path):
 
     # Run extract command
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract",
-        str(source_docx),
-        "--dest", str(templates_folder),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "extract",
+            str(source_docx),
+            "--dest",
+            str(templates_folder),
+        ],
+    )
 
     assert result.exit_code == 0, result.output
 
@@ -53,6 +57,7 @@ def test_extract_pdf_to_custom_folder(tmp_path):
     # Create a minimal PDF using reportlab
     try:
         from reportlab.pdfgen import canvas
+
         pdf_path = tmp_path / "sample.pdf"
         c = canvas.Canvas(str(pdf_path))
         c.drawString(100, 750, "Sample PDF Content")
@@ -66,11 +71,15 @@ def test_extract_pdf_to_custom_folder(tmp_path):
 
     # Run extract command
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract",
-        str(pdf_path),
-        "--dest", str(custom_folder),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "extract",
+            str(pdf_path),
+            "--dest",
+            str(custom_folder),
+        ],
+    )
 
     assert result.exit_code == 0, result.output
 
@@ -90,11 +99,15 @@ def test_extract_unsupported_file_type(tmp_path):
     templates_folder.mkdir()
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract",
-        str(text_file),
-        "--dest", str(templates_folder),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "extract",
+            str(text_file),
+            "--dest",
+            str(templates_folder),
+        ],
+    )
 
     assert result.exit_code != 0
     assert "unsupported file type" in result.output.lower()
@@ -108,11 +121,15 @@ def test_extract_file_not_found(tmp_path):
     templates_folder.mkdir()
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract",
-        str(tmp_path / "nonexistent.pdf"),
-        "--dest", str(templates_folder),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "extract",
+            str(tmp_path / "nonexistent.pdf"),
+            "--dest",
+            str(templates_folder),
+        ],
+    )
 
     assert result.exit_code != 0
     assert "not found" in result.output.lower()
@@ -133,11 +150,15 @@ def test_extract_refuses_overwrite_without_force(tmp_path):
     existing_file.write_text("original content")
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract",
-        str(source_docx),
-        "--dest", str(dest_folder),
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "extract",
+            str(source_docx),
+            "--dest",
+            str(dest_folder),
+        ],
+    )
 
     assert result.exit_code != 0
     assert "already exists" in result.output.lower()
@@ -159,12 +180,16 @@ def test_extract_overwrites_with_force(tmp_path):
     existing_file.write_text("old content")
 
     runner = CliRunner()
-    result = runner.invoke(main, [
-        "extract",
-        str(source_docx),
-        "--dest", str(dest_folder),
-        "--force",
-    ])
+    result = runner.invoke(
+        main,
+        [
+            "extract",
+            str(source_docx),
+            "--dest",
+            str(dest_folder),
+            "--force",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert existing_file.read_text() != "old content"
@@ -190,13 +215,17 @@ def test_extract_default_destination_is_templates(tmp_path):
     with runner.isolated_filesystem():
         # Create templates folder and move file to this context
         import shutil
+
         Path("templates").mkdir()
         shutil.copy(str(source_docx), "auto_test.docx")
 
-        result = runner.invoke(main, [
-            "extract",
-            "auto_test.docx",
-        ])
+        result = runner.invoke(
+            main,
+            [
+                "extract",
+                "auto_test.docx",
+            ],
+        )
 
         assert result.exit_code == 0, result.output
 

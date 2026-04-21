@@ -1,6 +1,5 @@
 """Tests for `md-doc new folder` and `md-doc new doc` CLI commands."""
 
-import textwrap
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -19,7 +18,8 @@ def tmp_repo(tmp_path):
 class TestNewFolder:
     def test_creates_directory_and_meta(self, tmp_repo):
         result = CliRunner().invoke(
-            main, ["new", "folder", "clients/acme", "--in", str(tmp_repo)],
+            main,
+            ["new", "folder", "clients/acme", "--in", str(tmp_repo)],
         )
         assert result.exit_code == 0
         target = tmp_repo / "clients" / "acme"
@@ -30,25 +30,32 @@ class TestNewFolder:
         # Root already has author and outputs — new folder should not repeat them
         (tmp_repo / "_meta.yml").write_text("author: Blueshift Labs\noutputs: [pdf]\n")
         CliRunner().invoke(
-            main, ["new", "folder", "clients/acme", "--in", str(tmp_repo)],
-            input="Acme Corp\n",   # answer the client prompt
+            main,
+            ["new", "folder", "clients/acme", "--in", str(tmp_repo)],
+            input="Acme Corp\n",  # answer the client prompt
         )
         meta = (tmp_repo / "clients" / "acme" / "_meta.yml").read_text()
-        assert "author" not in meta     # inherited — don't duplicate
-        assert "outputs" not in meta    # inherited — don't duplicate
+        assert "author" not in meta  # inherited — don't duplicate
+        assert "outputs" not in meta  # inherited — don't duplicate
 
     def test_fails_if_directory_exists(self, tmp_repo):
         existing = tmp_repo / "existing"
         existing.mkdir()
         result = CliRunner().invoke(
-            main, ["new", "folder", "existing", "--in", str(tmp_repo)],
+            main,
+            ["new", "folder", "existing", "--in", str(tmp_repo)],
         )
         assert result.exit_code != 0
-        assert "already exists" in result.output.lower() or "already exists" in (result.output + (result.exception and str(result.exception) or "")).lower()
+        assert (
+            "already exists" in result.output.lower()
+            or "already exists"
+            in (result.output + (result.exception and str(result.exception) or "")).lower()
+        )
 
     def test_nested_path_creates_intermediate_dirs(self, tmp_repo):
         result = CliRunner().invoke(
-            main, ["new", "folder", "a/b/c", "--in", str(tmp_repo)],
+            main,
+            ["new", "folder", "a/b/c", "--in", str(tmp_repo)],
         )
         assert result.exit_code == 0
         assert (tmp_repo / "a" / "b" / "c").is_dir()
@@ -118,6 +125,6 @@ def test_pdf_forms_output_has_form_suffix(tmp_path):
         result = runner.invoke(main, ["build", str(tmp_path)])
 
     assert result.exit_code == 0, result.output
-    assert any(p.name == "onboarding-form.pdf" for p in captured_paths), (
-        f"Expected onboarding-form.pdf, got: {[p.name for p in captured_paths]}"
-    )
+    assert any(
+        p.name == "onboarding-form.pdf" for p in captured_paths
+    ), f"Expected onboarding-form.pdf, got: {[p.name for p in captured_paths]}"

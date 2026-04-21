@@ -14,7 +14,6 @@ included in the sync output (default: false).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 

@@ -26,7 +26,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +46,7 @@ _EXCLUDE_NAMES = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _md5(path: Path) -> str:
     h = hashlib.md5()
@@ -88,8 +88,17 @@ def _resolve_meta(file_path: Path, root: Path) -> dict:
 def _infer_document_type(path: Path) -> str:
     """Guess document type from path components or filename."""
     name_lower = path.stem.lower()
-    for keyword in ("report", "summary", "brief", "policy", "procedure",
-                    "schedule", "register", "binder", "renewal"):
+    for keyword in (
+        "report",
+        "summary",
+        "brief",
+        "policy",
+        "procedure",
+        "schedule",
+        "register",
+        "binder",
+        "renewal",
+    ):
         if keyword in name_lower:
             return keyword.replace("_", " ").title()
     # Fall back to extension
@@ -129,13 +138,27 @@ def _build_record(file_path: Path, root: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 _CSV_FIELDS = [
-    "path", "filename", "product", "document_type",
-    "version", "status", "size_kb", "last_modified", "md5",
+    "path",
+    "filename",
+    "product",
+    "document_type",
+    "version",
+    "status",
+    "size_kb",
+    "last_modified",
+    "md5",
 ]
 
 _MD_HEADERS = [
-    "Path", "Filename", "Product", "Type",
-    "Version", "Status", "Size (KB)", "Last Modified", "MD5",
+    "Path",
+    "Filename",
+    "Product",
+    "Type",
+    "Version",
+    "Status",
+    "Size (KB)",
+    "Last Modified",
+    "MD5",
 ]
 
 
@@ -185,6 +208,7 @@ def _write_csv(records: list[dict], csv_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def generate(
     root: Path,

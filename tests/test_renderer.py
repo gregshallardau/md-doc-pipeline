@@ -7,8 +7,8 @@ import pytest
 
 from md_doc.renderer import render, render_string
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def tmp_repo(tmp_path):
@@ -26,6 +26,7 @@ def write_md(path: Path, content: str) -> None:
 
 
 # ── render_string tests ───────────────────────────────────────────────────────
+
 
 class TestRenderString:
     def test_plain_passthrough(self):
@@ -48,6 +49,7 @@ class TestRenderString:
 
     def test_strict_raises_on_undefined(self):
         from jinja2 import UndefinedError
+
         with pytest.raises(UndefinedError):
             render_string("Hello {{ missing }}!", {}, strict=True)
 
@@ -61,6 +63,7 @@ class TestRenderString:
 
 
 # ── render() (file-based) tests ───────────────────────────────────────────────
+
 
 class TestRender:
     def test_simple_variable_from_meta(self, tmp_repo):

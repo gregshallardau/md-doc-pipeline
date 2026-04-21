@@ -31,8 +31,8 @@ from typing import Any
 logging.getLogger("weasyprint").setLevel(logging.ERROR)
 logging.getLogger("fonttools").setLevel(logging.ERROR)
 
-import markdown
-import weasyprint
+import markdown  # noqa: E402
+import weasyprint  # noqa: E402
 
 # Markdown extensions to enable
 _MD_EXTENSIONS = [
@@ -51,12 +51,10 @@ _MD_EXTENSIONS = [
 # Internal helpers (ported from document-designer/generate-pdf.py)
 # ---------------------------------------------------------------------------
 
+
 def _escape_html(text: str) -> str:
     return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     )
 
 
@@ -140,8 +138,11 @@ def _field_to_html(field_spec: str) -> str:
 
         if ftype == "select":
             opts_html = "\n".join(
-                f'  <option value="{_escape_html(o.lower().replace(" ", "_"))}">{_escape_html(o)}</option>'
-                if not o.startswith("--") else f'  <option value="">{_escape_html(o)}</option>'
+                (
+                    f'  <option value="{_escape_html(o.lower().replace(" ", "_"))}">{_escape_html(o)}</option>'
+                    if not o.startswith("--")
+                    else f'  <option value="">{_escape_html(o)}</option>'
+                )
                 for o in options
             )
             req = " required" if name_attrs.get("required") else ""
@@ -158,7 +159,7 @@ def _field_to_html(field_spec: str) -> str:
                     f'<label{style}><input type="radio" name="{_escape_html(name)}" '
                     f'value="{_escape_html(val)}"> {_escape_html(o)}</label>'
                 )
-            return f'<div>\n{sep.join(items)}\n</div>'
+            return f"<div>\n{sep.join(items)}\n</div>"
 
         elif ftype == "checkbox-inline":
             items = []
@@ -167,10 +168,12 @@ def _field_to_html(field_spec: str) -> str:
                 items.append(
                     f'<label style="display: inline; margin-right: 12pt;">'
                     f'<input type="checkbox" name="{_escape_html(field_name)}"> '
-                    f'{_escape_html(o)}</label>'
+                    f"{_escape_html(o)}</label>"
                 )
             joined = "\n".join(items)
-            return f'<div>\n{joined}\n</div>'
+            return f"<div>\n{joined}\n</div>"
+
+        return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
     else:
         parts = rest.split(",")
@@ -192,10 +195,12 @@ def _field_to_html(field_spec: str) -> str:
             return f'<textarea name="{_escape_html(name)}" rows="{rows}"{req}></textarea>'
         elif ftype == "checkbox":
             label_text = attrs.get("label", "")
-            label_html = f" {_escape_html(str(label_text))}" if label_text and label_text is not True else ""
+            label_html = (
+                f" {_escape_html(str(label_text))}" if label_text and label_text is not True else ""
+            )
             return (
                 f'<div><label><input type="checkbox" name="{_escape_html(name)}"{req}>'
-                f'{label_html}</label></div>'
+                f"{label_html}</label></div>"
             )
         elif ftype == "signature":
             return (
@@ -203,7 +208,7 @@ def _field_to_html(field_spec: str) -> str:
                 f'<textarea name="{_escape_html(name)}" class="signature-input"{req}></textarea>'
                 f'<div class="signature-line"></div>'
                 f'<div class="signature-label">Signature</div>'
-                f'</div>'
+                f"</div>"
             )
         else:
             input_type = ftype if ftype in ("text", "email", "date", "number") else "text"
@@ -228,19 +233,17 @@ def _expand_row_block(row_content: str) -> str:
         width = f"{100 // n}%"
         tds = []
         for i, cell in enumerate(cells):
-            padding = "0 8pt 4pt 0" if i == 0 else ("0 0 4pt 8pt" if i == n - 1 else "0 8pt 4pt 8pt")
+            padding = (
+                "0 8pt 4pt 0" if i == 0 else ("0 0 4pt 8pt" if i == n - 1 else "0 8pt 4pt 8pt")
+            )
             cell_html = _FORM_FIELD_RE.sub(lambda m: _field_to_html(m.group(1)), cell)
             tds.append(
                 f'<td style="border: none; width: {width}; padding: {padding}; vertical-align: top;">'
-                f'{cell_html}</td>'
+                f"{cell_html}</td>"
             )
         rows_html.append(f'<tr style="background: none;">{"".join(tds)}</tr>')
 
-    return (
-        f'<table style="border: none; width: 100%;">\n'
-        f'{"".join(rows_html)}\n'
-        f'</table>'
-    )
+    return f'<table style="border: none; width: 100%;">\n' f'{"".join(rows_html)}\n' f"</table>"
 
 
 def _expand_form_fields(md_content: str, is_form: bool) -> str:
@@ -271,9 +274,7 @@ def _expand_form_fields(md_content: str, is_form: bool) -> str:
 
 
 _BLOCK_TAG = r"(?:p|pre|ul|ol|table|blockquote|div|dl)"
-_BLOCK_RE = re.compile(
-    rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL
-)
+_BLOCK_RE = re.compile(rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL)
 
 
 def _keep_heading_with_next(html_body: str) -> str:
@@ -295,15 +296,19 @@ def _keep_heading_with_next(html_body: str) -> str:
             tail = parts[i + 1] if i + 1 < len(parts) else ""
             blocks = _BLOCK_RE.findall(tail)
             if len(blocks) >= 2:
-                keep = blocks[0] + blocks[1]
-                rest = tail[tail.index(blocks[0]) + len(blocks[0]) + tail[tail.index(blocks[0]) + len(blocks[0]):].index(blocks[1]) + len(blocks[1]):]
-                before = tail[:tail.index(blocks[0])]
+                rest = tail[
+                    tail.index(blocks[0])
+                    + len(blocks[0])
+                    + tail[tail.index(blocks[0]) + len(blocks[0]) :].index(blocks[1])
+                    + len(blocks[1]) :
+                ]
+                before = tail[: tail.index(blocks[0])]
                 result.append(before)
                 result.append(f'<div class="keep-with-next">{heading}{blocks[0]}{blocks[1]}</div>')
                 result.append(rest)
             elif len(blocks) == 1:
-                before = tail[:tail.index(blocks[0])]
-                after = tail[tail.index(blocks[0]) + len(blocks[0]):]
+                before = tail[: tail.index(blocks[0])]
+                after = tail[tail.index(blocks[0]) + len(blocks[0]) :]
                 result.append(before)
                 result.append(f'<div class="keep-with-next">{heading}{blocks[0]}</div>')
                 result.append(after)
@@ -318,7 +323,9 @@ def _keep_heading_with_next(html_body: str) -> str:
     return "".join(result)
 
 
-def _resolve_logo(logo_val: str | None, repo_root: Path | None, doc_path: Path | None) -> Path | None:
+def _resolve_logo(
+    logo_val: str | None, repo_root: Path | None, doc_path: Path | None
+) -> Path | None:
     """Resolve header_logo to an absolute path, searching doc dir → ancestors → repo root.
 
     Absolute paths and traversal components (``..``) are rejected to prevent
@@ -413,7 +420,11 @@ def _build_cover(
     text_on_bar_class = " cover-text-on-bar" if text_on_bar else ""
     footer_line_class = " cover-footer-no-line" if not show_footer_line else ""
     footer_color_style = f' style="color: {footer_color};"' if footer_color else ""
-    footer_inner = f'<div class="cover-footer{footer_line_class}"{footer_color_style}>{_escape_html(footer_text)}</div>' if show_footer else ""
+    footer_inner = (
+        f'<div class="cover-footer{footer_line_class}"{footer_color_style}>{_escape_html(footer_text)}</div>'
+        if show_footer
+        else ""
+    )
 
     content_block = f"""\
     <div class="cover-content">
@@ -486,8 +497,10 @@ def _build_html(
     css_uri = css_path.as_uri()
 
     header_style = _build_header_style(
-        header_logo_uri, header_logo_position,
-        header_text, header_text_position,
+        header_logo_uri,
+        header_logo_position,
+        header_text,
+        header_text_position,
         page_header_bar=page_header_bar,
     )
 
@@ -546,17 +559,13 @@ def _build_header_style(
 
     if bar_enabled:
         for pos_name in ("@top-left", "@top-center", "@top-right"):
-            rules.append(
-                f"  {pos_name} {{ content: none; border-bottom: none; }}"
-            )
+            rules.append(f"  {pos_name} {{ content: none; border-bottom: none; }}")
         for pos_name in ("@top-left", "@top-center", "@top-right"):
             cover_overrides.append(f"  {pos_name} {{ content: none; border: none; }}")
     else:
         if logo_uri:
             pos = _HEADER_POSITIONS.get(logo_position, "@top-right")
-            rules.append(
-                f"  {pos} {{ content: url('{logo_uri}'); vertical-align: middle; }}"
-            )
+            rules.append(f"  {pos} {{ content: url('{logo_uri}'); vertical-align: middle; }}")
             cover_overrides.append(f"  {pos} {{ content: none; }}")
 
         if text:
@@ -642,10 +651,10 @@ def _build_page_header_bar_elements(
     show_footer_line = bar_cfg.get("footer_line", False)
     footer_border_css = ""
     if not show_footer_line:
-        footer_border_css = f"""
-  @bottom-left {{ border-top: none; }}
-  @bottom-center {{ border-top: none; }}
-  @bottom-right {{ border-top: none; }}"""
+        footer_border_css = """
+  @bottom-left { border-top: none; }
+  @bottom-center { border-top: none; }
+  @bottom-right { border-top: none; }"""
 
     css = f"""<style>
 @page {{
@@ -755,8 +764,7 @@ def _resolve_css(
             rel = doc_dir.relative_to(repo_root)
             # All dirs from repo_root to doc_dir (inclusive), deepest first
             candidate_dirs = [
-                repo_root / Path(*rel.parts[:i])
-                for i in range(len(rel.parts), 0, -1)
+                repo_root / Path(*rel.parts[:i]) for i in range(len(rel.parts), 0, -1)
             ]
         except ValueError:
             candidate_dirs = [doc_dir]
@@ -767,11 +775,12 @@ def _resolve_css(
 
     # Nothing found — generate a default _pdf-theme.css at the repo root
     # (or alongside the document if there is no repo root) and inform the user.
-    generate_at = (repo_root if repo_root else (doc_path.parent if doc_path else Path.cwd()))
+    generate_at = repo_root if repo_root else (doc_path.parent if doc_path else Path.cwd())
     default_path = generate_at / "_pdf-theme.css"
 
     if not default_path.exists():
         from ..theme import generate_default_theme  # avoid circular import at module level
+
         default_path.write_text(generate_default_theme(), encoding="utf-8")
         logging.getLogger(__name__).warning(
             "No _pdf-theme.css found — created default theme at %s. "
@@ -796,6 +805,7 @@ def _find_repo_root(start: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build(
     rendered_md: str,
@@ -859,7 +869,9 @@ def build(
             if isinstance(entry, dict):
                 lpath = _resolve_logo(entry.get("path"), repo_root, doc_path)
                 if lpath:
-                    phb_logos.append({"uri": lpath.as_uri(), "position": entry.get("position", "center")})
+                    phb_logos.append(
+                        {"uri": lpath.as_uri(), "position": entry.get("position", "center")}
+                    )
             elif isinstance(entry, str):
                 lpath = _resolve_logo(entry, repo_root, doc_path)
                 if lpath:
@@ -887,15 +899,26 @@ def build(
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html_body = md_engine.convert(body)
 
-    # Render Mermaid flowchart blocks to inline SVGs
-    from ..mermaid import process_html as _process_mermaid
-    html_body = _process_mermaid(html_body)
+    css_path = _resolve_css(config, repo_root, doc_path=doc_path)
+
+    # Render Mermaid diagram blocks to inline SVGs, themed from the CSS
+    from ..mermaid import process_html as _process_mermaid, extract_theme_from_css
+
+    mermaid_theme = None
+    if css_path and css_path.exists():
+        try:
+            mermaid_theme = extract_theme_from_css(css_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass  # fall back to default theme
+    html_body = _process_mermaid(html_body, theme=mermaid_theme)
 
     html_body = _keep_heading_with_next(html_body)
-
-    css_path = _resolve_css(config, repo_root, doc_path=doc_path)
     html = _build_html(
-        title, date_str, author, html_body, css_path,
+        title,
+        date_str,
+        author,
+        html_body,
+        css_path,
         cover_page=cover_page,
         cover_cfg=config,
         cover_logo_uri=cover_logo_uri,
@@ -910,4 +933,6 @@ def build(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wp_kwargs = {"pdf_forms": True} if config.get("pdf_forms") else {}
-    weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(str(out_path), **wp_kwargs)
+    weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(
+        str(out_path), **wp_kwargs
+    )

@@ -1,6 +1,5 @@
 """Tests for the PDF builder — focused on CSS resolution."""
 
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest

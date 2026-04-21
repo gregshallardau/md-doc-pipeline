@@ -51,12 +51,13 @@ from .docx import (
     _strip_leading_h1,
 )
 
-_MERGE_RE = re.compile(r'\[\[(\w+)\]\]')
+_MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
 
 
 # ---------------------------------------------------------------------------
 # MERGEFIELD helpers
 # ---------------------------------------------------------------------------
+
 
 def _insert_merge_field(
     paragraph: Any,
@@ -130,6 +131,7 @@ def _write_text(
 # HTML → docx walker (merge-field aware)
 # ---------------------------------------------------------------------------
 
+
 class _DotxBuilder(_DocxBuilder):
     """
     Extends _DocxBuilder to convert ``[[field]]`` markers to Word MERGEFIELDs.
@@ -176,6 +178,7 @@ class _DotxBuilder(_DocxBuilder):
 # Cover page
 # ---------------------------------------------------------------------------
 
+
 def _add_cover_page(doc: Document, config: dict[str, Any]) -> None:
     """
     Insert a cover page section followed by a page break.
@@ -215,6 +218,7 @@ def _add_cover_page(doc: Document, config: dict[str, Any]) -> None:
 # .dotx content-type patch
 # ---------------------------------------------------------------------------
 
+
 def _patch_to_dotx(path: Path) -> None:
     """
     Re-write *path* with the Word Template content type.
@@ -247,6 +251,7 @@ def _patch_to_dotx(path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build(
     rendered_md: str,

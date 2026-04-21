@@ -24,23 +24,38 @@ import click
 from .config import load_config, get_output_formats, load_merge_fields
 from .renderer import render
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 # Directories never containing buildable documents
 _SKIP_DIRS = {
-    ".git", ".venv", "venv", ".tox",
-    "node_modules", "__pycache__", "site-packages",
-    "dist", "build", ".mypy_cache", ".ruff_cache",
+    ".git",
+    ".venv",
+    "venv",
+    ".tox",
+    "node_modules",
+    "__pycache__",
+    "site-packages",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".ruff_cache",
 }
 
 # Well-known repo infrastructure files that are not documents
 _SKIP_FILES = {
-    "readme.md", "changelog.md", "license.md", "licence.md",
-    "claude.md", "contributing.md", "history.md", "authors.md",
-    "install.md", "security.md", "code_of_conduct.md",
+    "readme.md",
+    "changelog.md",
+    "license.md",
+    "licence.md",
+    "claude.md",
+    "contributing.md",
+    "history.md",
+    "authors.md",
+    "install.md",
+    "security.md",
+    "code_of_conduct.md",
 }
 
 
@@ -54,7 +69,8 @@ def _discover_markdown(root: Path) -> list[Path]:
     - Well-known repo infrastructure files (README.md, CLAUDE.md, etc.)
     """
     return sorted(
-        p for p in root.rglob("*.md")
+        p
+        for p in root.rglob("*.md")
         if not p.name.startswith("_")
         and p.name.lower() not in _SKIP_FILES
         and not _SKIP_DIRS.intersection(p.parts)
@@ -95,6 +111,7 @@ def _resolve_output_path(doc_path: Path, root: Path, output_dir: Path | None, ex
 # CLI group
 # ---------------------------------------------------------------------------
 
+
 @click.group()
 @click.version_option(package_name="md-doc-pipeline")
 def main() -> None:
@@ -105,29 +122,38 @@ def main() -> None:
 # build
 # ---------------------------------------------------------------------------
 
+
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option(
-    "--output", "-o",
+    "--output",
+    "-o",
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
     help="Output directory (mirrors source tree). Defaults to writing alongside source files.",
 )
 @click.option(
-    "--format", "-f", "fmt",
+    "--format",
+    "-f",
+    "fmt",
     default="all",
     type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
     help="Output format(s). Overrides per-document 'outputs' config when set explicitly.",
 )
 @click.option(
-    "--theme", "-t",
+    "--theme",
+    "-t",
     default=None,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Path to a _pdf-theme.css file. Overrides the normal theme cascade for this build.",
 )
 @click.option("--strict", is_flag=True, default=False, help="Fail on undefined Jinja2 variables.")
-@click.option("--dry-run", is_flag=True, default=False, help="Print what would be built without building.")
-def build(root: Path, output: Path | None, fmt: str, theme: Path | None, strict: bool, dry_run: bool) -> None:
+@click.option(
+    "--dry-run", is_flag=True, default=False, help="Print what would be built without building."
+)
+def build(
+    root: Path, output: Path | None, fmt: str, theme: Path | None, strict: bool, dry_run: bool
+) -> None:
     """Build all Markdown documents under ROOT to PDF and/or DOCX.
 
     ROOT defaults to the current directory.
@@ -188,19 +214,26 @@ def build(root: Path, output: Path | None, fmt: str, theme: Path | None, strict:
             try:
                 if format_name == "pdf":
                     from .builders.pdf import build as build_pdf  # type: ignore[import]
+
                     build_pdf(rendered_md, config, out_path, doc_path=doc_path)
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx  # type: ignore[import]
+
                     build_docx(rendered_md, config, out_path)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx  # type: ignore[import]
+
                     build_dotx(rendered_md, config, out_path, doc_path=doc_path)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
-                click.echo(f"    wrote {out_path.relative_to(root) if out_path.is_relative_to(root) else out_path}")
+                click.echo(
+                    f"    wrote {out_path.relative_to(root) if out_path.is_relative_to(root) else out_path}"
+                )
             except ImportError as exc:
-                click.echo(f"    [ERROR] builder not available for '{format_name}': {exc}", err=True)
+                click.echo(
+                    f"    [ERROR] builder not available for '{format_name}': {exc}", err=True
+                )
                 errors.append(str(doc_path))
             except Exception as exc:
                 click.echo(f"    [ERROR] build failed ({format_name}): {exc}", err=True)
@@ -218,24 +251,43 @@ def build(root: Path, output: Path | None, fmt: str, theme: Path | None, strict:
 # export
 # ---------------------------------------------------------------------------
 
+
 @main.command()
-@click.argument("source", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument(
+    "source", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
 @click.option(
-    "--output", "-o",
+    "--output",
+    "-o",
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
     help="Destination directory for built outputs. Defaults to SOURCE/Exports/.",
 )
 @click.option(
-    "--format", "-f", "fmt",
+    "--format",
+    "-f",
+    "fmt",
     default="all",
     type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
     help="Output format(s). Defaults to per-document 'export_format' or 'pdf'.",
 )
-@click.option("--tag", "-t", "tags", multiple=True, help="Only export notes with this tag. Repeatable.")
-@click.option("--no-symlinks", is_flag=True, default=False, help="Copy files instead of symlinking.")
-@click.option("--dry-run", is_flag=True, default=False, help="Show what would be exported without building.")
-def export(source: Path, output: Path | None, fmt: str, tags: tuple[str, ...], no_symlinks: bool, dry_run: bool) -> None:
+@click.option(
+    "--tag", "-t", "tags", multiple=True, help="Only export notes with this tag. Repeatable."
+)
+@click.option(
+    "--no-symlinks", is_flag=True, default=False, help="Copy files instead of symlinking."
+)
+@click.option(
+    "--dry-run", is_flag=True, default=False, help="Show what would be exported without building."
+)
+def export(
+    source: Path,
+    output: Path | None,
+    fmt: str,
+    tags: tuple[str, ...],
+    no_symlinks: bool,
+    dry_run: bool,
+) -> None:
     """Scan SOURCE for Markdown files with ``export: true`` and build them.
 
     Searches SOURCE recursively for any .md file with ``export: true`` in
@@ -320,19 +372,24 @@ def export(source: Path, output: Path | None, fmt: str, tags: tuple[str, ...], n
             try:
                 if format_name == "pdf":
                     from .builders.pdf import build as build_pdf
+
                     build_pdf(rendered_md, config, out_path, doc_path=doc_path)
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx
+
                     build_docx(rendered_md, config, out_path)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx
+
                     build_dotx(rendered_md, config, out_path, doc_path=doc_path)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
                 click.echo(f"    built {out_path.name}")
             except ImportError as exc:
-                click.echo(f"    [ERROR] builder not available for '{format_name}': {exc}", err=True)
+                click.echo(
+                    f"    [ERROR] builder not available for '{format_name}': {exc}", err=True
+                )
                 errors.append(str(doc_path))
             except Exception as exc:
                 click.echo(f"    [ERROR] build failed ({format_name}): {exc}", err=True)
@@ -357,6 +414,7 @@ def export(source: Path, output: Path | None, fmt: str, tags: tuple[str, ...], n
 # ---------------------------------------------------------------------------
 # lint
 # ---------------------------------------------------------------------------
+
 
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
@@ -385,7 +443,9 @@ def lint(root: Path) -> None:
     results = lint_directory(root, repo_root=root)
 
     if not results:
-        click.echo("No documents found." if not list(_discover_markdown(root)) else "All documents OK.")
+        click.echo(
+            "No documents found." if not list(_discover_markdown(root)) else "All documents OK."
+        )
         return
 
     error_count = 0
@@ -419,12 +479,23 @@ def lint(root: Path) -> None:
 # register
 # ---------------------------------------------------------------------------
 
+
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
-@click.option("--output", "-o", default=None, type=click.Path(path_type=Path),
-              help="Output path for register.json (default: ROOT/register.json).")
-@click.option("--md/--no-md", "write_md", default=True, show_default=True,
-              help="Also write a Markdown register alongside the JSON.")
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Output path for register.json (default: ROOT/register.json).",
+)
+@click.option(
+    "--md/--no-md",
+    "write_md",
+    default=True,
+    show_default=True,
+    help="Also write a Markdown register alongside the JSON.",
+)
 def register(root: Path, output: Path | None, write_md: bool) -> None:
     """Generate a document register (register.json + register.md) for ROOT.
 
@@ -462,8 +533,11 @@ def register(root: Path, output: Path | None, write_md: bool) -> None:
 # fields
 # ---------------------------------------------------------------------------
 
+
 @main.command()
-@click.argument("directory", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument(
+    "directory", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
 def fields(directory: Path) -> None:
     """List available [[merge fields]] at DIRECTORY level.
 
@@ -483,7 +557,9 @@ def fields(directory: Path) -> None:
 
     try:
         rel = directory.relative_to(repo_root)
-        parts = [repo_root] + [repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)]
+        parts = [repo_root] + [
+            repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)
+        ]
     except ValueError:
         parts = [directory]
 
@@ -512,6 +588,7 @@ def fields(directory: Path) -> None:
 # new
 # ---------------------------------------------------------------------------
 
+
 @main.group()
 def new() -> None:
     """Scaffold new folders and documents."""
@@ -520,7 +597,8 @@ def new() -> None:
 @new.command("folder")
 @click.argument("name")
 @click.option(
-    "--in", "parent",
+    "--in",
+    "parent",
     default=".",
     type=click.Path(file_okay=False, path_type=Path),
     help="Parent directory to create the folder in (default: current directory).",
@@ -563,7 +641,8 @@ def new_folder(name: str, parent: Path) -> None:
 @new.command("doc")
 @click.argument("name")
 @click.option(
-    "--in", "parent",
+    "--in",
+    "parent",
     default=".",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Directory to create the document in (default: current directory).",
@@ -594,15 +673,23 @@ def new_doc(name: str, parent: Path) -> None:
 
     click.echo(f"\nCreating {doc_path.name}\n")
     if config:
-        click.echo("Inherited config: " + ", ".join(f"{k}={v!r}" for k, v in sorted(config.items())))
+        click.echo(
+            "Inherited config: " + ", ".join(f"{k}={v!r}" for k, v in sorted(config.items()))
+        )
     if available_fields:
-        click.echo("Available [[fields]]: " + ", ".join(f"[[{k}]]" for k in sorted(available_fields)))
+        click.echo(
+            "Available [[fields]]: " + ", ".join(f"[[{k}]]" for k in sorted(available_fields))
+        )
     click.echo()
 
     fmt = click.prompt(
         "Output format",
         type=click.Choice(["pdf", "docx", "dotx"], case_sensitive=False),
-        default=config.get("outputs", ["pdf"])[0] if isinstance(config.get("outputs"), list) else config.get("outputs", "pdf"),
+        default=(
+            config.get("outputs", ["pdf"])[0]
+            if isinstance(config.get("outputs"), list)
+            else config.get("outputs", "pdf")
+        ),
     )
     cover = click.confirm("Include cover page?", default=True)
 
@@ -628,15 +715,19 @@ def new_doc(name: str, parent: Path) -> None:
 # sync
 # ---------------------------------------------------------------------------
 
+
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option(
-    "--backend", "-b",
+    "--backend",
+    "-b",
     default=None,
     type=click.Choice(["azure", "s3", "local"], case_sensitive=False),
     help="Storage backend. Auto-detected from environment/config if omitted.",
 )
-@click.option("--dry-run", is_flag=True, default=False, help="Print what would be synced without uploading.")
+@click.option(
+    "--dry-run", is_flag=True, default=False, help="Print what would be synced without uploading."
+)
 def sync(root: Path, backend: str | None, dry_run: bool) -> None:
     """Sync built documents under ROOT to remote storage.
 
@@ -675,9 +766,11 @@ def sync(root: Path, backend: str | None, dry_run: bool) -> None:
 # theme
 # ---------------------------------------------------------------------------
 
+
 def _prompt_color(prompt: str, default: str) -> str:
     """Prompt for a hex colour with validation."""
     from .theme import validate_hex_color
+
     while True:
         raw = click.prompt(prompt, default=default)
         try:
@@ -713,10 +806,10 @@ def theme_init(directory: Path) -> None:
     click.echo("Creating a new PDF theme. Press Enter to accept defaults.\n")
 
     org_name = click.prompt("Organisation name (used in page footer)", default="My Organisation")
-    primary  = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
-    accent   = _prompt_color("Accent colour   (h2, links, code borders)        ", "#2e86c1")
+    primary = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
+    accent = _prompt_color("Accent colour   (h2, links, code borders)        ", "#2e86c1")
     body_text = _prompt_color("Body text colour                                 ", "#1a1a2e")
-    muted    = _prompt_color("Muted text colour (h3, captions, footer)         ", "#5d6d7e")
+    muted = _prompt_color("Muted text colour (h3, captions, footer)         ", "#5d6d7e")
     body_font = click.prompt(
         "Body font family",
         default="'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
@@ -725,7 +818,9 @@ def theme_init(directory: Path) -> None:
         "Monospace font   ",
         default="'Consolas', 'Courier New', 'Liberation Mono', monospace",
     )
-    page_size  = click.prompt("Page size", default="A4", type=click.Choice(["A4", "Letter"], case_sensitive=False))
+    page_size = click.prompt(
+        "Page size", default="A4", type=click.Choice(["A4", "Letter"], case_sensitive=False)
+    )
     cover_page = click.confirm("Include cover page by default?", default=True)
 
     css = generate_base_theme(
@@ -774,7 +869,6 @@ def theme_override(directory: Path) -> None:
         find_parent_theme,
         generate_override_theme,
         relative_import_path,
-        validate_hex_color,
     )
 
     directory = Path(directory).resolve()
@@ -790,9 +884,11 @@ def theme_override(directory: Path) -> None:
         click.echo("  No parent _pdf-theme.css found in ancestor directories.")
         import_path = click.prompt("  Enter @import path manually", default="../_pdf-theme.css")
 
-    sub_name = click.prompt("Sub-brand name (used in page footer)", default="My Organisation — Sub Brand")
-    primary  = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
-    accent   = _prompt_color("Accent colour   (h2, links, code borders)        ", "#2e86c1")
+    sub_name = click.prompt(
+        "Sub-brand name (used in page footer)", default="My Organisation — Sub Brand"
+    )
+    primary = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
+    accent = _prompt_color("Accent colour   (h2, links, code borders)        ", "#2e86c1")
 
     css = generate_override_theme(
         sub_name=sub_name,
@@ -810,6 +906,7 @@ def theme_override(directory: Path) -> None:
 # extract
 # ---------------------------------------------------------------------------
 
+
 @main.command()
 @click.argument("file_path", type=click.Path())
 @click.option(
@@ -819,7 +916,9 @@ def theme_override(directory: Path) -> None:
     help="Destination folder or path pattern for extracted Markdown. Default: templates/",
 )
 @click.option(
-    "--force", is_flag=True, default=False,
+    "--force",
+    is_flag=True,
+    default=False,
     help="Overwrite existing output file without prompting.",
 )
 def extract(file_path: str, dest: str, force: bool) -> None:
@@ -847,9 +946,7 @@ def extract(file_path: str, dest: str, force: bool) -> None:
         output_file = dest_path / output_name
 
         if output_file.exists() and not force:
-            raise click.ClickException(
-                f"{output_file} already exists. Use --force to overwrite."
-            )
+            raise click.ClickException(f"{output_file} already exists. Use --force to overwrite.")
 
         output_file.write_text(markdown_content or "", encoding="utf-8")
 
@@ -857,7 +954,7 @@ def extract(file_path: str, dest: str, force: bool) -> None:
 
     except FileNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
-        raise click.Exit(1)
+        raise click.Exit(1)  # type: ignore[operator]
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
-        raise click.Exit(1)
+        raise click.Exit(1)  # type: ignore[operator]

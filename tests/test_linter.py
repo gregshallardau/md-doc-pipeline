@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from md_doc.linter import lint_file, LintIssue
+from md_doc.linter import lint_file
 from md_doc.cli import main
 
 
@@ -15,13 +15,16 @@ def tmp_repo(tmp_path):
     return tmp_path
 
 
-def make_doc(path: Path, frontmatter: str = "title: Test\noutputs: [pdf]", body: str = "# Hello\n") -> None:
+def make_doc(
+    path: Path, frontmatter: str = "title: Test\noutputs: [pdf]", body: str = "# Hello\n"
+) -> None:
     path.write_text(f"---\n{frontmatter}\n---\n\n{body}", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
 # Frontmatter
 # ---------------------------------------------------------------------------
+
 
 class TestFrontmatterValidity:
     def test_invalid_yaml_reports_error(self, tmp_repo):
@@ -49,6 +52,7 @@ class TestFrontmatterValidity:
 # Output formats
 # ---------------------------------------------------------------------------
 
+
 class TestOutputFormats:
     def test_unknown_format_reports_error(self, tmp_repo):
         doc = tmp_repo / "doc.md"
@@ -69,7 +73,9 @@ class TestOutputFormats:
         doc = tmp_repo / "doc.md"
         make_doc(doc, frontmatter="title: Test\noutputs: [pdf, docx, dotx]")
         issues = lint_file(doc, repo_root=tmp_repo)
-        assert not any("pdf" in i.message or "docx" in i.message or "dotx" in i.message for i in issues)
+        assert not any(
+            "pdf" in i.message or "docx" in i.message or "dotx" in i.message for i in issues
+        )
 
     def test_outputs_inherited_from_meta_not_re_checked(self, tmp_repo):
         """outputs in _meta.yml is not double-reported if doc has no outputs key."""
@@ -83,6 +89,7 @@ class TestOutputFormats:
 # ---------------------------------------------------------------------------
 # Jinja2 template body
 # ---------------------------------------------------------------------------
+
 
 class TestJinja2Syntax:
     def test_broken_jinja2_syntax_reports_error(self, tmp_repo):
@@ -103,6 +110,7 @@ class TestJinja2Syntax:
 # Jinja2 variable references  {{ var }}
 # ---------------------------------------------------------------------------
 
+
 class TestVariableReferences:
     def test_undefined_variable_reports_warning(self, tmp_repo):
         doc = tmp_repo / "doc.md"
@@ -121,7 +129,11 @@ class TestVariableReferences:
 
     def test_variable_defined_in_frontmatter_no_warning(self, tmp_repo):
         doc = tmp_repo / "doc.md"
-        make_doc(doc, frontmatter="title: Test\noutputs: [pdf]\nproduct: Widget", body="The {{ product }}.\n")
+        make_doc(
+            doc,
+            frontmatter="title: Test\noutputs: [pdf]\nproduct: Widget",
+            body="The {{ product }}.\n",
+        )
         issues = lint_file(doc, repo_root=tmp_repo)
         assert not any("product" in i.message for i in issues)
 
@@ -144,6 +156,7 @@ class TestVariableReferences:
 # ---------------------------------------------------------------------------
 # Template includes  {% include "path" %}
 # ---------------------------------------------------------------------------
+
 
 class TestTemplateIncludes:
     def test_missing_include_reports_error(self, tmp_repo):
@@ -180,6 +193,7 @@ class TestTemplateIncludes:
 # Merge field references  [[field]]
 # ---------------------------------------------------------------------------
 
+
 class TestMergeFieldReferences:
     def test_undefined_field_reports_warning_when_schema_exists(self, tmp_repo):
         (tmp_repo / "_merge_fields.yml").write_text("contact_name: Full name\n")
@@ -212,12 +226,15 @@ class TestMergeFieldReferences:
         doc = sub / "letter.md"
         make_doc(doc, body="[[company]] — [[account_manager]]\n")
         issues = lint_file(doc, repo_root=tmp_repo)
-        assert not any(i.message for i in issues if "company" in i.message or "account_manager" in i.message)
+        assert not any(
+            i.message for i in issues if "company" in i.message or "account_manager" in i.message
+        )
 
 
 # ---------------------------------------------------------------------------
 # Clean file — no issues
 # ---------------------------------------------------------------------------
+
 
 class TestCleanFile:
     def test_fully_valid_document_returns_no_issues(self, tmp_repo):
@@ -239,6 +256,7 @@ class TestCleanFile:
 # ---------------------------------------------------------------------------
 # CLI command: md-doc lint
 # ---------------------------------------------------------------------------
+
 
 class TestLintCommand:
     def test_clean_workspace_exits_zero(self, tmp_repo):

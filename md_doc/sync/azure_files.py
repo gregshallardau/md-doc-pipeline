@@ -38,7 +38,7 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
         ``connection_string``.
     """
     try:
-        from azure.storage.fileshare import ShareServiceClient, ShareDirectoryClient
+        from azure.storage.fileshare import ShareServiceClient
     except ImportError as exc:
         raise ImportError(
             "azure-storage-file-share is required for the Azure backend. "
@@ -78,7 +78,11 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
     for src in files:
         rel = src.relative_to(root)
         # Build full remote path
-        remote_rel = str(PurePosixPath(base_directory) / PurePosixPath(*rel.parts)) if base_directory else str(PurePosixPath(*rel.parts))
+        remote_rel = (
+            str(PurePosixPath(base_directory) / PurePosixPath(*rel.parts))
+            if base_directory
+            else str(PurePosixPath(*rel.parts))
+        )
         remote_dir = str(PurePosixPath(remote_rel).parent)
         remote_name = PurePosixPath(remote_rel).name
 
