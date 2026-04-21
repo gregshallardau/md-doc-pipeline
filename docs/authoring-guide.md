@@ -115,9 +115,12 @@ Prepared by {{ author }} on {{ date }}.
 Product: {{ product }} v{{ version }}.
 ```
 
-### `[[field_name]]` — Mail merge fields
+### `[[field_name]]` — Word template fields
 
-Become Word MERGEFIELD elements in `.dotx` output. Use for values filled in after the document is built.
+Become Word fields in `.dotx` output. The field type is controlled by `dotx_field_type` in `_meta.yml`:
+
+- **`form`** (default) — Word Text Form Field with Bookmark = field name. Directly fillable in Word — open the template, tab through fields, type values, save. No mail merge needed.
+- **`merge`** — Classic Word MERGEFIELD (`«field_name»`). Requires a data source and mail merge run (Word → Mailings → Start Mail Merge).
 
 ```markdown
 Dear [[contact_name]],
@@ -257,7 +260,7 @@ outputs: [dotx]
 cover_page: false
 ```
 
-`[[field]]` markers become Word MERGEFIELD elements. Open in Word → Mailings → Start Mail Merge.
+`[[field]]` markers become Word Text Form Fields (default) — directly fillable in Word. Set `dotx_field_type: merge` for classic MERGEFIELDs (requires Mailings → Start Mail Merge).
 
 ### PDF Forms — Interactive fillable PDFs
 

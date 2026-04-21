@@ -71,14 +71,18 @@ uv run mypy md_doc/
 
 md-doc-pipeline converts Markdown files into PDF/DOCX documents with cascading configuration, Jinja2 template composition, and pluggable cloud sync.
 
-### Merge field syntax
+### Field syntax (`.dotx` output)
 
-`[[field_name]]` in Markdown source becomes a Word `«MERGEFIELD»` in `.dotx` output. This is intentionally distinct from Jinja2 `{{ }}` so both can coexist:
+`[[field_name]]` in Markdown source becomes a Word field in `.dotx` output. This is intentionally distinct from Jinja2 `{{ }}` so both can coexist:
 
 ```markdown
-Dear [[contact_name]],          ← Word MERGEFIELD in .dotx
+Dear [[contact_name]],          ← Word field in .dotx (type set by dotx_field_type)
 This is version {{ version }}.  ← resolved from _meta.yml at build time
 ```
+
+Field type is controlled by `dotx_field_type` in `_meta.yml`:
+- `"form"` (default) — Word Text Form Field with Bookmark = field name. Directly fillable in Word, no mail merge needed.
+- `"merge"` — Classic `«MERGEFIELD»`. Requires a data source and mail merge run.
 
 ### Cover page config
 
@@ -96,7 +100,7 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
    - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Resolves CSS theme with same cascading search (doc dir → ancestors → repo root). If no `_pdf-theme.css` found anywhere, auto-generates one at repo root from built-in defaults. Extracts first H1 as cover page title when `cover_page: true`. Key call: `weasyprint.HTML(...).write_pdf(path)`.
    - PDF forms — Add `pdf_forms: true` to any document's frontmatter or parent `_meta.yml` to produce interactive fillable PDFs. The standard `pdf.py` builder passes `pdf_forms=True` to WeasyPrint 68.x, which natively supports AcroForm fields. HTML `<input>`, `<select>`, `<textarea>` elements become real interactive fields. Output file gets a `-form` suffix: `onboarding.md` → `onboarding-form.pdf`. See `workspace/CLAUDE.md` for authoring guidance.
    - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use.
-   - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word MERGEFIELD XML. Patches the saved file's ZIP content type from `.docx` → `.dotx`. For downstream mail merge use.
+   - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word fields (Text Form Fields by default, MERGEFIELDs if `dotx_field_type: merge`). Patches the saved file's ZIP content type from `.docx` → `.dotx`.
 
 4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Pure Python — no external rendering service required. Supported diagram types:
    - `flowchart`/`graph` — directed graphs with 8 node shapes (rect, diamond, stadium, rounded, circle, cylinder, hexagon, subroutine), edge styles (solid `-->`, dotted `-.->`, thick `==>`, no-arrow `---`), pipe labels (`-->|label|`), and subgraph grouping
@@ -139,6 +143,7 @@ outputs: [pdf, docx]          # default: [pdf]
                                # valid values: pdf | docx | dotx
 output_pdf: Custom-Name.pdf   # override output filename
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
+dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
 pdf_theme: path/to/custom/_pdf-theme.css
                                # also available as CLI flag: --theme / -t
 cover_page: true              # default true — set false to omit cover

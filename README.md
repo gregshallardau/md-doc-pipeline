@@ -32,7 +32,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 **Setup:**
 
 ```bash
-git clone https://github.com/blackdog308/md-doc-pipeline
+git clone https://github.com/gregshallardau/md-doc-pipeline
 cd md-doc-pipeline
 
 # Linux / macOS
@@ -102,7 +102,7 @@ This generates `proposal.pdf` — a branded, professional document with cover pa
 |---|---|---|
 | **PDF** | Reports, proposals, final documents | Branded cover pages, custom themes, professional formatting |
 | **DOCX** | Documents to email or edit in Word | Editable format, preserves formatting, good for drafts |
-| **DOTX** | Mail merge templates, personalized letters | `[[field_name]]` becomes Word MERGEFIELD for bulk generation |
+| **DOTX** | Fillable templates, mail merge | `[[field_name]]` becomes Word Text Form Field (default) or MERGEFIELD |
 | **PDF Forms** | Interactive surveys, intake forms, applications | `<input>`, `<select>`, `<textarea>` become fillable form fields |
 
 See the [Output Types Guide](docs/quickstart.md#output-types) for detailed examples of each format.
@@ -203,9 +203,12 @@ Dear {{ client }},
 Please find the report for **{{ product }}** as at {{ report_date }}.
 ```
 
-### Merge fields (for `.dotx` output)
+### Word template fields (for `.dotx` output)
 
-`[[field_name]]` passes through Jinja2 untouched and becomes a Word `«MERGEFIELD»` in the `.dotx` file. Your downstream application supplies the values at merge time.
+`[[field_name]]` passes through Jinja2 untouched and becomes a Word field in the `.dotx` file. The field type is controlled by `dotx_field_type`:
+
+- **`form`** (default) — Word Text Form Field with Bookmark = field name. Open the `.dotx` in Word, tab through fields, fill in values, save. No mail merge required.
+- **`merge`** — Classic Word `«MERGEFIELD»`. Supply a data source via Word → Mailings → Start Mail Merge.
 
 ```markdown
 Dear [[contact_name]],
@@ -309,9 +312,9 @@ cover_page: false  # body only, no cover
 
 ---
 
-## DOTX merge templates
+## DOTX Word templates
 
-When `outputs` includes `dotx`, the builder produces a `.dotx` Word Template file with proper `«MERGEFIELD»` fields that your mail merge application can fill.
+When `outputs` includes `dotx`, the builder produces a `.dotx` Word Template file. By default, `[[field]]` markers become Word Text Form Fields with Bookmark = field name — directly fillable in Word without a mail merge. Set `dotx_field_type: merge` for classic MERGEFIELDs.
 
 ```yaml
 # _meta.yml
@@ -336,7 +339,7 @@ Regards,
 [[sign_off_title]]
 ```
 
-The `.dotx` file is ready to open in Word or pass to your merge system — all `[[field]]` markers become native Word merge fields.
+The `.dotx` file is ready to open in Word — tab through the Text Form Fields and fill in values directly. Add `dotx_field_type: merge` to your `_meta.yml` if you need classic MERGEFIELDs for a mail merge data source instead.
 
 ---
 
@@ -423,7 +426,7 @@ A Pulse document resolves:
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-git clone https://github.com/blackdog308/md-doc-pipeline
+git clone https://github.com/gregshallardau/md-doc-pipeline
 cd md-doc-pipeline
 uv sync --group dev
 uv run md-doc --help
