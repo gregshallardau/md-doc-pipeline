@@ -309,6 +309,7 @@ class _DocxBuilder(HTMLParser):
                         run.bold = True
                         if header_text_color:
                             from ..docx_theme import _hex_to_rgb
+
                             r, g, b = _hex_to_rgb(header_text_color)
                             run.font.color.rgb = RGBColor(r, g, b)
                     if header_bg:
