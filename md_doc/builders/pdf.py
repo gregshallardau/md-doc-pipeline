@@ -493,6 +493,9 @@ def _build_html(
     header_text_position: str = "left",
     page_header_bar: dict[str, Any] | None = None,
     full_config: dict[str, Any] | None = None,
+    footer_left: str | None = None,
+    footer_center: str | None = None,
+    footer_right: str | None = None,
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -513,6 +516,8 @@ def _build_html(
         header_logo_position=header_logo_position,
     )
 
+    footer_style = _build_footer_style(footer_left, footer_center, footer_right)
+
     cover_html = ""
     if cover_page:
         cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri)}"
@@ -524,6 +529,7 @@ def _build_html(
   <title>{_escape_html(title)}</title>
   <link rel="stylesheet" href="{css_uri}">
   {header_style}
+  {footer_style}
   {section_bar_style}
   {page_bar_css}
 </head>
@@ -541,6 +547,59 @@ def _build_html(
 
 
 _HEADER_POSITIONS = {"left": "@top-left", "center": "@top-center", "right": "@top-right"}
+
+_FOOTER_POSITIONS = {
+    "left": "@bottom-left",
+    "center": "@bottom-center",
+    "right": "@bottom-right",
+}
+
+
+def _build_footer_style(
+    left: str | None,
+    center: str | None,
+    right: str | None,
+) -> str:
+    """Generate an inline <style> block for page footer margin boxes.
+
+    Each slot (left, center, right) is optional. Slots not provided are omitted
+    so that _theme.css retains control of them. Empty string suppresses the
+    theme's default for that slot. The cover page always suppresses any slot
+    that has content.
+
+    Newlines in text are converted to CSS \\A (line break in generated content).
+    """
+    slots = [
+        ("@bottom-left", left),
+        ("@bottom-center", center),
+        ("@bottom-right", right),
+    ]
+    active = [(pos, text) for pos, text in slots if text is not None]
+
+    if not active:
+        return ""
+
+    rules: list[str] = []
+    cover_overrides: list[str] = []
+    for pos, text in active:
+        css_text = _escape_html(text).replace("\n", "\\A ")
+        if css_text:
+            rules.append(
+                f"  {pos} {{ content: '{css_text}'; "
+                f"white-space: pre; font-size: 6pt; line-height: 1.3; color: #7f8c9a; }}"
+            )
+        else:
+            rules.append(f"  {pos} {{ content: none; }}")
+        cover_overrides.append(f"  {pos} {{ content: none; }}")
+
+    lines = ["<style>", "@page {"]
+    lines.extend(rules)
+    lines.append("}")
+    lines.append("@page cover {")
+    lines.extend(cover_overrides)
+    lines.append("}")
+    lines.append("</style>")
+    return "\n".join(lines)
 
 
 def _build_header_style(
@@ -861,6 +920,10 @@ def build(
     header_text: str | None = config.get("header_text")
     header_text_position: str = config.get("header_text_position", "left")
 
+    footer_left: str | None = config.get("footer_left")
+    footer_center: str | None = config.get("footer_center")
+    footer_right: str | None = config.get("footer_right")
+
     page_header_bar: dict[str, Any] | None = None
     if config.get("page_header_bar"):
         phb_logo_path = _resolve_logo(config.get("page_header_bar_logo"), repo_root, doc_path)
@@ -930,6 +993,9 @@ def build(
         header_text_position=header_text_position,
         page_header_bar=page_header_bar,
         full_config=config,
+        footer_left=footer_left,
+        footer_center=footer_center,
+        footer_right=footer_right,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

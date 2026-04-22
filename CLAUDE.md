@@ -178,6 +178,10 @@ header_logo: assets/logo.png  # logo image in page header (resolved doc dir → 
 header_logo_position: right   # left | center | right (default: right)
 header_text: "Company Name"   # text in page header
 header_text_position: left    # left | center | right (default: left)
+footer_left: "Company Name"   # text in left footer slot (injected as CSS @bottom-left)
+footer_center: "Confidential" # text in center footer slot (injected as CSS @bottom-center)
+footer_right: "Page 1"        # text in right footer slot (injected as CSS @bottom-right)
+                               # footer_* keys are optional; cover page always suppresses them
 section_bar: true              # coloured background bars on H1/H2 headings
 section_bar_color: "#2563eb"   # bar colour (default: "#2563eb")
 section_bar_text_on_bar: true  # true = white text on bar, false = border-top line
