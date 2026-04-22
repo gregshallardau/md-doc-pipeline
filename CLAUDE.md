@@ -141,7 +141,7 @@ Use `md-doc fields [DIR]` to see all resolved fields at a given level. `config.l
 title, product, document_type, version, status, author
 outputs: [pdf, docx]          # default: [pdf]
                                # valid values: pdf | docx | dotx
-output_pdf: Custom-Name.pdf   # override output filename
+output_filename: "{{ product }}-proposal"  # override output filename (all formats); Jinja2 vars supported; extension auto-appended
 output_dir: /path/to/dest/    # route outputs here; cascades from _meta.yml; CLI --output wins
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
 dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)

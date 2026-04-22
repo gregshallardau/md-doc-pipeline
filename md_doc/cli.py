@@ -116,6 +116,31 @@ def _resolve_output_path(
         return doc_path.with_suffix(ext)
 
 
+def _apply_filename_override(out_path: Path, config: dict[str, Any], format_name: str) -> Path:
+    """Apply output_filename override from config, with Jinja2 variable support.
+
+    The value is rendered against the config dict so ``{{ version }}`` etc. work.
+    Any extension the user included is stripped; the correct one for *format_name*
+    is always appended automatically.
+    """
+    raw = config.get("output_filename")
+    if not raw:
+        return out_path
+
+    from jinja2 import Environment, Undefined
+
+    rendered = Environment(undefined=Undefined).from_string(str(raw)).render(**config)
+    # Strip any extension the user may have typed
+    stem = Path(rendered).stem if Path(rendered).suffix else rendered
+
+    if format_name == "pdf" and config.get("pdf_forms"):
+        filename = stem + "-form.pdf"
+    else:
+        filename = stem + f".{format_name}"
+
+    return out_path.parent / filename
+
+
 _REMOTE_WORKSPACES_FILE = "workspace/remote-workspaces.yml"
 
 
@@ -287,6 +312,7 @@ def build(
             else:
                 ext = f".{format_name}"
             out_path = _resolve_output_path(doc_path, root, effective_output, ext, flat=flat)
+            out_path = _apply_filename_override(out_path, config, format_name)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
@@ -483,6 +509,7 @@ def export(
             else:
                 ext = f".{format_name}"
             out_path = _resolve_output_path(doc_path, staging_dir, None, ext)
+            out_path = _apply_filename_override(out_path, config, format_name)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
