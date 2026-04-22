@@ -698,6 +698,53 @@ def _add_page_header_bar(
 
 
 # ---------------------------------------------------------------------------
+# Footer
+# ---------------------------------------------------------------------------
+
+
+def _add_footer(doc: Document, config: dict[str, Any]) -> None:
+    """Add footer_center text to the document's default section footer.
+
+    Newlines in the text become separate paragraphs so each line renders
+    independently. The first paragraph gets a top border to visually separate
+    the footer from body content.
+    """
+    center_text: str | None = config.get("footer_center")
+    if not center_text:
+        return
+
+    section = doc.sections[0]
+    section.footer.is_linked_to_previous = False
+    footer = section.footer
+
+    # Clear the default empty paragraph Word adds
+    for para in list(footer.paragraphs):
+        p = para._element
+        p.getparent().remove(p)
+
+    lines = center_text.split("\n")
+    for i, line in enumerate(lines):
+        para = footer.add_paragraph()
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Top border on first line only
+        if i == 0:
+            pPr = para._element.get_or_add_pPr()
+            pBdr = OxmlElement("w:pBdr")
+            top = OxmlElement("w:top")
+            top.set(qn("w:val"), "single")
+            top.set(qn("w:sz"), "4")
+            top.set(qn("w:space"), "4")
+            top.set(qn("w:color"), "d5d8dc")
+            pBdr.append(top)
+            pPr.append(pBdr)
+
+        run = para.add_run(line)
+        run.font.size = Pt(6)
+        run.font.color.rgb = RGBColor(0x73, 0x85, 0x99)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -770,6 +817,7 @@ def build(
             props.author = author
 
     _add_page_header_bar(doc, config, doc_path, repo_root)
+    _add_footer(doc, config)
 
     builder = _DocxBuilder(doc, theme=theme, field_type=field_type)
 
