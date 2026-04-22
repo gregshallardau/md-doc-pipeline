@@ -723,22 +723,22 @@ def _add_footer(doc: Document, config: dict[str, Any]) -> None:
         p.getparent().remove(p)
 
     lines = center_text.split("\n")
+    para = footer.add_paragraph()
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    pPr = para._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    top = OxmlElement("w:top")
+    top.set(qn("w:val"), "single")
+    top.set(qn("w:sz"), "4")
+    top.set(qn("w:space"), "4")
+    top.set(qn("w:color"), "d5d8dc")
+    pBdr.append(top)
+    pPr.append(pBdr)
+
     for i, line in enumerate(lines):
-        para = footer.add_paragraph()
-        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        # Top border on first line only
-        if i == 0:
-            pPr = para._element.get_or_add_pPr()
-            pBdr = OxmlElement("w:pBdr")
-            top = OxmlElement("w:top")
-            top.set(qn("w:val"), "single")
-            top.set(qn("w:sz"), "4")
-            top.set(qn("w:space"), "4")
-            top.set(qn("w:color"), "d5d8dc")
-            pBdr.append(top)
-            pPr.append(pBdr)
-
+        if i > 0:
+            para.add_run().add_break()
         run = para.add_run(line)
         run.font.size = Pt(6)
         run.font.color.rgb = RGBColor(0x73, 0x85, 0x99)
