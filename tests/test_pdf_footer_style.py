@@ -2,8 +2,6 @@
 
 from unittest.mock import patch, MagicMock
 
-import pytest
-
 from md_doc.builders.pdf import _build_footer_style
 
 
