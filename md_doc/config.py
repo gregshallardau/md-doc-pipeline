@@ -101,8 +101,8 @@ def load_config(doc_path: Path, repo_root: Path | None = None) -> dict[str, Any]
         - ``product``         – product / client name
         - ``version``         – version string
         - ``outputs``         – list of output formats, e.g. ``["pdf", "docx"]``
-        - ``output_docx``     – filename for .docx output
-        - ``output_pdf``      – filename for .pdf output
+        - ``output_filename``  – output filename stem (no extension); supports Jinja2 variables;
+                               extension is appended automatically per format
         - ``include_md_in_share`` – bool, whether to include .md source in sync
     """
     doc_path = Path(doc_path).resolve()
