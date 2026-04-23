@@ -483,9 +483,16 @@ def export(
     if output is not None:
         dest = output.resolve()
     else:
-        root_config = load_config(source, repo_root=repo_root)
-        cfg_folder = root_config.get("export_folder")
-        dest = Path(str(cfg_folder)).expanduser().resolve() if cfg_folder else (source / "Exports").resolve()
+        # Read _meta.yml directly from the source root — load_config expects a file path
+        import yaml as _yaml
+        _meta_file = source / "_meta.yml"
+        _root_meta = _yaml.safe_load(_meta_file.read_text()) if _meta_file.exists() else {}
+        cfg_folder = _root_meta.get("export_folder") if isinstance(_root_meta, dict) else None
+        if cfg_folder:
+            cfg_path = Path(str(cfg_folder)).expanduser()
+            dest = (source / cfg_path).resolve() if not cfg_path.is_absolute() else cfg_path.resolve()
+        else:
+            dest = (source / "Exports").resolve()
 
     # Scan for exportable notes
     tag_list = list(tags) if tags else None
