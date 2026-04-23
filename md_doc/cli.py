@@ -472,7 +472,7 @@ def export(
 
     # Scan for exportable notes
     tag_list = list(tags) if tags else None
-    exportable = find_exportable(source, tags=tag_list)
+    exportable = find_exportable(source, tags=tag_list, repo_root=repo_root)
     if not exportable:
         click.echo(f"No Markdown files with 'export: true' found under {source}")
         sys.exit(0)
