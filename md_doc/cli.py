@@ -292,7 +292,7 @@ def build(
 
         # Render through Jinja2
         try:
-            rendered_md = render(doc_path, repo_root=repo_root, strict=strict)
+            rendered_md = render(doc_path, repo_root=root, strict=strict)
         except Exception as exc:
             click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
@@ -324,15 +324,15 @@ def build(
                 if format_name == "pdf":
                     from .builders.pdf import build as build_pdf  # type: ignore[import]
 
-                    build_pdf(rendered_md, config, out_path, doc_path=doc_path, repo_root=repo_root)
+                    build_pdf(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx  # type: ignore[import]
 
-                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=repo_root)
+                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx  # type: ignore[import]
 
-                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=repo_root)
+                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
