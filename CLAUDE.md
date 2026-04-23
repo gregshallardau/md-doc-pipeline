@@ -47,6 +47,8 @@ uv run md-doc theme override workspace/acme/clients/stormfront/  # colour overri
 
 # Export (scan for export: true in frontmatter, build, collect outputs)
 uv run md-doc export /path/to/vault              # scan vault, output to vault/Exports/
+uv run md-doc export -w affinity                 # named workspace (same as build -w)
+uv run md-doc export -w affinity -o /output      # workspace + custom output dir
 uv run md-doc export /path/to/vault -o /output   # custom output directory
 uv run md-doc export /path/to/vault --tag cheatsheet  # filter by tag
 uv run md-doc export /path/to/vault --format pdf  # force format (default: per-doc)

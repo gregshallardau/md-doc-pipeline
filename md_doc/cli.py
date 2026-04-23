@@ -395,7 +395,14 @@ def workspaces_cmd() -> None:
 
 @main.command()
 @click.argument(
-    "source", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path)
+    "source", default=".", type=click.Path(file_okay=False, path_type=Path), required=False
+)
+@click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    type=str,
+    help="Named workspace from workspace/remote-workspaces.yml. Overrides SOURCE.",
 )
 @click.option(
     "--output",
@@ -422,7 +429,8 @@ def workspaces_cmd() -> None:
     "--dry-run", is_flag=True, default=False, help="Show what would be exported without building."
 )
 def export(
-    source: Path,
+    source: Path | None,
+    workspace: str | None,
     output: Path | None,
     fmt: str,
     tags: tuple[str, ...],
@@ -433,7 +441,7 @@ def export(
 
     Searches SOURCE recursively for any .md file with ``export: true`` in
     its YAML frontmatter. Notes with ``draft: true`` are skipped. Use --tag
-    to filter by tags.
+    to filter by tags. Use --workspace / -w to target a named remote workspace.
 
     Matching files are staged into an internal workspace, built to the
     requested format(s), and outputs are copied to the destination.
@@ -441,11 +449,23 @@ def export(
     \b
     Examples:
       md-doc export /mnt/NAS/Obsidian/MyVault
-      md-doc export /mnt/NAS/Obsidian/MyVault --output /mnt/NAS/Exports
+      md-doc export -w affinity
+      md-doc export -w affinity --output /mnt/NAS/Exports
       md-doc export /mnt/NAS/Obsidian/MyVault --tag cheatsheet
       md-doc export . --format pdf --dry-run
     """
     from .exporter import find_exportable, stage_files, collect_outputs
+
+    repo_root = _find_repo_root(Path.cwd())
+
+    if workspace is not None:
+        source = _resolve_workspace(workspace, repo_root)
+    elif source is not None:
+        source = source.resolve()
+        if not source.exists():
+            raise click.UsageError(f"Path does not exist: {source}")
+    else:
+        source = Path.cwd()
 
     source = source.resolve()
     dest = (output or source / "Exports").resolve()
