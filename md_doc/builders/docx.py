@@ -180,11 +180,13 @@ class _DocxBuilder(HTMLParser):
         doc: Document,
         theme: dict[str, Any] | None = None,
         field_type: str | None = None,
+        body_text_align: str | None = None,
     ) -> None:
         super().__init__()
         self.doc = doc
         self._theme: dict[str, Any] = theme or {}
         self._field_type = field_type  # None | "form" | "merge"
+        self._body_text_align = body_text_align  # default alignment for Normal paragraphs
 
         apply_theme_to_doc(self.doc, self._theme)
 
@@ -217,6 +219,47 @@ class _DocxBuilder(HTMLParser):
         # the <br> tag, not a meaningful line break) is stripped rather than
         # converted to an extra <w:br/>.
         self._last_was_br = False
+
+        # Alignment context stack — pushed/popped by <div style="text-align: ...">
+        self._alignment_stack: list[str | None] = []
+
+    # ------------------------------------------------------------------
+    # Alignment helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_text_align(attrs: list[tuple[str, str | None]]) -> str | None:
+        """Extract text-align value from a style attribute, e.g. 'justify'."""
+        for name, value in attrs:
+            if name == "style" and value:
+                for part in value.split(";"):
+                    part = part.strip()
+                    if part.lower().startswith("text-align:"):
+                        return part.split(":", 1)[1].strip().lower()
+        return None
+
+    @staticmethod
+    def _to_word_alignment(align: str | None) -> Any:
+        _map = {
+            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        }
+        return _map.get(align or "")
+
+    def _effective_alignment(self, inline_align: str | None = None) -> Any:
+        """Return the Word alignment constant for the current context."""
+        align = inline_align
+        if align is None:
+            # Walk stack top-to-bottom for nearest div override
+            for a in reversed(self._alignment_stack):
+                if a is not None:
+                    align = a
+                    break
+        if align is None:
+            align = self._body_text_align
+        return self._to_word_alignment(align)
 
     # ------------------------------------------------------------------
     # Paragraph helpers
@@ -319,9 +362,20 @@ class _DocxBuilder(HTMLParser):
 
         if tag in ("h1", "h2", "h3", "h4"):
             self._new_para(f"Heading {int(tag[1])}")
+            inline_align = self._parse_text_align(attrs)
+            word_align = self._effective_alignment(inline_align)
+            if word_align is not None and self._paragraph is not None:
+                self._paragraph.alignment = word_align
 
         elif tag == "p":
             self._new_para("Intense Quote" if self._in_blockquote else "Normal")
+            inline_align = self._parse_text_align(attrs)
+            word_align = self._effective_alignment(inline_align)
+            if word_align is not None and self._paragraph is not None:
+                self._paragraph.alignment = word_align
+
+        elif tag == "div":
+            self._alignment_stack.append(self._parse_text_align(attrs))
 
         elif tag in ("ul", "ol"):
             self._list_stack.append(tag)
@@ -425,6 +479,11 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "blockquote":
             self._in_blockquote = False
+            self._paragraph = None
+
+        elif tag == "div":
+            if self._alignment_stack:
+                self._alignment_stack.pop()
             self._paragraph = None
 
         elif tag in ("strong", "b"):
@@ -819,7 +878,8 @@ def build(
     _add_page_header_bar(doc, config, doc_path, repo_root)
     _add_footer(doc, config)
 
-    builder = _DocxBuilder(doc, theme=theme, field_type=field_type)
+    body_text_align = str(config.get("body_text_align", "")).lower() or None
+    builder = _DocxBuilder(doc, theme=theme, field_type=field_type, body_text_align=body_text_align)
 
     if is_dotx and cover_page:
         _add_cover_page(doc, {**config, "title": title}, builder)
