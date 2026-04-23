@@ -47,7 +47,7 @@ def find_exportable(
         if any(part.startswith(".") for part in md_file.parts):
             continue
         config = load_config(md_file, repo_root=repo_root)
-        if config.get("export") is not True:
+        if config.get("export") is False:
             continue
         if config.get("draft") is True:
             continue
