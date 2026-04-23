@@ -494,6 +494,8 @@ def export(
         else:
             dest = (source / "Exports").resolve()
 
+    click.echo(f"Exporting to: {dest}")
+
     # Scan for exportable notes
     tag_list = list(tags) if tags else None
     exportable = find_exportable(source, tags=tag_list, repo_root=repo_root)
