@@ -479,21 +479,25 @@ def export(
 
     source = source.resolve()
 
-    # Resolve destination: CLI -o > _meta.yml export_folder > source/Exports/
+    # Resolve destination: CLI -o > _meta.yml export_folder (walks up from source) > source/Exports/
     if output is not None:
         dest = output.resolve()
     else:
         import yaml as _yaml
-        _meta_file = source / "_meta.yml"
-        click.echo(f"[debug] looking for _meta.yml at: {_meta_file} (exists={_meta_file.exists()})", err=True)
-        _root_meta = _yaml.safe_load(_meta_file.read_text()) if _meta_file.exists() else {}
-        cfg_folder = _root_meta.get("export_folder") if isinstance(_root_meta, dict) else None
-        click.echo(f"[debug] export_folder value: {cfg_folder!r}", err=True)
+        cfg_folder = None
+        # Walk up from source looking for export_folder in any _meta.yml
+        for candidate in [source, *source.parents]:
+            _meta_file = candidate / "_meta.yml"
+            if _meta_file.exists():
+                _meta = _yaml.safe_load(_meta_file.read_text())
+                if isinstance(_meta, dict) and _meta.get("export_folder"):
+                    cfg_folder = _meta["export_folder"]
+                    break
         if cfg_folder:
             cfg_path = Path(str(cfg_folder)).expanduser()
             dest = (source / cfg_path).resolve() if not cfg_path.is_absolute() else cfg_path.resolve()
         else:
-            dest = (source / "Exports").resolve()
+            dest = (source / "exported").resolve()
 
     click.echo(f"Exporting to: {dest}")
 
@@ -528,7 +532,7 @@ def export(
     # Build using the same logic as the build command
     errors: list[str] = []
     for doc_path, fm in staged:
-        config = load_config(doc_path, repo_root=staging_dir)
+        config = load_config(doc_path, repo_root=source)
 
         # Determine formats: CLI flag > frontmatter export_format > outputs > pdf
         if fmt == "all":
@@ -543,7 +547,7 @@ def export(
         click.echo(f"  {doc_path.name}  →  {', '.join(formats)}")
 
         try:
-            rendered_md = render(doc_path, repo_root=staging_dir, strict=False)
+            rendered_md = render(doc_path, repo_root=source, strict=False)
         except Exception as exc:
             click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
@@ -570,13 +574,13 @@ def export(
                     from .builders.docx import build as build_docx
 
                     build_docx(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=staging_dir
+                        rendered_md, config, out_path, doc_path=doc_path, repo_root=source
                     )
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx
 
                     build_dotx(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=staging_dir
+                        rendered_md, config, out_path, doc_path=doc_path, repo_root=source
                     )
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
