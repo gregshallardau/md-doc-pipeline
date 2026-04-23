@@ -228,6 +228,7 @@ def main() -> None:
 @click.option(
     "--dry-run", is_flag=True, default=False, help="Print what would be built without building."
 )
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors.")
 def build(
     root: Path,
     output: Path | None,
@@ -236,6 +237,7 @@ def build(
     theme: Path | None,
     strict: bool,
     dry_run: bool,
+    verbose: bool,
 ) -> None:
     """Build all Markdown documents under ROOT to PDF and/or DOCX.
 
@@ -292,7 +294,10 @@ def build(
         try:
             rendered_md = render(doc_path, repo_root=root, strict=strict)
         except Exception as exc:
-            click.echo(f"    [ERROR] render failed: {exc}", err=True)
+            click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
+            if verbose:
+                import traceback
+                traceback.print_exc()
             errors.append(str(doc_path))
             continue
 
@@ -339,7 +344,10 @@ def build(
                 )
                 errors.append(str(doc_path))
             except Exception as exc:
-                click.echo(f"    [ERROR] build failed ({format_name}): {exc}", err=True)
+                click.echo(f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}", err=True)
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
                 errors.append(str(doc_path))
 
     if errors:
@@ -428,6 +436,7 @@ def workspaces_cmd() -> None:
 @click.option(
     "--dry-run", is_flag=True, default=False, help="Show what would be exported without building."
 )
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors.")
 def export(
     source: Path | None,
     workspace: str | None,
@@ -436,6 +445,7 @@ def export(
     tags: tuple[str, ...],
     no_symlinks: bool,
     dry_run: bool,
+    verbose: bool,
 ) -> None:
     """Scan SOURCE for Markdown files with ``export: true`` and build them.
 
@@ -525,7 +535,10 @@ def export(
         try:
             rendered_md = render(doc_path, repo_root=staging_dir, strict=False)
         except Exception as exc:
-            click.echo(f"    [ERROR] render failed: {exc}", err=True)
+            click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
+            if verbose:
+                import traceback
+                traceback.print_exc()
             errors.append(str(doc_path))
             continue
 
@@ -565,7 +578,10 @@ def export(
                 )
                 errors.append(str(doc_path))
             except Exception as exc:
-                click.echo(f"    [ERROR] build failed ({format_name}): {exc}", err=True)
+                click.echo(f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}", err=True)
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
                 errors.append(str(doc_path))
 
     # Collect outputs to destination, preserving folder structure
