@@ -130,3 +130,39 @@
   font-size: 8pt;
   color: #7f8c9a;
 }
+
+/* ============================================
+   PDF FORM FIELDS
+   ============================================ */
+.form-section { margin: 6mm 0; }
+.form-row { display: flex; gap: 6mm; margin-bottom: 4mm; }
+.form-group { flex: 1; }
+.form-group label {
+  display: block;
+  font-size: 8.5pt;
+  font-weight: 600;
+  color: #5d6d7e;
+  margin-bottom: 1.5mm;
+  text-transform: uppercase;
+  letter-spacing: 0.5pt;
+}
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+select,
+textarea {
+  appearance: auto;
+  width: 100%;
+  font-size: 10pt;
+  font-family: inherit;
+  padding: 2mm 3mm;
+  border: 1pt solid #b0bec5;
+  border-radius: 2pt;
+  background: #fafafa;
+  box-sizing: border-box;
+}
+textarea { min-height: 18mm; resize: vertical; }
+input[type="checkbox"] { appearance: auto; width: 4mm; height: 4mm; margin-right: 2mm; }
+.checkbox-group { display: flex; flex-wrap: wrap; gap: 3mm 8mm; margin-top: 2mm; }
+.checkbox-label { display: flex; align-items: center; font-size: 10pt; }
+.section-note { font-size: 8.5pt; color: #7f8c9a; margin-bottom: 3mm; }
