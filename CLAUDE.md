@@ -156,7 +156,30 @@ pdf_theme: path/to/custom/_pdf-theme.css
                                # _pdf-theme.css is also used as Word theme fallback (see below)
                                # path is resolved relative to repo root or absolute
 dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
+body_text_align: justify      # default paragraph alignment for docx/dotx body text: justify | left | center | right
 ```
+
+**Per-section alignment in Markdown (docx/dotx):**
+
+Wrap sections in an HTML `<div style="text-align: ...">` block to override alignment for that block:
+
+```markdown
+<!-- Justify the whole document via body_text_align: justify in _meta.yml -->
+
+<div style="text-align: left">
+
+This paragraph and the heading below will be left-aligned.
+
+## Left-Aligned Section
+
+Normal content here.
+
+</div>
+
+Back to justified body text here.
+```
+
+The alignment cascades: all `<p>` and heading tags inside a `<div>` inherit its `text-align`. PDF uses native CSS so this works there too. For docx, `body_text_align` sets the default and `<div>` blocks override it per section.
 
 Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an optional Word-specific CSS override. Place alongside `_pdf-theme.css`. If present, it is used instead of `_pdf-theme.css` for docx/dotx output. If absent, docx/dotx builders fall back to `_pdf-theme.css`. Same CSS format — only properties meaningful to python-docx are needed (body font-family/font-size, h1–h4 color/font-size, code font-family, th background/color).
 
