@@ -57,6 +57,38 @@ _MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
 
 
 # ---------------------------------------------------------------------------
+# Hyperlink helper
+# ---------------------------------------------------------------------------
+
+
+def _insert_hyperlink(paragraph: Any, text: str, url: str) -> None:
+    """Append a clickable hyperlink run to *paragraph*."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    part = paragraph.part
+    r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    rStyle = OxmlElement("w:rStyle")
+    rStyle.set(qn("w:val"), "Hyperlink")
+    rPr.append(rStyle)
+    run.append(rPr)
+
+    t = OxmlElement("w:t")
+    t.text = text
+    if text.startswith(" ") or text.endswith(" "):
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    run.append(t)
+
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+
+
+# ---------------------------------------------------------------------------
 # Field helpers — MERGEFIELD and Text Form Field
 # ---------------------------------------------------------------------------
 
@@ -223,6 +255,10 @@ class _DocxBuilder(HTMLParser):
         # Alignment context stack — pushed/popped by <div style="text-align: ...">
         self._alignment_stack: list[str | None] = []
 
+        # Hyperlink state — set while inside <a href="...">
+        self._current_href: str | None = None
+        self._link_text_buf: str = ""
+
     # ------------------------------------------------------------------
     # Alignment helpers
     # ------------------------------------------------------------------
@@ -342,6 +378,9 @@ class _DocxBuilder(HTMLParser):
         if self._last_was_br:
             text = text.lstrip("\n")
             self._last_was_br = False
+        if self._current_href is not None:
+            self._link_text_buf += text
+            return
         if self._paragraph is None and not text.strip():
             return
         self._write_text(
@@ -376,6 +415,10 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
+
+        elif tag == "a":
+            self._current_href = dict(attrs).get("href") or ""
+            self._link_text_buf = ""
 
         elif tag in ("ul", "ol"):
             self._list_stack.append(tag)
@@ -485,6 +528,15 @@ class _DocxBuilder(HTMLParser):
             if self._alignment_stack:
                 self._alignment_stack.pop()
             self._paragraph = None
+
+        elif tag == "a":
+            if self._link_text_buf and self._paragraph is not None:
+                if self._current_href:
+                    _insert_hyperlink(self._current_para(), self._link_text_buf, self._current_href)
+                else:
+                    self._write_text(self._current_para(), self._link_text_buf)
+            self._current_href = None
+            self._link_text_buf = ""
 
         elif tag in ("strong", "b"):
             self._bold = False
