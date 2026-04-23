@@ -468,7 +468,14 @@ def export(
         source = Path.cwd()
 
     source = source.resolve()
-    dest = (output or source / "Exports").resolve()
+
+    # Resolve destination: CLI -o > _meta.yml export_folder > source/Exports/
+    if output is not None:
+        dest = output.resolve()
+    else:
+        root_config = load_config(source, repo_root=repo_root)
+        cfg_folder = root_config.get("export_folder")
+        dest = Path(str(cfg_folder)).expanduser().resolve() if cfg_folder else (source / "Exports").resolve()
 
     # Scan for exportable notes
     tag_list = list(tags) if tags else None
