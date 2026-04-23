@@ -137,23 +137,29 @@ Use `md-doc fields [DIR]` to see all resolved fields at a given level. `config.l
 
 ### Configuration keys (in `_meta.yml` or document frontmatter)
 
+**Metadata & output control:**
 ```yaml
-title, product, document_type, version, status, author
-outputs: [pdf, docx]          # default: [pdf]
-                               # valid values: pdf | docx | dotx
+title, product, document_type, version, status, author  # standard metadata fields
+outputs: [pdf, docx]          # default: [pdf]; valid values: pdf | docx | dotx
 output_filename: "{{ product }}-proposal"  # override output filename (all formats); Jinja2 vars supported; extension auto-appended
 output_dir: /path/to/dest/    # route outputs here; cascades from _meta.yml; CLI --output wins
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
-dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
+include_md_in_share: false    # whether to include .md source in sync output
+```
+
+**Theme & styling:**
+```yaml
 pdf_theme: path/to/custom/_pdf-theme.css
                                # also available as CLI flag: --theme / -t
                                # _pdf-theme.css is also used as Word theme fallback (see below)
-# _docx-theme.css (filesystem config file, not a _meta.yml key)
-#   Optional Word-specific CSS override file. Place alongside _pdf-theme.css.
-#   If present, it is used instead of _pdf-theme.css for docx/dotx output.
-#   If absent, docx/dotx builders fall back to _pdf-theme.css.
-#   Same CSS format — only properties meaningful to python-docx are needed
-#   (body font-family/font-size, h1–h4 color/font-size, code font-family, th background/color).
+                               # path is resolved relative to repo root or absolute
+dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
+```
+
+Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an optional Word-specific CSS override. Place alongside `_pdf-theme.css`. If present, it is used instead of `_pdf-theme.css` for docx/dotx output. If absent, docx/dotx builders fall back to `_pdf-theme.css`. Same CSS format — only properties meaningful to python-docx are needed (body font-family/font-size, h1–h4 color/font-size, code font-family, th background/color).
+
+**Cover page:**
+```yaml
 cover_page: true              # default true — set false to omit cover
 cover_label: Report           # text above the title on cover page (default: "Report")
 cover_text_align: left        # left | right (default: left) — alignment of cover content
@@ -161,6 +167,11 @@ cover_background: white       # cover page background colour (default: "white")
 cover_divider: true           # show horizontal rule under title (default: true)
 cover_meta_label: "Prepared by"  # label before the author name (default: "Prepared by")
 cover_meta_author: "Custom Name" # override author on cover only (default: author value)
+cover_footer: true            # show footer on cover page (default: true)
+cover_footer_text: "Author · Confidential"  # footer text (default: "{author} · Confidential")
+cover_footer_line: true       # show border-top line on footer (default: true)
+cover_footer_color: "#738599" # footer text colour
+cover_logo: logo.png          # optional logo on cover page (resolved like header_logo)
 cover_bar: true               # show coloured bar(s) on cover (default: true)
 cover_bar_position: top       # top | bottom | both (default: "top")
 cover_bar_height: "10mm"      # bar height (default: "10mm")
@@ -171,9 +182,10 @@ cover_text_on_bar: false      # true = place cover content inside top bar (defau
 cover_stripe: false           # vertical accent stripe on cover (default: false)
 cover_stripe_height: "120mm"  # stripe height (default: "120mm")
 cover_stripe_width: "6mm"     # stripe width (default: "6mm")
-cover_footer_text: "Author · Confidential"  # footer text (default: "{author} · Confidential")
-cover_footer_line: true       # show border-top line on footer (default: true)
-cover_footer_color: "#738599" # footer text colour
+```
+
+**Headers & footers (content pages):**
+```yaml
 header_logo: assets/logo.png  # logo image in page header (resolved doc dir → ancestors → repo root)
 header_logo_position: right   # left | center | right (default: right)
 header_text: "Company Name"   # text in page header
@@ -182,12 +194,11 @@ footer_left: "Company Name"   # text in left footer slot (injected as CSS @botto
 footer_center: "Confidential" # text in center footer slot (injected as CSS @bottom-center)
 footer_right: "Page 1"        # text in right footer slot (injected as CSS @bottom-right)
                                # footer_* keys are optional; cover page always suppresses them
-section_bar: true              # coloured background bars on H1/H2 headings
-section_bar_color: "#2563eb"   # bar colour (default: "#2563eb")
-section_bar_text_on_bar: true  # true = white text on bar, false = border-top line
-section_bar_text_color: "#ffffff"  # text colour when text_on_bar is true
-section_bar_headings: "h1,h2" # which headings get bars (default: "h1,h2")
-page_header_bar: true          # solid coloured bar on every content page
+```
+
+**Page header bar (optional coloured bar on every content page):**
+```yaml
+page_header_bar: true          # show coloured bar (default: false)
 page_header_bar_color: "#2563eb"
 page_header_bar_text_color: "#ffffff"
 page_header_bar_height: "12mm"
@@ -197,7 +208,19 @@ page_header_bar_logo_position: right
 page_header_bar_logos:         # multi-logo: list of {path, position} objects
   - path: logo.png
     position: left
-include_md_in_share: false
+```
+
+**Section heading styling:**
+```yaml
+section_bar: true              # coloured background bars on H1/H2 headings (default: false)
+section_bar_color: "#2563eb"   # bar colour (default: "#2563eb")
+section_bar_text_on_bar: true  # true = white text on bar, false = border-top line (default: true)
+section_bar_text_color: "#ffffff"  # text colour when text_on_bar is true
+section_bar_headings: "h1,h2" # which headings get bars (default: "h1,h2")
+```
+
+**Sync & integration:**
+```yaml
 sync_target: azure | s3 | local
 sync_config: { ... }          # backend-specific connection params
 ```
@@ -205,7 +228,33 @@ sync_config: { ... }          # backend-specific connection params
 ### Output placement
 
 - Default: alongside the source `.md` file
-- With `--output DIR`: mirrors the source tree under `DIR`
+- With `--output DIR` (CLI flag): mirrors the source tree under `DIR`
+- With `output_dir` (config key): places all outputs flat in that directory (no mirroring)
+- CLI `--output` takes precedence over config `output_dir`
+
+### Export frontmatter keys (for vault/document export workflow)
+
+When using `md-doc export`, Markdown files can include special frontmatter to control export behavior:
+
+```yaml
+export: true                  # required — marks this note for export
+export_format: pdf            # output format (pdf, docx, dotx). Default: pdf
+export_path: Cheat Sheets     # relative subdirectory in export output. Default: mirrors source structure
+export_filename: My Doc       # override output filename (extension added automatically)
+draft: true                   # optional — skip this note even if export: true
+tags: [cheatsheet, cli]       # optional — metadata tags; use --tag flag to filter exports
+```
+
+Export workflow:
+1. `md-doc export /path/to/vault` scans for files with `export: true`
+2. Files with `draft: true` are skipped
+3. Use `--tag TAGNAME` to filter by tags
+4. Outputs go to `vault/Exports/` by default, or `-o /path/` to override
+5. Use `--format pdf|docx|dotx` to force a single format (default: per-document)
+
+### Footer rendering (docx/dotx)
+
+Multiline footer text in Word documents uses soft line breaks (`<w:br/>`) instead of separate paragraphs. This keeps the footer as a single logical unit while preserving line breaks visually. No behavior change for users — footers render correctly whether you use single or multi-line text in `footer_left`, `footer_center`, `footer_right` config keys.
 
 ### WeasyPrint PDF forms — key facts for implementation
 
