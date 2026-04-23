@@ -744,6 +744,8 @@ def _add_page_header_bar(
 
     if header_text:
         para = row.cells[0].paragraphs[0]
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
         run = para.add_run(str(header_text))
         run.bold = True
         run.font.color.rgb = RGBColor.from_string(text_color_hex)
@@ -751,6 +753,8 @@ def _add_page_header_bar(
 
     if logo_path:
         para = row.cells[-1].paragraphs[0]
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
         para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         run = para.add_run()
         run.add_picture(str(logo_path), height=Mm(max(height_mm * 0.7, 4)))
