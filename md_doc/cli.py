@@ -483,11 +483,12 @@ def export(
     if output is not None:
         dest = output.resolve()
     else:
-        # Read _meta.yml directly from the source root — load_config expects a file path
         import yaml as _yaml
         _meta_file = source / "_meta.yml"
+        click.echo(f"[debug] looking for _meta.yml at: {_meta_file} (exists={_meta_file.exists()})", err=True)
         _root_meta = _yaml.safe_load(_meta_file.read_text()) if _meta_file.exists() else {}
         cfg_folder = _root_meta.get("export_folder") if isinstance(_root_meta, dict) else None
+        click.echo(f"[debug] export_folder value: {cfg_folder!r}", err=True)
         if cfg_folder:
             cfg_path = Path(str(cfg_folder)).expanduser()
             dest = (source / cfg_path).resolve() if not cfg_path.is_absolute() else cfg_path.resolve()
