@@ -2,11 +2,12 @@
 Vault export module.
 
 Scans a directory tree for Markdown files with ``export: true`` in their
-YAML frontmatter, stages them into a workspace directory, and returns the
-list of staged paths ready for the build pipeline.
+YAML frontmatter or inherited from a parent ``_meta.yml``, stages them into
+a workspace directory, and returns the list of staged paths ready for the
+build pipeline.
 
-Frontmatter keys:
-  export: true              — marks this note for export
+Frontmatter / _meta.yml keys:
+  export: true              — marks this note for export (inheritable from _meta.yml)
   export_format: pdf        — output format (pdf, docx, dotx). Default: pdf
   export_path: Cheat Sheets — relative path inside the output dir. Default: mirrors source structure
   export_filename: My Doc   — override output filename (extension added automatically)
@@ -19,39 +20,44 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .config import _extract_frontmatter
+from .config import _extract_frontmatter, load_config
 
 
 def find_exportable(
     source_dir: Path,
     *,
     tags: list[str] | None = None,
+    repo_root: Path | None = None,
 ) -> list[tuple[Path, dict]]:
-    """Return all .md files under *source_dir* with ``export: true`` in frontmatter.
+    """Return all .md files under *source_dir* with ``export: true``.
+
+    Checks the fully merged config (document frontmatter + all ancestor
+    ``_meta.yml`` files) so ``export: true`` set in a parent directory's
+    ``_meta.yml`` is inherited by all documents beneath it.
 
     Skips notes with ``draft: true``.
     If *tags* is provided, only includes notes whose ``tags`` list contains
     at least one of the requested tags.
 
-    Returns a list of (path, frontmatter_dict) tuples so callers can access
-    export_path and export_format without re-reading the file.
+    Returns a list of (path, merged_config_dict) tuples so callers can access
+    export_path, export_format, and output_filename without re-reading the file.
     """
     results: list[tuple[Path, dict]] = []
     for md_file in sorted(source_dir.rglob("*.md")):
         if any(part.startswith(".") for part in md_file.parts):
             continue
-        fm = _extract_frontmatter(md_file)
-        if fm.get("export") is not True:
+        config = load_config(md_file, repo_root=repo_root)
+        if config.get("export") is not True:
             continue
-        if fm.get("draft") is True:
+        if config.get("draft") is True:
             continue
         if tags:
-            doc_tags = fm.get("tags", [])
+            doc_tags = config.get("tags", [])
             if isinstance(doc_tags, str):
                 doc_tags = [doc_tags]
             if not any(t in doc_tags for t in tags):
                 continue
-        results.append((md_file, fm))
+        results.append((md_file, config))
     return results
 
 
