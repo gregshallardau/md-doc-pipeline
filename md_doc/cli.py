@@ -296,14 +296,13 @@ def build(
             errors.append(str(doc_path))
             continue
 
-        # Resolve effective output dir: CLI --output wins; config output_dir is flat fallback
+        # Resolve effective output dir: CLI --output wins; config output_dir mirrors source tree
         effective_output = output
         flat = False
         if effective_output is None:
             cfg_out = config.get("output_dir")
             if cfg_out:
                 effective_output = Path(str(cfg_out)).expanduser().resolve()
-                flat = True
 
         # Build each format
         for format_name in formats:

@@ -229,7 +229,7 @@ sync_config: { ... }          # backend-specific connection params
 
 - Default: alongside the source `.md` file
 - With `--output DIR` (CLI flag): mirrors the source tree under `DIR`
-- With `output_dir` (config key): places all outputs flat in that directory (no mirroring)
+- With `output_dir` (config key): mirrors the source tree under that directory (same behaviour as CLI `--output`)
 - CLI `--output` takes precedence over config `output_dir`
 
 ### Export frontmatter keys (for vault/document export workflow)
