@@ -62,11 +62,23 @@ _MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
 
 
 def _insert_hyperlink(paragraph: Any, text: str, url: str) -> None:
-    """Append a clickable hyperlink run to *paragraph*."""
+    """Append a clickable hyperlink to *paragraph*.
+
+    Display text is ``text (url)`` when text differs from url, or just ``url``
+    when they're the same (e.g. bare URL links). This keeps the URL visible
+    in printed output.
+    """
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
+    display = text.strip()
+    url_clean = url.strip()
+    if display and display != url_clean:
+        display = f"{display} ({url_clean})"
+    else:
+        display = url_clean
+
     part = paragraph.part
-    r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
+    r_id = part.relate_to(url_clean, RT.HYPERLINK, is_external=True)
 
     hyperlink = OxmlElement("w:hyperlink")
     hyperlink.set(qn("r:id"), r_id)
@@ -79,8 +91,8 @@ def _insert_hyperlink(paragraph: Any, text: str, url: str) -> None:
     run.append(rPr)
 
     t = OxmlElement("w:t")
-    t.text = text
-    if text.startswith(" ") or text.endswith(" "):
+    t.text = display
+    if display.startswith(" ") or display.endswith(" "):
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     run.append(t)
 
