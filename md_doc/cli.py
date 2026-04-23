@@ -307,7 +307,8 @@ def build(
         if effective_output is None:
             cfg_out = config.get("output_dir")
             if cfg_out:
-                effective_output = Path(str(cfg_out)).expanduser().resolve()
+                cfg_out_path = Path(str(cfg_out)).expanduser()
+                effective_output = (root / cfg_out_path).resolve() if not cfg_out_path.is_absolute() else cfg_out_path.resolve()
 
         # Build each format
         for format_name in formats:
