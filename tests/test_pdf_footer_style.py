@@ -29,13 +29,13 @@ class TestBuildFooterStyleLeftOnly:
         result = _build_footer_style("Acme IB", None, None)
         assert "@page cover" in result
         # The cover override must clear the bottom-left slot
-        cover_section = result[result.index("@page cover"):]
+        cover_section = result[result.index("@page cover") :]
         assert "@bottom-left" in cover_section
         assert "content: none" in cover_section
 
     def test_left_cover_does_not_override_unused_slots(self):
         result = _build_footer_style("Acme IB", None, None)
-        cover_section = result[result.index("@page cover"):]
+        cover_section = result[result.index("@page cover") :]
         assert "@bottom-center" not in cover_section
         assert "@bottom-right" not in cover_section
 
@@ -70,7 +70,7 @@ class TestBuildFooterStyleAllThree:
 
     def test_all_three_cover_overrides_all_slots(self):
         result = _build_footer_style("Left", "Center", "Right")
-        cover_section = result[result.index("@page cover"):]
+        cover_section = result[result.index("@page cover") :]
         assert "@bottom-left" in cover_section
         assert "@bottom-center" in cover_section
         assert "@bottom-right" in cover_section
