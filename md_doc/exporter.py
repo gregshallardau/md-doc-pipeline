@@ -20,7 +20,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .config import _extract_frontmatter, load_config
+from .config import load_config
 
 
 def find_exportable(
