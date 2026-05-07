@@ -131,4 +131,6 @@ require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2
 
 {{-- Plugin assets --}}
 <link rel="stylesheet" href="{{ asset('vendor/md-doc/css/editor.css') }}">
+{{-- tokenizers.js must load before editor.js so registerMdDocLanguages() is available --}}
+<script src="{{ asset('vendor/md-doc/js/tokenizers.js') }}"></script>
 <script src="{{ asset('vendor/md-doc/js/editor.js') }}" defer></script>

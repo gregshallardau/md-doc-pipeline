@@ -11,8 +11,8 @@
 
     function detectLanguage(fileType) {
         if (fileType === 'css')  return 'css';
-        if (fileType === 'meta') return 'yaml';
-        return 'markdown';
+        if (fileType === 'meta') return 'mddoc-yaml';
+        return 'mddoc-markdown';
     }
 
     function stripFrontmatter(content) {
@@ -69,10 +69,15 @@
         const language       = detectLanguage(fileType);
 
         require(['vs/editor/editor.main'], function () {
+            // Register md-doc custom languages + theme (defined in tokenizers.js)
+            if (typeof registerMdDocLanguages === 'function') {
+                registerMdDocLanguages(monaco);
+            }
+
             const editor = monaco.editor.create(container, {
                 value:           initialContent,
                 language:        language,
-                theme:           'vs',
+                theme:           'mddoc-light',
                 minimap:         { enabled: false },
                 fontSize:        13,
                 lineNumbers:     'on',
