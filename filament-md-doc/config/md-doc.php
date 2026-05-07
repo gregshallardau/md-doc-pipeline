@@ -41,4 +41,27 @@ return [
      * 'session' — use the session ID (useful when auth is not configured)
      */
     'lock_user_source' => env('MD_DOC_LOCK_USER', 'auth'),
+
+    /*
+     * Path to the md-doc CLI binary (used by BuildRunner).
+     * Default 'md-doc' assumes it is on PATH; override in production with the
+     * absolute path, e.g. /opt/md-doc/.venv/bin/md-doc
+     */
+    'md_doc_bin' => env('MD_DOC_BIN', 'md-doc'),
+
+    /*
+     * Where built PDF/DOCX outputs are stored before being served via tokenised URL.
+     */
+    'build_tmp_dir' => env('MD_DOC_BUILD_DIR', sys_get_temp_dir() . '/md-doc-builds'),
+
+    /*
+     * Hard ceiling for a single md-doc build invocation.  WeasyPrint can be slow on
+     * large documents so 120 s is a reasonable default.
+     */
+    'build_timeout_seconds' => env('MD_DOC_BUILD_TIMEOUT', 120),
+
+    /*
+     * How long a build token (returned to the browser) remains valid.
+     */
+    'build_token_ttl_minutes' => env('MD_DOC_BUILD_TTL', 30),
 ];

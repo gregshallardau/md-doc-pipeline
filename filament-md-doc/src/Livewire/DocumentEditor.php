@@ -6,10 +6,12 @@ use Filament\Notifications\Notification;
 use Livewire\Attributes\On;
 use Livewire\Component;
 use MdDoc\FilamentMdDoc\MdDocPlugin;
+use MdDoc\FilamentMdDoc\Services\BuildRunner;
 use MdDoc\FilamentMdDoc\Services\ConfigResolver;
 use MdDoc\FilamentMdDoc\Services\CssResolver;
 use MdDoc\FilamentMdDoc\Services\FileLockService;
 use MdDoc\FilamentMdDoc\Services\FilesystemScanner;
+use MdDoc\FilamentMdDoc\Services\GitService;
 
 class DocumentEditor extends Component
 {
@@ -27,6 +29,29 @@ class DocumentEditor extends Component
     public array  $includedTemplates = [];
     public array  $fileTree          = [];
 
+    // ── Build / git state ──────────────────────────────────────────────────────
+    /** Latest build token returned by md-doc; null until first build. */
+    public ?string $buildToken    = null;
+    /** Format of the last build (pdf | docx | dotx). */
+    public ?string $buildFormat   = null;
+    /** Error message from the most recent failed build, or null. */
+    public ?string $buildError    = null;
+
+    /** Whether the current file has uncommitted changes vs HEAD. */
+    public bool   $isDirty         = false;
+    /** Current git branch (or null when not a git repo / detached HEAD). */
+    public ?string $currentBranch  = null;
+    /**
+     * Recent commits touching this file.
+     * @var list<array{sha:string, short:string, author:string, date:string, subject:string}>
+     */
+    public array  $gitHistory      = [];
+
+    /** Map of relative-path → locked_by, fetched once per render for the file tree. */
+    public array  $activeLocks     = [];
+    /** Map of relative-path → true for any path with uncommitted changes. */
+    public array  $dirtyPaths      = [];
+
     // ── Lock state ────────────────────────────────────────────────────────────
     /** Secret key issued when this session acquired the lock. Null = no lock held. */
     public ?string $lockKey       = null;
@@ -42,23 +67,45 @@ class DocumentEditor extends Component
     protected ConfigResolver    $configResolver;
     protected CssResolver       $cssResolver;
     protected FileLockService   $lockService;
+    protected BuildRunner       $buildRunner;
+    protected GitService        $git;
 
     public function boot(): void
     {
         $plugin               = filament()->getPlugin('md-doc');
-        $this->scanner        = new FilesystemScanner($plugin->getWorkspacePath());
+        $workspacePath        = $plugin->getWorkspacePath();
+
+        $this->scanner        = new FilesystemScanner($workspacePath);
         $this->configResolver = new ConfigResolver();
         $this->cssResolver    = new CssResolver();
         $this->lockService    = new FileLockService();
+        $this->buildRunner    = new BuildRunner();
+        $this->git            = new GitService($this->resolveRepoRoot($workspacePath));
 
         $ttl = (int) config('md-doc.lock_ttl_minutes', 10);
         // Heartbeat at half the TTL so the lock doesn't expire between beats
         $this->lockHeartbeatMs = ($ttl * 60 * 1000) / 2;
     }
 
+    /**
+     * Walk up from the workspace dir looking for a .git marker.
+     * Falls back to the workspace itself when no repo is found.
+     */
+    protected function resolveRepoRoot(string $workspacePath): string
+    {
+        $current = $workspacePath;
+        while (!is_dir($current . DIRECTORY_SEPARATOR . '.git') && dirname($current) !== $current) {
+            $current = dirname($current);
+        }
+        return is_dir($current . DIRECTORY_SEPARATOR . '.git') ? $current : $workspacePath;
+    }
+
     public function mount(string $path = ''): void
     {
-        $this->fileTree = $this->scanner->scan();
+        $this->fileTree      = $this->scanner->scan();
+        $this->activeLocks   = $this->lockService->activeLocks();
+        $this->dirtyPaths    = $this->git->dirtyPaths();
+        $this->currentBranch = $this->git->currentBranch();
 
         if ($path !== '') {
             $this->loadFile($path);
@@ -231,6 +278,10 @@ class DocumentEditor extends Component
         $workspacePath = $this->scanner->getWorkspacePath();
         $fullPath      = $this->scanner->resolveSafe($this->path);
 
+        // Git: refresh dirty status + history for the current file
+        $this->isDirty    = $this->git->isDirty($this->relativeRepoPath($fullPath));
+        $this->gitHistory = $this->git->fileHistory($this->relativeRepoPath($fullPath));
+
         if ($this->fileType === 'md') {
             $configResult       = $this->configResolver->resolve($fullPath, $workspacePath);
             $this->configLayers = $configResult['layers'];
@@ -265,6 +316,64 @@ class DocumentEditor extends Component
         if (str_ends_with($base, '.md'))  return 'md';
         if (str_ends_with($base, '.css')) return 'css';
         return 'meta';
+    }
+
+    /**
+     * Convert an absolute file path to a path relative to the git repo root.
+     * Required because GitService runs git commands in $repoRoot, not workspace.
+     */
+    protected function relativeRepoPath(string $fullPath): string
+    {
+        $plugin   = filament()->getPlugin('md-doc');
+        $repoRoot = $this->resolveRepoRoot($plugin->getWorkspacePath());
+        return ltrim(str_replace($repoRoot, '', $fullPath), DIRECTORY_SEPARATOR . '/');
+    }
+
+    // ── Build actions ──────────────────────────────────────────────────────────
+
+    public function buildPdf(): void
+    {
+        $this->triggerBuild('pdf');
+    }
+
+    public function buildDocx(): void
+    {
+        $this->triggerBuild('docx');
+    }
+
+    protected function triggerBuild(string $format): void
+    {
+        if ($this->path === '' || $this->fileType !== 'md') {
+            Notification::make()->title('Open a .md file before building')->warning()->send();
+            return;
+        }
+
+        // Save first so the build sees the latest content
+        if (!$this->isReadOnly && $this->lockKey) {
+            $this->scanner->write($this->path, $this->content);
+        }
+
+        try {
+            $fullPath  = $this->scanner->resolveSafe($this->path);
+            $result    = $this->buildRunner->build($fullPath, $format);
+            $this->buildToken  = $result['token'];
+            $this->buildFormat = $result['format'];
+            $this->buildError  = null;
+
+            Notification::make()
+                ->title('Build complete: ' . $result['filename'])
+                ->success()
+                ->send();
+        } catch (\Throwable $e) {
+            $this->buildToken  = null;
+            $this->buildError  = $e->getMessage();
+
+            Notification::make()
+                ->title('Build failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
     }
 
     public function render()
