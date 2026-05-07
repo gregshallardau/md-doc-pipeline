@@ -345,6 +345,34 @@
     overflow-y: auto;
 }
 
+/* ── Lock badges ── */
+.md-doc-lock-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.md-doc-lock-mine {
+    background: #dcfce7;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+}
+
+.md-doc-lock-readonly {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
+.md-doc-tree-file-locked {
+    opacity: 0.65;
+}
+
 /* ── Buttons ── */
 .md-doc-btn {
     padding: 0.3rem 0.75rem;

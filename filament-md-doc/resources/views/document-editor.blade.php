@@ -11,11 +11,14 @@
 
     {{-- Pass data to JS on load / Livewire updates --}}
     <script>
-        window.mdDocInitialContent = @js($content);
-        window.mdDocConfig         = @js($mergedConfig);
-        window.mdDocCss            = @js($resolvedCss);
-        window.mdDocFileType       = @js($fileType);
-        window.mdDocPath           = @js($path);
+        window.mdDocInitialContent  = @js($content);
+        window.mdDocConfig          = @js($mergedConfig);
+        window.mdDocCss             = @js($resolvedCss);
+        window.mdDocFileType        = @js($fileType);
+        window.mdDocPath            = @js($path);
+        window.mdDocLockKey         = @js($lockKey);
+        window.mdDocIsReadOnly      = @js($isReadOnly);
+        window.mdDocHeartbeatMs     = @js($lockHeartbeatMs);
     </script>
 
     <div class="md-doc-layout">
@@ -26,7 +29,10 @@
                 <span class="md-doc-sidebar-title">Files</span>
             </div>
             <div class="md-doc-sidebar-body">
-                @include('md-doc::components.file-tree', ['nodes' => $fileTree])
+                @include('md-doc::components.file-tree', [
+                    'nodes'       => $fileTree,
+                    'activeLocks' => \MdDoc\FilamentMdDoc\Services\FileLockService::staticActiveLocks(),
+                ])
             </div>
         </aside>
 
@@ -34,15 +40,34 @@
         <main class="md-doc-editor-pane">
             <div class="md-doc-editor-toolbar">
                 <span class="md-doc-filename">{{ $path ?: 'No file selected' }}</span>
+
+                {{-- Lock status badge --}}
                 @if($path)
-                <button
-                    wire:click="save"
-                    wire:loading.attr="disabled"
-                    class="md-doc-btn md-doc-btn-primary"
-                >
-                    <span wire:loading.remove wire:target="save">Save</span>
-                    <span wire:loading wire:target="save">Saving…</span>
-                </button>
+                    @if($isReadOnly)
+                        <span class="md-doc-lock-badge md-doc-lock-readonly">
+                            🔒 Read-only · locked by <strong>{{ $lockOwner }}</strong>
+                        </span>
+                        <button
+                            wire:click="tryStealLock"
+                            class="md-doc-btn md-doc-btn-sm"
+                            title="Try to acquire the lock if it has expired"
+                        >Request edit</button>
+                    @elseif($lockKey)
+                        <span class="md-doc-lock-badge md-doc-lock-mine">
+                            ✏️ Editing
+                        </span>
+                    @endif
+
+                    @if(!$isReadOnly)
+                    <button
+                        wire:click="save"
+                        wire:loading.attr="disabled"
+                        class="md-doc-btn md-doc-btn-primary"
+                    >
+                        <span wire:loading.remove wire:target="save">Save</span>
+                        <span wire:loading wire:target="save">Saving…</span>
+                    </button>
+                    @endif
                 @endif
             </div>
 
@@ -122,12 +147,16 @@
 
 </div>{{-- /.md-doc-editor --}}
 
-{{-- CDN scripts --}}
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+{{-- marked.js --}}
+<script src="{{ config('md-doc.marked_url') }}"></script>
+{{-- Monaco loader — path controlled by MD_DOC_MONACO_URL in .env --}}
 <script>
-require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' } });
+window.mdDocMonacoBaseUrl = @js(config('md-doc.monaco_base_url'));
 </script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+<script src="{{ config('md-doc.monaco_base_url') }}/loader.js"></script>
+<script>
+require.config({ paths: { vs: window.mdDocMonacoBaseUrl } });
+</script>
 
 {{-- Plugin assets --}}
 <link rel="stylesheet" href="{{ asset('vendor/md-doc/css/editor.css') }}">
