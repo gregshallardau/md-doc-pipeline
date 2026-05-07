@@ -16,7 +16,7 @@ class MdDocServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadViewsFrom(__DIR__ . '/../resources/views', 'md-doc');
-
+        $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
         $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
 
         $this->publishes([
@@ -27,6 +27,10 @@ class MdDocServiceProvider extends ServiceProvider
             __DIR__ . '/../resources/css' => public_path('vendor/md-doc/css'),
             __DIR__ . '/../resources/js'  => public_path('vendor/md-doc/js'),
         ], 'md-doc-assets');
+
+        $this->publishes([
+            __DIR__ . '/../database/migrations' => database_path('migrations'),
+        ], 'md-doc-migrations');
 
         Livewire::component('md-doc-document-editor', DocumentEditor::class);
     }

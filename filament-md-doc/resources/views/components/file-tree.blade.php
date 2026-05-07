@@ -1,5 +1,7 @@
 {{-- Recursive file tree component --}}
 {{-- $nodes: array of ['name', 'path', 'type', 'children'?] --}}
+{{-- $activeLocks: optional map of path → locked_by (passed from DocumentEditor) --}}
+@php $activeLocks ??= []; @endphp
 
 <ul class="md-doc-tree">
     @foreach($nodes as $node)
@@ -17,12 +19,13 @@
                 </details>
 
             @elseif($node['type'] === 'md')
+                @php $isLocked = isset($activeLocks[$node['path']]); @endphp
                 <button
                     wire:click="loadFile('{{ $node['path'] }}')"
-                    class="md-doc-tree-file md-doc-tree-file-md"
-                    title="{{ $node['path'] }}"
+                    class="md-doc-tree-file md-doc-tree-file-md {{ $isLocked ? 'md-doc-tree-file-locked' : '' }}"
+                    title="{{ $isLocked ? 'Locked by ' . $activeLocks[$node['path']] : $node['path'] }}"
                 >
-                    <span class="md-doc-tree-icon">📄</span>
+                    <span class="md-doc-tree-icon">{{ $isLocked ? '🔒' : '📄' }}</span>
                     {{ $node['name'] }}
                 </button>
 

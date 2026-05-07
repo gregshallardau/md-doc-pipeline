@@ -58,6 +58,48 @@
         };
     }
 
+    // ── Lock heartbeat + page-unload release ─────────────────────────────────
+
+    let lockHeartbeatTimer = null;
+
+    function startLockHeartbeat() {
+        if (lockHeartbeatTimer) clearInterval(lockHeartbeatTimer);
+
+        const intervalMs = window.mdDocHeartbeatMs || 5 * 60 * 1000; // default 5 min
+        if (!window.mdDocLockKey) return;
+
+        lockHeartbeatTimer = setInterval(function () {
+            // Use the lightweight HTTP endpoint (avoids a full Livewire round-trip)
+            fetch('/md-doc/lock/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content || '' },
+                body: JSON.stringify({ path: window.mdDocPath, lockKey: window.mdDocLockKey }),
+            }).then(function (res) {
+                return res.json();
+            }).then(function (data) {
+                if (!data.ok) {
+                    // Lock expired — notify Livewire so it switches to read-only UI
+                    clearInterval(lockHeartbeatTimer);
+                    window.mdDocLockKey = null;
+                    if (window.Livewire) {
+                        window.Livewire.dispatch('lock-heartbeat'); // triggers onHeartbeat() which handles the expired case
+                    }
+                }
+            }).catch(function () { /* network error — Livewire will clean up on next interaction */ });
+        }, intervalMs);
+    }
+
+    // Release lock immediately when the user navigates away or closes the tab.
+    // sendBeacon is fire-and-forget — no response awaited.
+    window.addEventListener('beforeunload', function () {
+        if (window.mdDocLockKey && window.mdDocPath) {
+            navigator.sendBeacon('/md-doc/lock/release', JSON.stringify({
+                path:    window.mdDocPath,
+                lockKey: window.mdDocLockKey,
+            }));
+        }
+    });
+
     // ── Monaco bootstrap ──────────────────────────────────────────────────────
 
     function initMonaco() {
@@ -78,6 +120,7 @@
                 value:           initialContent,
                 language:        language,
                 theme:           'mddoc-light',
+                readOnly:        !!window.mdDocIsReadOnly,
                 minimap:         { enabled: false },
                 fontSize:        13,
                 lineNumbers:     'on',
@@ -86,6 +129,9 @@
                 automaticLayout: true,
                 tabSize:         2,
             });
+
+            // Start lock heartbeat if we hold the lock
+            startLockHeartbeat();
 
             // Initial preview render
             renderPreview(initialContent, window.mdDocConfig, window.mdDocCss);
@@ -167,10 +213,12 @@
 
     // ── Livewire event: file loaded / saved — update Monaco model ─────────────
     document.addEventListener('livewire:init', function () {
-        Livewire.on('file-loaded', function ({ content, fileType, mergedConfig, resolvedCss }) {
-            window.mdDocConfig  = mergedConfig  || {};
-            window.mdDocCss     = resolvedCss   || '';
+        Livewire.on('file-loaded', function ({ content, fileType, mergedConfig, resolvedCss, lockKey, isReadOnly }) {
+            window.mdDocConfig   = mergedConfig  || {};
+            window.mdDocCss      = resolvedCss   || '';
             window.mdDocFileType = fileType;
+            window.mdDocLockKey  = lockKey  || null;
+            window.mdDocIsReadOnly = !!isReadOnly;
 
             if (window.mdDocEditor && typeof window.mdDocEditor.setValue === 'function') {
                 const language = detectLanguage(fileType);
@@ -178,8 +226,12 @@
                 if (model) {
                     monaco.editor.setModelLanguage(model, language);
                 }
+                window.mdDocEditor.updateOptions({ readOnly: !!isReadOnly });
                 window.mdDocEditor.setValue(content || '');
             }
+
+            // Restart heartbeat for the new file
+            startLockHeartbeat();
 
             renderPreview(content || '', mergedConfig || {}, resolvedCss || '');
         });
