@@ -228,7 +228,9 @@ def main() -> None:
 @click.option(
     "--dry-run", is_flag=True, default=False, help="Print what would be built without building."
 )
-@click.option("--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors.")
+@click.option(
+    "--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors."
+)
 def build(
     root: Path,
     output: Path | None,
@@ -297,6 +299,7 @@ def build(
             click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
                 import traceback
+
                 traceback.print_exc()
             errors.append(str(doc_path))
             continue
@@ -308,7 +311,11 @@ def build(
             cfg_out = config.get("output_dir")
             if cfg_out:
                 cfg_out_path = Path(str(cfg_out)).expanduser()
-                effective_output = (root / cfg_out_path).resolve() if not cfg_out_path.is_absolute() else cfg_out_path.resolve()
+                effective_output = (
+                    (root / cfg_out_path).resolve()
+                    if not cfg_out_path.is_absolute()
+                    else cfg_out_path.resolve()
+                )
 
         # Build each format
         for format_name in formats:
@@ -345,9 +352,13 @@ def build(
                 )
                 errors.append(str(doc_path))
             except Exception as exc:
-                click.echo(f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}", err=True)
+                click.echo(
+                    f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}",
+                    err=True,
+                )
                 if verbose:
                     import traceback
+
                     traceback.print_exc()
                 errors.append(str(doc_path))
 
@@ -437,7 +448,9 @@ def workspaces_cmd() -> None:
 @click.option(
     "--dry-run", is_flag=True, default=False, help="Show what would be exported without building."
 )
-@click.option("--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors.")
+@click.option(
+    "--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors."
+)
 def export(
     source: Path | None,
     workspace: str | None,
@@ -485,6 +498,7 @@ def export(
         dest = output.resolve()
     else:
         import yaml as _yaml
+
         cfg_folder = None
         # Walk up from source looking for export_folder in any _meta.yml
         for candidate in [source, *source.parents]:
@@ -496,7 +510,9 @@ def export(
                     break
         if cfg_folder:
             cfg_path = Path(str(cfg_folder)).expanduser()
-            dest = (source / cfg_path).resolve() if not cfg_path.is_absolute() else cfg_path.resolve()
+            dest = (
+                (source / cfg_path).resolve() if not cfg_path.is_absolute() else cfg_path.resolve()
+            )
         else:
             dest = (source / "exported").resolve()
 
@@ -553,6 +569,7 @@ def export(
             click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
                 import traceback
+
                 traceback.print_exc()
             errors.append(str(doc_path))
             continue
@@ -574,15 +591,11 @@ def export(
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx
 
-                    build_docx(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=source
-                    )
+                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=source)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx
 
-                    build_dotx(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=source
-                    )
+                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=source)
                 else:
                     click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
                     continue
@@ -593,9 +606,13 @@ def export(
                 )
                 errors.append(str(doc_path))
             except Exception as exc:
-                click.echo(f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}", err=True)
+                click.echo(
+                    f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}",
+                    err=True,
+                )
                 if verbose:
                     import traceback
+
                     traceback.print_exc()
                 errors.append(str(doc_path))
 
