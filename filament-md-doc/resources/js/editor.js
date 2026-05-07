@@ -58,6 +58,61 @@
         };
     }
 
+    // ── Diff viewer (Monaco diff editor) ──────────────────────────────────────
+
+    let diffEditor = null;
+
+    /**
+     * Load file contents at the given commit, then render a side-by-side diff
+     * against the working copy in the editor.
+     */
+    window.mdDocLoadDiff = function (sha) {
+        if (!sha || !window.mdDocPath) return;
+
+        const url = '/md-doc/git/file-at-commit?path=' + encodeURIComponent(window.mdDocPath) + '&commit=' + encodeURIComponent(sha);
+
+        fetch(url, { credentials: 'same-origin' })
+            .then(function (res) { return res.ok ? res.json() : Promise.reject(res); })
+            .then(function (data) {
+                const oldContent = data.content || '';
+                const newContent = window.mdDocEditor ? window.mdDocEditor.getValue() : '';
+                const language   = detectLanguage(window.mdDocFileType);
+                renderDiff(oldContent, newContent, language);
+            })
+            .catch(function (err) {
+                const container = document.getElementById('md-doc-diff');
+                if (container) {
+                    container.innerHTML = '<p style="color:#dc2626;padding:1rem;font-size:.85rem">'
+                        + 'Failed to load diff: ' + (err.statusText || 'unknown error') + '</p>';
+                }
+            });
+    };
+
+    function renderDiff(oldText, newText, language) {
+        const container = document.getElementById('md-doc-diff');
+        if (!container || typeof monaco === 'undefined') return;
+
+        if (diffEditor) {
+            diffEditor.dispose();
+            diffEditor = null;
+        }
+        container.innerHTML = '';
+
+        diffEditor = monaco.editor.createDiffEditor(container, {
+            theme:           'mddoc-light',
+            readOnly:        true,
+            renderSideBySide: true,
+            fontSize:        12,
+            automaticLayout: true,
+            minimap:         { enabled: false },
+        });
+
+        diffEditor.setModel({
+            original: monaco.editor.createModel(oldText, language),
+            modified: monaco.editor.createModel(newText, language),
+        });
+    }
+
     // ── Lock heartbeat + page-unload release ─────────────────────────────────
 
     let lockHeartbeatTimer = null;

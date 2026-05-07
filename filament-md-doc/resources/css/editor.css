@@ -345,6 +345,146 @@
     overflow-y: auto;
 }
 
+/* ── Build button ── */
+.md-doc-btn-build {
+    background: #0f766e;
+    color: #fff;
+    border-color: #0d9488;
+}
+.md-doc-btn-build:hover { background: #115e59; }
+.md-doc-btn-build:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Build output iframe ── */
+.md-doc-build-iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+}
+.md-doc-build-download {
+    padding: 2rem;
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+/* ── Tab meta (e.g. commit short) ── */
+.md-doc-tab-meta {
+    margin-left: 0.3rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    color: #94a3b8;
+    font-weight: 400;
+}
+
+/* ── Diff viewer ── */
+.md-doc-diff-body {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+.md-doc-diff-header {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+    font-size: 0.78rem;
+    color: #6b7280;
+}
+.md-doc-diff-header code {
+    color: #2563eb;
+}
+.md-doc-diff-container {
+    flex: 1;
+    min-height: 0;
+}
+
+/* ── History panel ── */
+.md-doc-history-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.md-doc-history-branch {
+    padding: 0.4rem 0.6rem;
+    background: #eff6ff;
+    border: 1px solid #dbeafe;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: #1d4ed8;
+}
+.md-doc-history-branch code {
+    color: #1e3a8a;
+    font-weight: 600;
+}
+.md-doc-history-dirty {
+    margin-left: 0.5rem;
+    color: #d97706;
+    font-weight: 600;
+}
+.md-doc-history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.md-doc-history-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 5px;
+    overflow: hidden;
+}
+.md-doc-history-button {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    grid-column-gap: 0.5rem;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    color: #374151;
+}
+.md-doc-history-button:hover {
+    background: #f3f4f6;
+}
+.md-doc-history-sha {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    align-self: center;
+}
+.md-doc-history-sha code {
+    color: #2563eb;
+    font-family: ui-monospace, monospace;
+}
+.md-doc-history-subject {
+    grid-column: 2;
+    grid-row: 1;
+    color: #111827;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.md-doc-history-meta {
+    grid-column: 2;
+    grid-row: 2;
+    color: #6b7280;
+    font-size: 0.72rem;
+}
+
+/* ── File tree dirty indicator ── */
+.md-doc-tree-file-dirty {
+    color: #b45309 !important;
+}
+.md-doc-tree-dirty-dot {
+    margin-left: 0.3rem;
+    color: #d97706;
+    font-size: 0.6rem;
+    vertical-align: middle;
+}
+
 /* ── Lock badges ── */
 .md-doc-lock-badge {
     display: inline-flex;
