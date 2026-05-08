@@ -51,9 +51,7 @@ def very_deep_repo(tmp_path):
         tmp_path/L01/L02/.../L10/doc.md
     """
     (tmp_path / ".git").mkdir()
-    (tmp_path / "_meta.yml").write_text(
-        "product_name: acme\nauthor: Acme Co\n", encoding="utf-8"
-    )
+    (tmp_path / "_meta.yml").write_text("product_name: acme\nauthor: Acme Co\n", encoding="utf-8")
 
     current = tmp_path
     for i in range(1, 11):
