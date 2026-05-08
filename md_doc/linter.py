@@ -235,6 +235,77 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     return issues
 
 
+def lint_meta_file(meta_path: Path) -> list[LintIssue]:
+    """
+    Lint a ``_meta.yml`` file for structural issues.
+
+    The cascade only reads ``_meta.yml`` as a single YAML mapping. Common
+    mistakes that silently lose data:
+
+    1. **Markdown-style frontmatter delimiters** (``---`` … ``---``).  PyYAML
+       reads the first document only, so anything after the second ``---`` is
+       silently dropped from the cascade.
+    2. **Top-level isn't a mapping** — e.g. a list, a string, or null.
+
+    Both produce errors so they fail loudly during ``md-doc lint``.
+
+    Parameters
+    ----------
+    meta_path:
+        Path to a ``_meta.yml`` file.
+
+    Returns
+    -------
+    list[LintIssue]
+        Empty list when the file is structurally clean.
+    """
+    meta_path = Path(meta_path).resolve()
+    issues: list[LintIssue] = []
+
+    try:
+        text = meta_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        issues.append(LintIssue(meta_path, f"Cannot read file: {exc}", "error"))
+        return issues
+
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        issues.append(LintIssue(meta_path, f"Invalid YAML: {exc}", "error"))
+        return issues
+
+    # Multiple YAML documents (i.e. extra '---' separators in the file) — only
+    # the first is read, so config silently goes missing.  This is the bug the
+    # check exists to catch.
+    if len(docs) > 1:
+        issues.append(
+            LintIssue(
+                meta_path,
+                f"_meta.yml contains {len(docs)} YAML documents (separated by "
+                f"'---'); only the first is read by the cascade. Remove the "
+                f"extra '---' separators and any markdown-style content — "
+                f"_meta.yml should be plain key: value pairs.",
+                "error",
+            )
+        )
+
+    if not docs or docs[0] is None:
+        # Empty file is fine — treated as no overrides
+        return issues
+
+    if not isinstance(docs[0], dict):
+        issues.append(
+            LintIssue(
+                meta_path,
+                f"_meta.yml top-level must be a YAML mapping (key: value pairs); "
+                f"got {type(docs[0]).__name__}.",
+                "error",
+            )
+        )
+
+    return issues
+
+
 def lint_directory(root: Path, repo_root: Path | None = None) -> dict[Path, list[LintIssue]]:
     """
     Lint all buildable Markdown documents under *root*.
@@ -258,5 +329,14 @@ def lint_directory(root: Path, repo_root: Path | None = None) -> dict[Path, list
         doc_issues = lint_file(doc_path, repo_root=repo_root)
         if doc_issues:
             results[doc_path] = doc_issues
+
+    # Also lint every _meta.yml in the tree for structural issues (extra '---'
+    # separators, non-mapping top-level, invalid YAML).
+    for meta_path in sorted(root.rglob("_meta.yml")):
+        if any(part in {".git", ".venv", "node_modules"} for part in meta_path.parts):
+            continue
+        meta_issues = lint_meta_file(meta_path)
+        if meta_issues:
+            results[meta_path] = meta_issues
 
     return results

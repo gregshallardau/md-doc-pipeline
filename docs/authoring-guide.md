@@ -386,6 +386,7 @@ Catches broken variables, missing includes, and undefined fields without invokin
 - `{{ variables }}` in the body **and** in frontmatter string values (e.g. `output_filename: "{{ product }}-proposal"`) against the resolved config cascade
 - `{% include %}` target resolution
 - `[[fields]]` references against `_merge_fields.yml`
+- **`_meta.yml` structure** — catches files written as markdown-style frontmatter (`---` … `---` wrappers) that silently lose half their content because PyYAML reads only the first document. `_meta.yml` should be plain `key: value` pairs, no `---` delimiters.
 
 For a more thorough check that catches variables hidden behind conditionals, loops, or filters, add `--render`:
 
