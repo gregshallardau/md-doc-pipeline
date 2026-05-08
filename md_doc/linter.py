@@ -41,6 +41,44 @@ class LintIssue:
         return f"[{self.severity.upper()}] {self.path.name}: {self.message}"
 
 
+def _frontmatter_jinja_vars(
+    frontmatter: dict[str, Any],
+    env: Environment,
+    _key_prefix: str = "",
+) -> dict[str, str]:
+    """Find every ``{{ var }}`` reference inside frontmatter string values.
+
+    Walks the frontmatter dict recursively (nested dicts and lists) and
+    returns a map of *variable name → first key path* where it appears.
+    The key path (e.g. ``"sync_config.path"``) is used by the linter to
+    point users at the offending value.
+
+    Templates that fail to parse are skipped — the body-syntax check
+    in :func:`lint_file` already reports general template errors.
+    """
+    found: dict[str, str] = {}
+
+    def _walk(value: Any, key_path: str) -> None:
+        if isinstance(value, str):
+            try:
+                ast = env.parse(value)
+            except TemplateSyntaxError:
+                return
+            for var in meta.find_undeclared_variables(ast):
+                found.setdefault(var, key_path)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                _walk(v, f"{key_path}.{k}" if key_path else str(k))
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                _walk(item, f"{key_path}[{i}]")
+
+    for k, v in frontmatter.items():
+        _walk(v, str(k))
+
+    return found
+
+
 def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     """
     Lint a single Markdown document and return all found issues.
@@ -137,6 +175,27 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
                 severity="warning",
             )
         )
+
+    # ------------------------------------------------------------------
+    # 3b. {{ var }} references inside frontmatter string values
+    # ------------------------------------------------------------------
+    # Frontmatter values like ``output_filename: "{{ product }}-proposal"`` are
+    # evaluated at build time but the body-only check above misses them.  Scan
+    # every string value (recursively for nested dicts/lists) for {{ var }}
+    # references and verify they exist in the config cascade.
+    fm_undeclared = _frontmatter_jinja_vars(frontmatter, env)
+    for var, key_path in sorted(fm_undeclared.items()):
+        if var not in known_vars:
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=(
+                        f"Undefined variable '{{{{ {var} }}}}' in frontmatter "
+                        f"value '{key_path}' — not found in config cascade"
+                    ),
+                    severity="warning",
+                )
+            )
 
     # ------------------------------------------------------------------
     # 4. {% include %} resolution

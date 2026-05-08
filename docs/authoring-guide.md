@@ -378,7 +378,22 @@ md-doc build workspace/acme/ --output build/
 md-doc lint workspace/acme/
 ```
 
-Catches broken variables, missing includes, and undefined fields without invoking WeasyPrint.
+Catches broken variables, missing includes, and undefined fields without invoking WeasyPrint. The linter scans:
+
+- Frontmatter YAML validity
+- `outputs:` format values
+- Jinja2 syntax in the body
+- `{{ variables }}` in the body **and** in frontmatter string values (e.g. `output_filename: "{{ product }}-proposal"`) against the resolved config cascade
+- `{% include %}` target resolution
+- `[[fields]]` references against `_merge_fields.yml`
+
+For a more thorough check that catches variables hidden behind conditionals, loops, or filters, add `--render`:
+
+```bash
+md-doc lint --render workspace/
+```
+
+This dry-runs a strict Jinja2 render of every document. Any undefined variable that would silently render as an empty string at build time becomes a hard error here. Useful when filenames are coming out as `" -proposal.pdf"` because a frontmatter variable isn't defined anywhere in the cascade.
 
 ---
 
