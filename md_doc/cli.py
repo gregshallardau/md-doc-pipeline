@@ -17,6 +17,7 @@ Wired via pyproject.toml:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,51 @@ from typing import Any
 import click
 import yaml
 
-from .config import load_config, get_output_formats, load_merge_fields, _find_repo_root
+from .config import _find_repo_root, get_output_formats, load_config, load_merge_fields
 from .renderer import render
+
+# ─── Output styling helpers ──────────────────────────────────────────────────
+# Click's colour output auto-disables when stdout is piped, so these are safe
+# to use everywhere.  Set MD_DOC_NO_COLOR=1 to force colour off.
+
+_NO_COLOR = bool(os.environ.get("MD_DOC_NO_COLOR"))
+
+
+def _style(text: str, **kw: Any) -> str:
+    """``click.style`` wrapper that respects the MD_DOC_NO_COLOR env var."""
+    if _NO_COLOR:
+        return text
+    return click.style(text, **kw)
+
+
+def _err(text: str) -> str:
+    """Red, bold — for errors."""
+    return _style(text, fg="red", bold=True)
+
+
+def _warn(text: str) -> str:
+    """Yellow — for warnings."""
+    return _style(text, fg="yellow")
+
+
+def _ok(text: str) -> str:
+    """Green, bold — for success."""
+    return _style(text, fg="green", bold=True)
+
+
+def _info(text: str) -> str:
+    """Cyan — for paths and identifiers."""
+    return _style(text, fg="cyan")
+
+
+def _dim(text: str) -> str:
+    """Dim — for muted / secondary text."""
+    return _style(text, dim=True)
+
+
+def _bold(text: str) -> str:
+    return _style(text, bold=True)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -268,10 +312,10 @@ def build(
 
     docs = _discover_markdown(root)
     if not docs:
-        click.echo(f"No Markdown documents found under {root}", err=True)
+        click.echo(_dim(f"No Markdown documents found under {root}"), err=True)
         sys.exit(0)
 
-    click.echo(f"Found {len(docs)} document(s) under {root}")
+    click.echo(f"{_bold(f'Found {len(docs)} document(s)')} under {_info(str(root))}")
 
     errors: list[str] = []
 
@@ -287,7 +331,7 @@ def build(
         else:
             formats = [fmt]
 
-        click.echo(f"  {doc_path.relative_to(root)}  →  {', '.join(formats)}")
+        click.echo(f"  {_info(str(doc_path.relative_to(root)))}  →  {_bold(', '.join(formats))}")
 
         if dry_run:
             continue
@@ -296,7 +340,7 @@ def build(
         try:
             rendered_md = render(doc_path, repo_root=root, strict=strict)
         except Exception as exc:
-            click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
+            click.echo(f"    {_err('ERROR')} render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
                 import traceback
 
@@ -341,19 +385,23 @@ def build(
 
                     build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
                 else:
-                    click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
+                    click.echo(
+                        f"    {_warn('WARN')} unknown format '{format_name}' — skipped",
+                        err=True,
+                    )
                     continue
-                click.echo(
-                    f"    wrote {out_path.relative_to(root) if out_path.is_relative_to(root) else out_path}"
-                )
+                rel_out = out_path.relative_to(root) if out_path.is_relative_to(root) else out_path
+                click.echo(f"    {_ok('✓')} wrote {_info(str(rel_out))}")
             except ImportError as exc:
                 click.echo(
-                    f"    [ERROR] builder not available for '{format_name}': {exc}", err=True
+                    f"    {_err('ERROR')} builder not available for '{format_name}': {exc}",
+                    err=True,
                 )
                 errors.append(str(doc_path))
             except Exception as exc:
                 click.echo(
-                    f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}",
+                    f"    {_err('ERROR')} build failed ({format_name}): "
+                    f"{type(exc).__name__}: {exc}",
                     err=True,
                 )
                 if verbose:
@@ -363,11 +411,11 @@ def build(
                 errors.append(str(doc_path))
 
     if errors:
-        click.echo(f"\n{len(errors)} error(s) — check output above.", err=True)
+        click.echo("\n" + _err(f"{len(errors)} error(s)") + " — check output above.", err=True)
         sys.exit(1)
 
     if not dry_run:
-        click.echo("Build complete.")
+        click.echo(_ok("✓ Build complete."))
 
 
 # ---------------------------------------------------------------------------
@@ -388,11 +436,11 @@ def workspaces_cmd() -> None:
     rw_file = repo_root / _REMOTE_WORKSPACES_FILE
 
     if not data:
-        click.echo(f"No remote workspaces defined in {rw_file}")
-        click.echo("Create workspace/remote-workspaces.yml to define named remote paths.")
+        click.echo(_dim(f"No remote workspaces defined in {rw_file}"))
+        click.echo(_dim("Create workspace/remote-workspaces.yml to define named remote paths."))
         return
 
-    click.echo(f"Remote workspaces ({rw_file}):\n")
+    click.echo(_bold(f"Remote workspaces ({rw_file}):") + "\n")
     for name, entry in data.items():
         if isinstance(entry, dict):
             path = entry.get("path", "")
@@ -401,11 +449,14 @@ def workspaces_cmd() -> None:
             path = str(entry)
             description = ""
         resolved = Path(str(path)).expanduser().resolve()
-        status = "✓" if resolved.exists() else "✗ (not mounted)"
-        desc_str = f"  {description}" if description else ""
-        click.echo(f"  {name:<20} {status}  {resolved}{desc_str}")
+        if resolved.exists():
+            status = _ok("✓")
+        else:
+            status = _err("✗") + _dim(" (not mounted)")
+        desc_str = f"  {_dim(description)}" if description else ""
+        click.echo(f"  {_bold(f'{name:<20}')} {status}  {_info(str(resolved))}{desc_str}")
 
-    click.echo("\nUsage: md-doc build --workspace <name>")
+    click.echo("\n" + _dim("Usage: md-doc build --workspace <name>"))
 
 
 # ---------------------------------------------------------------------------
@@ -516,27 +567,27 @@ def export(
         else:
             dest = (source / "exported").resolve()
 
-    click.echo(f"Exporting to: {dest}")
+    click.echo(f"{_bold('Exporting to:')} {_info(str(dest))}")
 
     # Scan for exportable notes
     tag_list = list(tags) if tags else None
     exportable = find_exportable(source, tags=tag_list, repo_root=repo_root)
     if not exportable:
-        click.echo(f"No Markdown files with 'export: true' found under {source}")
+        click.echo(_dim(f"No Markdown files with 'export: true' found under {source}"))
         sys.exit(0)
 
-    click.echo(f"Found {len(exportable)} exportable note(s):")
+    click.echo(_bold(f"Found {len(exportable)} exportable note(s):"))
     for f, fm in exportable:
         try:
             rel = f.relative_to(source)
         except ValueError:
             rel = f
         export_path = fm.get("export_path")
-        suffix = f"  → {export_path}/" if export_path else ""
-        click.echo(f"  {rel}{suffix}")
+        suffix = f"  → {_info(str(export_path))}/" if export_path else ""
+        click.echo(f"  {_info(str(rel))}{suffix}")
 
     if dry_run:
-        click.echo(f"\nWould export to: {dest}")
+        click.echo("\n" + _dim(f"Would export to: {dest}"))
         return
 
     # Stage into a temporary workspace inside the pipeline
@@ -544,7 +595,7 @@ def export(
     staging_dir = pipeline_root / "workspace" / "obsidian-exports" / "docs"
 
     staged = stage_files(exportable, staging_dir, use_symlinks=not no_symlinks)
-    click.echo(f"\nStaged {len(staged)} file(s) for build.")
+    click.echo("\n" + _dim(f"Staged {len(staged)} file(s) for build."))
 
     # Build using the same logic as the build command
     errors: list[str] = []
@@ -561,12 +612,12 @@ def export(
         else:
             formats = [fmt]
 
-        click.echo(f"  {doc_path.name}  →  {', '.join(formats)}")
+        click.echo(f"  {_info(doc_path.name)}  →  {_bold(', '.join(formats))}")
 
         try:
             rendered_md = render(doc_path, repo_root=source, strict=False)
         except Exception as exc:
-            click.echo(f"    [ERROR] render failed: {type(exc).__name__}: {exc}", err=True)
+            click.echo(f"    {_err('ERROR')} render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
                 import traceback
 
@@ -597,17 +648,22 @@ def export(
 
                     build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=source)
                 else:
-                    click.echo(f"    [WARN] unknown format '{format_name}' — skipped", err=True)
+                    click.echo(
+                        f"    {_warn('WARN')} unknown format '{format_name}' — skipped",
+                        err=True,
+                    )
                     continue
-                click.echo(f"    built {out_path.name}")
+                click.echo(f"    {_ok('✓')} built {_info(out_path.name)}")
             except ImportError as exc:
                 click.echo(
-                    f"    [ERROR] builder not available for '{format_name}': {exc}", err=True
+                    f"    {_err('ERROR')} builder not available for '{format_name}': {exc}",
+                    err=True,
                 )
                 errors.append(str(doc_path))
             except Exception as exc:
                 click.echo(
-                    f"    [ERROR] build failed ({format_name}): {type(exc).__name__}: {exc}",
+                    f"    {_err('ERROR')} build failed ({format_name}): "
+                    f"{type(exc).__name__}: {exc}",
                     err=True,
                 )
                 if verbose:
@@ -618,18 +674,18 @@ def export(
 
     # Collect outputs to destination, preserving folder structure
     copied = collect_outputs(staging_dir, dest, source, staged, exportable)
-    click.echo(f"\n{len(copied)} output(s) exported to {dest}")
+    click.echo("\n" + _ok(f"✓ {len(copied)} output(s) exported to ") + _info(str(dest)))
     for p in copied:
         try:
-            click.echo(f"  {p.relative_to(dest)}")
+            click.echo(f"  {_info(str(p.relative_to(dest)))}")
         except ValueError:
-            click.echo(f"  {p}")
+            click.echo(f"  {_info(str(p))}")
 
     if errors:
-        click.echo(f"{len(errors)} error(s) — check output above.", err=True)
+        click.echo(_err(f"{len(errors)} error(s)") + " — check output above.", err=True)
         sys.exit(1)
 
-    click.echo("Export complete.")
+    click.echo(_ok("✓ Export complete."))
 
 
 # ---------------------------------------------------------------------------
@@ -712,9 +768,10 @@ def lint(root: Path, render: bool) -> None:
                 )
 
     if not results:
-        click.echo(
-            "No documents found." if not list(_discover_markdown(root)) else "All documents OK."
-        )
+        if list(_discover_markdown(root)):
+            click.echo(_ok("✓ All documents OK."))
+        else:
+            click.echo(_dim("No documents found."))
         return
 
     for doc_path, issues in sorted(results.items()):
@@ -723,19 +780,22 @@ def lint(root: Path, render: bool) -> None:
         except ValueError:
             rel = doc_path
         for issue in issues:
-            marker = "ERROR" if issue.severity == "error" else "warn "
-            click.echo(f"  {marker}  {rel}: {issue.message}")
             if issue.severity == "error":
+                marker = _err("ERROR")
                 error_count += 1
             else:
+                marker = _warn("warn ")
                 warning_count += 1
+            click.echo(f"  {marker}  {_info(str(rel))}: {issue.message}")
 
     parts = []
     if error_count:
-        parts.append(f"{error_count} error(s)")
+        parts.append(_err(f"{error_count} error(s)"))
     if warning_count:
-        parts.append(f"{warning_count} warning(s)")
-    click.echo(f"\n{', '.join(parts)}")
+        parts.append(_warn(f"{warning_count} warning(s)"))
+    if not parts:
+        parts.append(_ok("clean"))
+    click.echo("\n" + ", ".join(parts))
 
     if error_count:
         sys.exit(1)
@@ -780,19 +840,21 @@ def register(root: Path, output: Path | None, write_md: bool) -> None:
     try:
         from .register import generate  # type: ignore[import]
     except ImportError as exc:
-        click.echo(f"[ERROR] register module not available: {exc}", err=True)
+        click.echo(_err("ERROR") + f" register module not available: {exc}", err=True)
         sys.exit(1)
 
-    click.echo(f"Scanning {root} …")
+    click.echo(f"{_dim('Scanning')} {_info(str(root))} …")
     try:
         generate(root, json_path=json_path, write_md=write_md)
     except Exception as exc:
-        click.echo(f"[ERROR] {exc}", err=True)
+        click.echo(f"{_err('ERROR')} {exc}", err=True)
         sys.exit(1)
 
-    click.echo(f"Register written to {json_path}")
+    click.echo(_ok("✓") + f" Register written to {_info(str(json_path))}")
     if write_md:
-        click.echo(f"Markdown register written to {json_path.with_suffix('.md')}")
+        click.echo(
+            _ok("✓") + f" Markdown register written to {_info(str(json_path.with_suffix('.md')))}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -840,14 +902,14 @@ def fields(directory: Path) -> None:
             label = field_file.relative_to(repo_root)
         except ValueError:
             label = field_file
-        click.echo(f"\n{label}")
-        click.echo("-" * len(str(label)))
+        click.echo("\n" + _bold(str(label)))
+        click.echo(_dim("-" * len(str(label))))
         for name, description in layer.items():
-            click.echo(f"  [[{name}]]  —  {description}")
+            click.echo(f"  {_info(f'[[{name}]]')}  —  {description}")
 
     if not found_any:
-        click.echo("No merge fields defined at this level or above.")
-        click.echo("Create a _merge_fields.yml file to define available [[fields]].")
+        click.echo(_dim("No merge fields defined at this level or above."))
+        click.echo(_dim("Create a _merge_fields.yml file to define available [[fields]]."))
 
 
 # ---------------------------------------------------------------------------
@@ -897,11 +959,13 @@ def new_folder(name: str, parent: Path) -> None:
     meta_path = target / "_meta.yml"
     meta_path.write_text("".join(meta_lines), encoding="utf-8")
 
-    click.echo(f"  created  {target}/")
-    click.echo(f"  created  {meta_path}")
+    click.echo(f"  {_ok('✓')} created  {_info(str(target))}/")
+    click.echo(f"  {_ok('✓')} created  {_info(str(meta_path))}")
     if inherited_keys:
-        click.echo(f"\nInherited from parent config: {', '.join(sorted(inherited_keys))}")
-    click.echo("\nEdit _meta.yml to add keys specific to this level.")
+        click.echo(
+            "\n" + _dim(f"Inherited from parent config: {', '.join(sorted(inherited_keys))}")
+        )
+    click.echo("\n" + _dim("Edit _meta.yml to add keys specific to this level."))
 
 
 @new.command("doc")
@@ -937,14 +1001,16 @@ def new_doc(name: str, parent: Path) -> None:
     config = load_config(parent, repo_root=None)
     available_fields = load_merge_fields(parent, repo_root=None)
 
-    click.echo(f"\nCreating {doc_path.name}\n")
+    click.echo("\n" + _bold(f"Creating {doc_path.name}") + "\n")
     if config:
         click.echo(
-            "Inherited config: " + ", ".join(f"{k}={v!r}" for k, v in sorted(config.items()))
+            _dim("Inherited config: ")
+            + _dim(", ".join(f"{k}={v!r}" for k, v in sorted(config.items())))
         )
     if available_fields:
         click.echo(
-            "Available [[fields]]: " + ", ".join(f"[[{k}]]" for k in sorted(available_fields))
+            _dim("Available [[fields]]: ")
+            + ", ".join(_info(f"[[{k}]]") for k in sorted(available_fields))
         )
     click.echo()
 
@@ -973,8 +1039,8 @@ def new_doc(name: str, parent: Path) -> None:
     )
 
     doc_path.write_text(frontmatter, encoding="utf-8")
-    click.echo(f"\n  created  {doc_path}")
-    click.echo("\nEdit the file to add your content.")
+    click.echo("\n" + f"  {_ok('✓')} created  {_info(str(doc_path))}")
+    click.echo("\n" + _dim("Edit the file to add your content."))
 
 
 # ---------------------------------------------------------------------------
@@ -1012,20 +1078,20 @@ def sync(root: Path, backend: str | None, dry_run: bool) -> None:
     try:
         from .sync import run as run_sync  # type: ignore[import]
     except ImportError as exc:
-        click.echo(f"[ERROR] sync module not available: {exc}", err=True)
+        click.echo(f"{_err('ERROR')} sync module not available: {exc}", err=True)
         sys.exit(1)
 
-    click.echo(f"Syncing {root} …")
+    click.echo(f"{_dim('Syncing')} {_info(str(root))} …")
     try:
         run_sync(root, backend=backend, dry_run=dry_run)
     except Exception as exc:
-        click.echo(f"[ERROR] {exc}", err=True)
+        click.echo(f"{_err('ERROR')} {exc}", err=True)
         sys.exit(1)
 
     if dry_run:
-        click.echo("Dry run complete — nothing uploaded.")
+        click.echo(_dim("Dry run complete — nothing uploaded."))
     else:
-        click.echo("Sync complete.")
+        click.echo(_ok("✓ Sync complete."))
 
 
 # ---------------------------------------------------------------------------
@@ -1042,7 +1108,7 @@ def _prompt_color(prompt: str, default: str) -> str:
         try:
             return validate_hex_color(raw)
         except ValueError as exc:
-            click.echo(f"  {exc} — try again.", err=True)
+            click.echo(f"  {_warn(str(exc))} — try again.", err=True)
 
 
 @main.group()
@@ -1069,7 +1135,9 @@ def theme_init(directory: Path) -> None:
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
 
-    click.echo("Creating a new PDF theme. Press Enter to accept defaults.\n")
+    click.echo(
+        _bold("Creating a new PDF theme.") + " " + _dim("Press Enter to accept defaults.") + "\n"
+    )
 
     org_name = click.prompt("Organisation name (used in page footer)", default="My Organisation")
     primary = _prompt_color("Primary colour  (cover, headings, table headers)", "#1b4f72")
@@ -1102,16 +1170,16 @@ def theme_init(directory: Path) -> None:
 
     css_path = directory / "_pdf-theme.css"
     css_path.write_text(css, encoding="utf-8")
-    click.echo(f"\n  wrote {css_path}")
+    click.echo(f"\n  {_ok('✓')} wrote {_info(str(css_path))}")
 
     meta_path = directory / "_meta.yml"
     if meta_path.exists():
-        click.echo(f"  skipped {meta_path}  (already exists)")
+        click.echo(f"  {_dim('·')} skipped {_dim(str(meta_path))}  {_dim('(already exists)')}")
     else:
         meta_path.write_text(generate_meta_yml(org_name, cover_page), encoding="utf-8")
-        click.echo(f"  wrote {meta_path}")
+        click.echo(f"  {_ok('✓')} wrote {_info(str(meta_path))}")
 
-    click.echo("\nTheme created. Edit _pdf-theme.css to fine-tune.")
+    click.echo("\n" + _ok("✓ Theme created.") + " " + _dim("Edit _pdf-theme.css to fine-tune."))
 
 
 @theme.command("override")
@@ -1144,10 +1212,10 @@ def theme_override(directory: Path) -> None:
     parent = find_parent_theme(directory)
     if parent:
         import_path = relative_import_path(directory, parent)
-        click.echo(f"  Found parent theme: {parent}")
-        click.echo(f"  Will import as:     {import_path}\n")
+        click.echo(f"  {_dim('Found parent theme:')} {_info(str(parent))}")
+        click.echo(f"  {_dim('Will import as:    ')} {_info(import_path)}\n")
     else:
-        click.echo("  No parent _pdf-theme.css found in ancestor directories.")
+        click.echo(_warn("  No parent _pdf-theme.css found in ancestor directories."))
         import_path = click.prompt("  Enter @import path manually", default="../_pdf-theme.css")
 
     sub_name = click.prompt(
@@ -1165,7 +1233,7 @@ def theme_override(directory: Path) -> None:
 
     css_path = directory / "_pdf-theme.css"
     css_path.write_text(css, encoding="utf-8")
-    click.echo(f"\n  wrote {css_path}")
+    click.echo(f"\n  {_ok('✓')} wrote {_info(str(css_path))}")
 
 
 # ---------------------------------------------------------------------------
@@ -1216,11 +1284,11 @@ def extract(file_path: str, dest: str, force: bool) -> None:
 
         output_file.write_text(markdown_content or "", encoding="utf-8")
 
-        click.echo(f"Extracted: {source_path.name} -> {output_file}")
+        click.echo(f"{_ok('✓')} Extracted: {_info(source_path.name)} → {_info(str(output_file))}")
 
     except FileNotFoundError as e:
-        click.echo(f"Error: {e}", err=True)
+        click.echo(f"{_err('ERROR')} {e}", err=True)
         raise click.Exit(1)  # type: ignore[operator]
     except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
+        click.echo(f"{_err('ERROR')} {e}", err=True)
         raise click.Exit(1)  # type: ignore[operator]
