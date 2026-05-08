@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>md-doc editor</title>
+    <link rel="stylesheet" href="/static/editor.css">
+</head>
+<body>
+
+<div class="md-doc-app">
+
+    <aside class="md-doc-sidebar">
+        <div class="md-doc-sidebar-header">
+            <span class="md-doc-sidebar-title">Files</span>
+        </div>
+        <div class="md-doc-sidebar-body" id="md-doc-tree"></div>
+    </aside>
+
+    <main class="md-doc-editor-pane">
+        <div class="md-doc-toolbar">
+            <span id="md-doc-filename" class="md-doc-filename">No file selected</span>
+            <button id="md-doc-save-btn" class="md-doc-btn md-doc-btn-primary" disabled>Save</button>
+            <button id="md-doc-build-pdf-btn" class="md-doc-btn md-doc-btn-build" disabled title="Run md-doc build and view the PDF">Build PDF</button>
+            <button id="md-doc-build-docx-btn" class="md-doc-btn md-doc-btn-build" disabled title="Build the document as Word (.docx)">Build DOCX</button>
+        </div>
+        <div id="md-doc-monaco" class="md-doc-monaco-container"></div>
+        <div id="md-doc-includes" class="md-doc-includes" hidden></div>
+    </main>
+
+    <aside class="md-doc-right-panel">
+        <div class="md-doc-tab-bar">
+            <button class="md-doc-tab md-doc-tab-active" data-tab="preview">Preview</button>
+            <button class="md-doc-tab" data-tab="config">Config</button>
+            <button class="md-doc-tab" data-tab="css">CSS</button>
+        </div>
+        <div class="md-doc-panel-body" id="md-doc-panel-preview">
+            <div id="md-doc-preview" class="md-doc-preview-content"></div>
+        </div>
+        <div class="md-doc-panel-body" id="md-doc-panel-config" hidden></div>
+        <div class="md-doc-panel-body" id="md-doc-panel-css" hidden></div>
+    </aside>
+
+</div>
+
+<!-- marked.js (markdown → HTML for the live preview) -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- Monaco loader -->
+<script>
+    window.mdDocMonacoBaseUrl = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs";
+</script>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+<script>
+    require.config({ paths: { vs: window.mdDocMonacoBaseUrl } });
+</script>
+
+<!-- md-doc tokenizers + editor -->
+<script src="/static/tokenizers.js"></script>
+<script src="/static/editor.js" defer></script>
+
+</body>
+</html>
