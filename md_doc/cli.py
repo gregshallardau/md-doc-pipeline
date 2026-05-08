@@ -442,6 +442,38 @@ def build(
                 click.echo(e, err=True)
             sys.exit(1)
 
+    # Pre-flight lint — abort on errors so users see all issues in one pass
+    # rather than having the build halt-and-resume on the first broken doc.
+    # Warnings are printed but don't abort.
+    if not no_lint:
+        from .linter import lint_directory as _lint_dir
+
+        lint_results = _lint_dir(root, repo_root=root)
+        lint_errors: list[str] = []
+        lint_warnings: list[str] = []
+        for path, issues in sorted(lint_results.items()):
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            for issue in issues:
+                line = f"  {_info(str(rel))}: {issue.message}"
+                if issue.severity == "error":
+                    lint_errors.append(f"  {_err('ERROR')}{line}")
+                else:
+                    lint_warnings.append(f"  {_warn('warn ')}{line}")
+
+        if lint_warnings:
+            click.echo(_dim("Lint warnings:"))
+            for w in lint_warnings:
+                click.echo(w)
+
+        if lint_errors:
+            click.echo(_err("Lint errors — aborting build (use --no-lint to skip):"), err=True)
+            for e in lint_errors:
+                click.echo(e, err=True)
+            sys.exit(1)
+
     errors: list[str] = []
 
     for doc_path in docs:
