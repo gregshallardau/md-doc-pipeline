@@ -302,6 +302,7 @@ def build(
 
     if workspace is not None:
         root = _resolve_workspace(workspace, repo_root)
+        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
     else:
         root = root.resolve()
         if not root.exists():
@@ -535,6 +536,7 @@ def export(
 
     if workspace is not None:
         source = _resolve_workspace(workspace, repo_root)
+        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(source))}")
     elif source is not None:
         source = source.resolve()
         if not source.exists():
@@ -696,6 +698,12 @@ def export(
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    help="Lint a named remote workspace defined in workspace/remote-workspaces.yml.",
+)
+@click.option(
     "--render",
     is_flag=True,
     default=False,
@@ -705,7 +713,7 @@ def export(
         "an empty string."
     ),
 )
-def lint(root: Path, render: bool) -> None:
+def lint(root: Path, workspace: str | None, render: bool) -> None:
     """Lint all Markdown documents under ROOT for build errors.
 
     Checks:
@@ -721,6 +729,9 @@ def lint(root: Path, render: bool) -> None:
     This catches variables used in conditionals, loops, or filters that escape
     the static AST scan. Any UndefinedError is reported as an error.
 
+    Use -w / --workspace to lint a named remote workspace defined in
+    workspace/remote-workspaces.yml.
+
     Exits non-zero if any errors are found. Warnings are displayed but
     do not affect the exit code.
 
@@ -728,6 +739,7 @@ def lint(root: Path, render: bool) -> None:
     Examples:
       md-doc lint
       md-doc lint workspace/acme/
+      md-doc lint -w acme
       md-doc lint --render workspace/   # full dry-run of every doc
     """
     from jinja2 import UndefinedError
@@ -735,7 +747,12 @@ def lint(root: Path, render: bool) -> None:
     from .linter import LintIssue, lint_directory
     from .renderer import render as _render_doc
 
-    root = Path(root).resolve()
+    if workspace is not None:
+        repo_root = _find_repo_root(Path.cwd())
+        root = _resolve_workspace(workspace, repo_root)
+        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+    else:
+        root = Path(root).resolve()
     results = lint_directory(root, repo_root=root)
 
     error_count = 0
@@ -809,6 +826,12 @@ def lint(root: Path, render: bool) -> None:
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    help="Register a named remote workspace defined in workspace/remote-workspaces.yml.",
+)
+@click.option(
     "--output",
     "-o",
     default=None,
@@ -822,7 +845,7 @@ def lint(root: Path, render: bool) -> None:
     show_default=True,
     help="Also write a Markdown register alongside the JSON.",
 )
-def register(root: Path, output: Path | None, write_md: bool) -> None:
+def register(root: Path, workspace: str | None, output: Path | None, write_md: bool) -> None:
     """Generate a document register (register.json + register.md) for ROOT.
 
     Scans ROOT for built documents and config metadata, then writes a
@@ -832,9 +855,15 @@ def register(root: Path, output: Path | None, write_md: bool) -> None:
     Examples:
       md-doc register
       md-doc register products/
+      md-doc register -w acme
       md-doc register products/ --output products/register.json
     """
-    root = root.resolve()
+    if workspace is not None:
+        repo_root = _find_repo_root(Path.cwd())
+        root = _resolve_workspace(workspace, repo_root)
+        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+    else:
+        root = root.resolve()
     json_path = (output or root / "register.json").resolve()
 
     try:
@@ -866,7 +895,13 @@ def register(root: Path, output: Path | None, write_md: bool) -> None:
 @click.argument(
     "directory", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path)
 )
-def fields(directory: Path) -> None:
+@click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    help="List fields for a named remote workspace from workspace/remote-workspaces.yml.",
+)
+def fields(directory: Path, workspace: str | None) -> None:
     """List available [[merge fields]] at DIRECTORY level.
 
     Shows all fields from the _merge_fields.yml cascade at this location,
@@ -877,11 +912,18 @@ def fields(directory: Path) -> None:
       md-doc fields
       md-doc fields workspace/acme/
       md-doc fields workspace/acme/clients/stormfront/
+      md-doc fields -w acme
     """
-    from .config import _find_repo_root, _load_yaml_file
+    from .config import _find_repo_root as _local_find_repo_root
+    from .config import _load_yaml_file
 
-    directory = Path(directory).resolve()
-    repo_root = _find_repo_root(directory)
+    if workspace is not None:
+        repo_root_outer = _find_repo_root(Path.cwd())
+        directory = _resolve_workspace(workspace, repo_root_outer)
+        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(directory))}")
+    else:
+        directory = Path(directory).resolve()
+    repo_root = _local_find_repo_root(directory)
 
     try:
         rel = directory.relative_to(repo_root)
@@ -1051,6 +1093,12 @@ def new_doc(name: str, parent: Path) -> None:
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    help="Sync a named remote workspace defined in workspace/remote-workspaces.yml.",
+)
+@click.option(
     "--backend",
     "-b",
     default=None,
@@ -1060,7 +1108,7 @@ def new_doc(name: str, parent: Path) -> None:
 @click.option(
     "--dry-run", is_flag=True, default=False, help="Print what would be synced without uploading."
 )
-def sync(root: Path, backend: str | None, dry_run: bool) -> None:
+def sync(root: Path, workspace: str | None, backend: str | None, dry_run: bool) -> None:
     """Sync built documents under ROOT to remote storage.
 
     Backend configuration (connection strings, share names, bucket names, etc.)
@@ -1070,10 +1118,16 @@ def sync(root: Path, backend: str | None, dry_run: bool) -> None:
     Examples:
       md-doc sync
       md-doc sync products/
+      md-doc sync -w acme
       md-doc sync products/ --backend azure
       md-doc sync products/ --dry-run
     """
-    root = root.resolve()
+    if workspace is not None:
+        repo_root = _find_repo_root(Path.cwd())
+        root = _resolve_workspace(workspace, repo_root)
+        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+    else:
+        root = root.resolve()
 
     try:
         from .sync import run as run_sync  # type: ignore[import]
