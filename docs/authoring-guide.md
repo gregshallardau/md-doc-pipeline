@@ -402,6 +402,33 @@ Creates a `.md` file with starter frontmatter.
 
 ---
 
+## Page breaks
+
+Three ways to start a new page in PDF and DOCX output:
+
+1. **`<!-- pagebreak -->`** — explicit, on its own line. Invisible in plain
+   Markdown renderers (GitHub, Obsidian preview); produces a real page break in
+   both PDF and DOCX output.
+
+   ```markdown
+   First page content.
+
+   <!-- pagebreak -->
+
+   This appears at the top of the next page.
+   ```
+
+2. **A new H1** — every `# Heading` in the body automatically starts a new
+   page in PDF (the first H1 becomes the cover title and is stripped from the
+   body). Useful for natural section boundaries.
+
+3. **`# APPENDIX` H2 sub-sections** — every `## Sub-heading` inside an
+   `# APPENDIX` section gets an automatic page break in PDF. Convenient when
+   you have a long appendix with many short subsections.
+
+The first option is the most flexible — use it anywhere mid-section when you
+want a page boundary that doesn't follow the document's heading structure.
+
 ## Tips
 
 1. **Keep frontmatter minimal.** Only set keys that differ from parent `_meta.yml` values.

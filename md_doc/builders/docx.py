@@ -40,6 +40,7 @@ from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
 
 from ..docx_theme import apply_theme_to_doc, resolve_docx_theme, set_cell_shading
+from .pdf import _inject_page_breaks
 
 # Markdown extensions (consistent with pdf builder)
 _MD_EXTENSIONS = [
@@ -427,6 +428,11 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
+            class_attr = dict(attrs).get("class") or ""
+            if "md-doc-page-break" in class_attr.split():
+                # Emit a real Word page break.  The marker div has no content
+                # so nothing else needs to be rendered for it.
+                self.doc.add_page_break()
 
         elif tag == "a":
             self._current_href = dict(attrs).get("href") or ""
@@ -926,6 +932,8 @@ def build(
             body = _strip_leading_h1(body)
     else:
         body = _strip_leading_h1(body)
+
+    body = _inject_page_breaks(body)
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)
