@@ -639,16 +639,31 @@ def export(
 
 @main.command()
 @click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
-def lint(root: Path) -> None:
+@click.option(
+    "--render",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also dry-run a strict Jinja2 render of every doc (body + frontmatter "
+        "values) so any missing variable surfaces as an error, not silently as "
+        "an empty string."
+    ),
+)
+def lint(root: Path, render: bool) -> None:
     """Lint all Markdown documents under ROOT for build errors.
 
     Checks:
       - Frontmatter YAML is valid
       - outputs: values are recognised formats
       - Jinja2 syntax is valid
-      - {{ variables }} exist in the config cascade (warning)
+      - {{ variables }} in the body exist in the config cascade (warning)
+      - {{ variables }} in frontmatter string values exist in the config cascade (warning)
       - {% include %} targets resolve (error)
       - [[fields]] exist in _merge_fields.yml cascade (warning, if schema present)
+
+    With --render, additionally runs a full strict render of every document.
+    This catches variables used in conditionals, loops, or filters that escape
+    the static AST scan. Any UndefinedError is reported as an error.
 
     Exits non-zero if any errors are found. Warnings are displayed but
     do not affect the exit code.
@@ -657,20 +672,50 @@ def lint(root: Path) -> None:
     Examples:
       md-doc lint
       md-doc lint workspace/acme/
+      md-doc lint --render workspace/   # full dry-run of every doc
     """
-    from .linter import lint_directory
+    from jinja2 import UndefinedError
+
+    from .linter import LintIssue, lint_directory
+    from .renderer import render as _render_doc
 
     root = Path(root).resolve()
     results = lint_directory(root, repo_root=root)
+
+    error_count = 0
+    warning_count = 0
+
+    # --render: do a strict render of every doc and capture undefined-variable
+    # errors that the static AST scan can't see (vars hidden behind filters,
+    # conditionals, loops, etc.).
+    if render:
+        for doc_path in _discover_markdown(root):
+            try:
+                _render_doc(doc_path, repo_root=root, strict=True)
+            except UndefinedError as exc:
+                results.setdefault(doc_path, []).append(
+                    LintIssue(
+                        path=doc_path,
+                        message=f"Strict render: {exc}",
+                        severity="error",
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Other render errors (template syntax, missing include, etc.)
+                # are also surfaced so users see the full picture in one pass.
+                results.setdefault(doc_path, []).append(
+                    LintIssue(
+                        path=doc_path,
+                        message=f"Strict render failed: {exc}",
+                        severity="error",
+                    )
+                )
 
     if not results:
         click.echo(
             "No documents found." if not list(_discover_markdown(root)) else "All documents OK."
         )
         return
-
-    error_count = 0
-    warning_count = 0
 
     for doc_path, issues in sorted(results.items()):
         try:
