@@ -395,6 +395,24 @@ md-doc lint --render workspace/
 
 This dry-runs a strict Jinja2 render of every document. Any undefined variable that would silently render as an empty string at build time becomes a hard error here. Useful when filenames are coming out as `" -proposal.pdf"` because a frontmatter variable isn't defined anywhere in the cascade.
 
+### Build-time validation
+
+`md-doc build` now runs the same lint check as a pre-flight, automatically. **Lint errors abort the build before any rendering happens** — so you see every issue across all docs in a single output, not one-at-a-time as builds explode.
+
+Lint *warnings* (e.g. an undefined frontmatter variable) print but don't stop the build. To skip the pre-flight entirely:
+
+```bash
+md-doc build workspace/ --no-lint
+```
+
+Additionally, `output_filename` Jinja2 rendering is now strict — a previously-silent failure like:
+
+```yaml
+output_filename: "{{ product_name }}-proposal"   # product_name undefined
+```
+
+now produces a clear per-document error instead of `" -proposal.pdf"` on disk.
+
 ---
 
 ## Scaffolding
