@@ -166,14 +166,18 @@ def _apply_filename_override(out_path: Path, config: dict[str, Any], format_name
     The value is rendered against the config dict so ``{{ version }}`` etc. work.
     Any extension the user included is stripped; the correct one for *format_name*
     is always appended automatically.
+
+    Uses StrictUndefined so that an undefined variable in ``output_filename``
+    raises ``UndefinedError`` rather than silently rendering as an empty
+    string (which produced filenames like ``"-proposal.pdf"``).
     """
     raw = config.get("output_filename")
     if not raw:
         return out_path
 
-    from jinja2 import Environment, Undefined
+    from jinja2 import Environment, StrictUndefined
 
-    rendered = Environment(undefined=Undefined).from_string(str(raw)).render(**config)
+    rendered = Environment(undefined=StrictUndefined).from_string(str(raw)).render(**config)
     # Strip any extension the user may have typed
     stem = Path(rendered).stem if Path(rendered).suffix else rendered
 
@@ -270,6 +274,16 @@ def main() -> None:
 )
 @click.option("--strict", is_flag=True, default=False, help="Fail on undefined Jinja2 variables.")
 @click.option(
+    "--no-lint",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip the pre-flight lint check that runs before build. "
+        "Lint errors normally abort the build with a clear list of issues; "
+        "use this flag to build anyway (e.g. while iterating)."
+    ),
+)
+@click.option(
     "--dry-run", is_flag=True, default=False, help="Print what would be built without building."
 )
 @click.option(
@@ -282,6 +296,7 @@ def build(
     fmt: str,
     theme: Path | None,
     strict: bool,
+    no_lint: bool,
     dry_run: bool,
     verbose: bool,
 ) -> None:
@@ -317,6 +332,38 @@ def build(
         sys.exit(0)
 
     click.echo(f"{_bold(f'Found {len(docs)} document(s)')} under {_info(str(root))}")
+
+    # Pre-flight lint — abort on errors so users see all issues in one pass
+    # rather than having the build halt-and-resume on the first broken doc.
+    # Warnings are printed but don't abort.
+    if not no_lint:
+        from .linter import lint_directory as _lint_dir
+
+        lint_results = _lint_dir(root, repo_root=root)
+        lint_errors: list[str] = []
+        lint_warnings: list[str] = []
+        for path, issues in sorted(lint_results.items()):
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            for issue in issues:
+                line = f"  {_info(str(rel))}: {issue.message}"
+                if issue.severity == "error":
+                    lint_errors.append(f"  {_err('ERROR')}{line}")
+                else:
+                    lint_warnings.append(f"  {_warn('warn ')}{line}")
+
+        if lint_warnings:
+            click.echo(_dim("Lint warnings:"))
+            for w in lint_warnings:
+                click.echo(w)
+
+        if lint_errors:
+            click.echo(_err("Lint errors — aborting build (use --no-lint to skip):"), err=True)
+            for e in lint_errors:
+                click.echo(e, err=True)
+            sys.exit(1)
 
     errors: list[str] = []
 
@@ -369,7 +416,16 @@ def build(
             else:
                 ext = f".{format_name}"
             out_path = _resolve_output_path(doc_path, root, effective_output, ext, flat=flat)
-            out_path = _apply_filename_override(out_path, config, format_name)
+            try:
+                out_path = _apply_filename_override(out_path, config, format_name)
+            except Exception as exc:
+                click.echo(
+                    f"    {_err('ERROR')} output_filename render failed: "
+                    f"{type(exc).__name__}: {exc}",
+                    err=True,
+                )
+                errors.append(str(doc_path))
+                continue
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
