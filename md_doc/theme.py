@@ -348,6 +348,7 @@ h4 + * { page-break-before: avoid; break-before: avoid; }
 .keep-with-next { page-break-inside: avoid; break-inside: avoid; }
 table, figure, blockquote, pre { page-break-inside: avoid; }
 .appendix-template-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }
+.md-doc-page-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }
 .report-body h1 { page-break-before: always; break-before: page; }
 
 /* ============================================
