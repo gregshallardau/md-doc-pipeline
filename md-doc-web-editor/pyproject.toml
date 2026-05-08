@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md-doc-web-editor"
+version = "0.1.0"
+description = "Self-contained browser editor for md-doc-pipeline workspaces."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pyyaml>=6.0",
+    # md-doc-pipeline is required at runtime; install it separately or
+    # alongside this package.  Listed here as a comment to avoid a hard
+    # PyPI lookup until that package is published.
+    # "md-doc-pipeline",
+]
+
+[project.scripts]
+md-doc-edit = "md_doc_web_editor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["md_doc_web_editor*"]
+
+[tool.setuptools.package-data]
+md_doc_web_editor = ["static/*", "static/**/*"]
