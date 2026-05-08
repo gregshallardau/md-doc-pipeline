@@ -404,37 +404,11 @@ def build(
         f"{_info(_short_path(root, verbose=verbose))}"
     )
 
-    # Pre-flight lint — abort on errors so users see all issues in one pass
-    # rather than having the build halt-and-resume on the first broken doc.
-    # Warnings are printed but don't abort.
-    if not no_lint:
-        from .linter import lint_directory as _lint_dir
-
-        lint_results = _lint_dir(root, repo_root=root)
-        lint_errors: list[str] = []
-        lint_warnings: list[str] = []
-        for path, issues in sorted(lint_results.items()):
-            try:
-                rel = path.relative_to(root)
-            except ValueError:
-                rel = path
-            for issue in issues:
-                line = f"  {_info(str(rel))}: {issue.message}"
-                if issue.severity == "error":
-                    lint_errors.append(f"  {_err('ERROR')}{line}")
-                else:
-                    lint_warnings.append(f"  {_warn('warn ')}{line}")
-
-        if lint_warnings:
-            click.echo(_dim("Lint warnings:"))
-            for w in lint_warnings:
-                click.echo(w)
-
-        if lint_errors:
-            click.echo(_err("Lint errors — aborting build (use --no-lint to skip):"), err=True)
-            for e in lint_errors:
-                click.echo(e, err=True)
-            sys.exit(1)
+    # Walk *up* from the build target to find the actual git repo root.  The
+    # config / theme / template cascade walks UP from each doc to this root,
+    # so building a sub-tree (e.g. ``md-doc build workspace/acme/``) still
+    # picks up _meta.yml files defined higher up the directory tree.
+    cascade_root = _find_repo_root(root)
 
     # Pre-flight lint — abort on errors so users see all issues in one pass
     # rather than having the build halt-and-resume on the first broken doc.
@@ -442,7 +416,7 @@ def build(
     if not no_lint:
         from .linter import lint_directory as _lint_dir
 
-        lint_results = _lint_dir(root, repo_root=root)
+        lint_results = _lint_dir(root, repo_root=cascade_root)
         lint_errors: list[str] = []
         lint_warnings: list[str] = []
         for path, issues in sorted(lint_results.items()):
@@ -471,7 +445,7 @@ def build(
     errors: list[str] = []
 
     for doc_path in docs:
-        config = load_config(doc_path, repo_root=root)
+        config = load_config(doc_path, repo_root=cascade_root)
 
         if theme is not None:
             config["pdf_theme"] = str(theme.resolve())
@@ -487,9 +461,11 @@ def build(
         if dry_run:
             continue
 
-        # Render through Jinja2
+        # Render through Jinja2 — use the actual repo root so template
+        # cascades (templates/ in ancestor dirs) resolve correctly even
+        # when building a sub-tree.
         try:
-            rendered_md = render(doc_path, repo_root=root, strict=strict)
+            rendered_md = render(doc_path, repo_root=cascade_root, strict=strict)
         except Exception as exc:
             click.echo(f"    {_err('ERROR')} render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
@@ -535,15 +511,21 @@ def build(
                 if format_name == "pdf":
                     from .builders.pdf import build as build_pdf  # type: ignore[import]
 
-                    build_pdf(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
+                    build_pdf(
+                        rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root
+                    )
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx  # type: ignore[import]
 
-                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
+                    build_docx(
+                        rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root
+                    )
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx  # type: ignore[import]
 
-                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=root)
+                    build_dotx(
+                        rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root
+                    )
                 else:
                     click.echo(
                         f"    {_warn('WARN')} unknown format '{format_name}' — skipped",
@@ -921,7 +903,12 @@ def lint(root: Path, workspace: str | None, render: bool) -> None:
         root = Path(root).resolve()
         if not root.exists():
             raise click.UsageError(f"Path does not exist: {root}")
-    results = lint_directory(root, repo_root=root)
+
+    # Walk *up* from the lint target to find the actual repo root so the
+    # config / merge-fields cascade picks up _meta.yml files defined above
+    # the user's chosen subdirectory.
+    cascade_root = _find_repo_root(root)
+    results = lint_directory(root, repo_root=cascade_root)
 
     error_count = 0
     warning_count = 0
@@ -932,7 +919,7 @@ def lint(root: Path, workspace: str | None, render: bool) -> None:
     if render:
         for doc_path in _discover_markdown(root):
             try:
-                _render_doc(doc_path, repo_root=root, strict=True)
+                _render_doc(doc_path, repo_root=cascade_root, strict=True)
             except UndefinedError as exc:
                 results.setdefault(doc_path, []).append(
                     LintIssue(
