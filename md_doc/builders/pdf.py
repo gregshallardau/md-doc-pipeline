@@ -95,6 +95,23 @@ def _inject_appendix_breaks(md_content: str) -> str:
     return "\n".join(result)
 
 
+_PAGEBREAK_COMMENT_RE = re.compile(r"<!--\s*pagebreak\s*-->", re.IGNORECASE)
+
+
+def _inject_page_breaks(md_content: str) -> str:
+    """Convert ``<!-- pagebreak -->`` comments into a page-break div.
+
+    The resulting div is recognised by the PDF theme CSS
+    (``.md-doc-page-break``) and by the DOCX HTML walker, which emits a real
+    Word page break. Surrounded by blank lines so the markdown parser treats
+    it as a block-level element.
+    """
+    return _PAGEBREAK_COMMENT_RE.sub(
+        '\n\n<div class="md-doc-page-break"></div>\n\n',
+        md_content,
+    )
+
+
 _FORM_FIELD_RE = re.compile(r"\?\[(.+?)\]")
 _ROW_OPEN_RE = re.compile(r"^\?\[row\]\s*$", re.MULTILINE)
 _ROW_CLOSE_RE = re.compile(r"^\?\[/row\]\s*$", re.MULTILINE)
@@ -956,6 +973,7 @@ def build(
     if cover_page:
         body = _strip_leading_h1(body)
     body = _inject_appendix_breaks(body)
+    body = _inject_page_breaks(body)
 
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(body, is_form)
