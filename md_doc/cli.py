@@ -71,6 +71,24 @@ def _bold(text: str) -> str:
     return _style(text, bold=True)
 
 
+def _short_path(p: Path, *, verbose: bool = False) -> str:
+    """Return a short, cwd-relative path string when sensible.
+
+    Default: use ``os.path.relpath`` so paths under cwd come out as
+    ``workspace/acme/proposal.md`` and paths outside cwd come out as
+    ``../../shared/x``.  Falls back to the absolute path on Windows
+    cross-drive errors.
+
+    With ``verbose=True``, always returns the absolute path.
+    """
+    if verbose:
+        return str(p)
+    try:
+        return os.path.relpath(Path(p), Path.cwd())
+    except ValueError:
+        return str(p)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -225,6 +243,54 @@ def _resolve_workspace(name: str, repo_root: Path) -> Path:
     return resolved
 
 
+def _resolve_workspace_root(workspace: str, root: Path, repo_root: Path) -> Path:
+    """Resolve ``-w workspace`` + optional ``ROOT`` subdir into a single path.
+
+    When the user runs e.g. ``md-doc build -w affinity products/nova``, the
+    positional ``ROOT`` is interpreted as a path *relative to the workspace*
+    rather than relative to the current directory.  This avoids forcing users
+    to type out absolute paths or ``cd`` into the workspace just to operate
+    on a sub-tree.
+
+    Prints the standard "Workspace: ..." confirmation line so users see
+    exactly where the operation is happening.
+
+    Rejects subdirs that escape the workspace root (``..`` traversal etc.)
+    and subdirs that don't exist.
+    """
+    workspace_root = _resolve_workspace(workspace, repo_root)
+
+    # ``Path(".")`` is the Click default — user didn't provide a positional arg.
+    if str(root) == ".":
+        click.echo(
+            f"{_bold('Workspace:')} {_info(workspace)}  →  " f"{_info(_short_path(workspace_root))}"
+        )
+        return workspace_root
+
+    candidate = (workspace_root / root).resolve()
+    workspace_root_resolved = workspace_root.resolve()
+
+    # Block path traversal: a sub-arg like "../other-workspace" must not escape.
+    try:
+        candidate.relative_to(workspace_root_resolved)
+    except ValueError as exc:
+        raise click.UsageError(
+            f"Subpath '{root}' escapes workspace '{workspace}': {candidate}"
+        ) from exc
+
+    if not candidate.exists():
+        raise click.UsageError(
+            f"Subpath '{root}' not found in workspace '{workspace}': {candidate}"
+        )
+
+    rel = candidate.relative_to(workspace_root_resolved)
+    click.echo(
+        f"{_bold('Workspace:')} {_info(workspace)}/{_info(str(rel))}  →  "
+        f"{_info(_short_path(candidate))}"
+    )
+    return candidate
+
+
 # ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
@@ -316,8 +382,7 @@ def build(
     repo_root = _find_repo_root(Path.cwd())
 
     if workspace is not None:
-        root = _resolve_workspace(workspace, repo_root)
-        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+        root = _resolve_workspace_root(workspace, root, repo_root)
     else:
         root = root.resolve()
         if not root.exists():
@@ -328,10 +393,48 @@ def build(
 
     docs = _discover_markdown(root)
     if not docs:
-        click.echo(_dim(f"No Markdown documents found under {root}"), err=True)
+        click.echo(
+            _dim(f"No Markdown documents found under {_short_path(root, verbose=verbose)}"),
+            err=True,
+        )
         sys.exit(0)
 
-    click.echo(f"{_bold(f'Found {len(docs)} document(s)')} under {_info(str(root))}")
+    click.echo(
+        f"{_bold(f'Found {len(docs)} document(s)')} under "
+        f"{_info(_short_path(root, verbose=verbose))}"
+    )
+
+    # Pre-flight lint — abort on errors so users see all issues in one pass
+    # rather than having the build halt-and-resume on the first broken doc.
+    # Warnings are printed but don't abort.
+    if not no_lint:
+        from .linter import lint_directory as _lint_dir
+
+        lint_results = _lint_dir(root, repo_root=root)
+        lint_errors: list[str] = []
+        lint_warnings: list[str] = []
+        for path, issues in sorted(lint_results.items()):
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            for issue in issues:
+                line = f"  {_info(str(rel))}: {issue.message}"
+                if issue.severity == "error":
+                    lint_errors.append(f"  {_err('ERROR')}{line}")
+                else:
+                    lint_warnings.append(f"  {_warn('warn ')}{line}")
+
+        if lint_warnings:
+            click.echo(_dim("Lint warnings:"))
+            for w in lint_warnings:
+                click.echo(w)
+
+        if lint_errors:
+            click.echo(_err("Lint errors — aborting build (use --no-lint to skip):"), err=True)
+            for e in lint_errors:
+                click.echo(e, err=True)
+            sys.exit(1)
 
     # Pre-flight lint — abort on errors so users see all issues in one pass
     # rather than having the build halt-and-resume on the first broken doc.
@@ -447,8 +550,13 @@ def build(
                         err=True,
                     )
                     continue
-                rel_out = out_path.relative_to(root) if out_path.is_relative_to(root) else out_path
-                click.echo(f"    {_ok('✓')} wrote {_info(str(rel_out))}")
+                if out_path.is_relative_to(root):
+                    rel_out_str = str(out_path.relative_to(root))
+                else:
+                    # Output went outside the build root (e.g. --output ../foo) —
+                    # show a short cwd-relative path with .. parts when needed.
+                    rel_out_str = _short_path(out_path, verbose=verbose)
+                click.echo(f"    {_ok('✓')} wrote {_info(rel_out_str)}")
             except ImportError as exc:
                 click.echo(
                     f"    {_err('ERROR')} builder not available for '{format_name}': {exc}",
@@ -591,8 +699,11 @@ def export(
     repo_root = _find_repo_root(Path.cwd())
 
     if workspace is not None:
-        source = _resolve_workspace(workspace, repo_root)
-        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(source))}")
+        # When -w is given, treat the (default-or-given) source positional as
+        # a sub-path within the workspace.
+        source = _resolve_workspace_root(
+            workspace, source if source is not None else Path("."), repo_root
+        )
     elif source is not None:
         source = source.resolve()
         if not source.exists():
@@ -752,7 +863,7 @@ def export(
 
 
 @main.command()
-@click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("root", default=".", type=click.Path(file_okay=False, path_type=Path))
 @click.option(
     "--workspace",
     "-w",
@@ -805,10 +916,11 @@ def lint(root: Path, workspace: str | None, render: bool) -> None:
 
     if workspace is not None:
         repo_root = _find_repo_root(Path.cwd())
-        root = _resolve_workspace(workspace, repo_root)
-        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+        root = _resolve_workspace_root(workspace, root, repo_root)
     else:
         root = Path(root).resolve()
+        if not root.exists():
+            raise click.UsageError(f"Path does not exist: {root}")
     results = lint_directory(root, repo_root=root)
 
     error_count = 0
@@ -880,7 +992,7 @@ def lint(root: Path, workspace: str | None, render: bool) -> None:
 
 
 @main.command()
-@click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("root", default=".", type=click.Path(file_okay=False, path_type=Path))
 @click.option(
     "--workspace",
     "-w",
@@ -916,10 +1028,11 @@ def register(root: Path, workspace: str | None, output: Path | None, write_md: b
     """
     if workspace is not None:
         repo_root = _find_repo_root(Path.cwd())
-        root = _resolve_workspace(workspace, repo_root)
-        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+        root = _resolve_workspace_root(workspace, root, repo_root)
     else:
         root = root.resolve()
+        if not root.exists():
+            raise click.UsageError(f"Path does not exist: {root}")
     json_path = (output or root / "register.json").resolve()
 
     try:
@@ -975,8 +1088,7 @@ def fields(directory: Path, workspace: str | None) -> None:
 
     if workspace is not None:
         repo_root_outer = _find_repo_root(Path.cwd())
-        directory = _resolve_workspace(workspace, repo_root_outer)
-        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(directory))}")
+        directory = _resolve_workspace_root(workspace, directory, repo_root_outer)
     else:
         directory = Path(directory).resolve()
     repo_root = _local_find_repo_root(directory)
@@ -1147,7 +1259,7 @@ def new_doc(name: str, parent: Path) -> None:
 
 
 @main.command()
-@click.argument("root", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("root", default=".", type=click.Path(file_okay=False, path_type=Path))
 @click.option(
     "--workspace",
     "-w",
@@ -1180,10 +1292,11 @@ def sync(root: Path, workspace: str | None, backend: str | None, dry_run: bool) 
     """
     if workspace is not None:
         repo_root = _find_repo_root(Path.cwd())
-        root = _resolve_workspace(workspace, repo_root)
-        click.echo(f"{_bold('Workspace:')} {_info(workspace)}  →  {_info(str(root))}")
+        root = _resolve_workspace_root(workspace, root, repo_root)
     else:
         root = root.resolve()
+        if not root.exists():
+            raise click.UsageError(f"Path does not exist: {root}")
 
     try:
         from .sync import run as run_sync  # type: ignore[import]
