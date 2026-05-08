@@ -38,6 +38,42 @@ def deep_repo(tmp_path):
     return tmp_path
 
 
+@pytest.fixture()
+def very_deep_repo(tmp_path):
+    """Stress test: 10 levels deep, with intermediate ``_meta.yml`` files
+    at every layer that DON'T re-declare the variable.
+
+    Cascade path:
+        tmp_path/_meta.yml  ←  product_name: acme
+        tmp_path/L01/_meta.yml
+        tmp_path/L01/L02/_meta.yml
+        ...
+        tmp_path/L01/L02/.../L10/doc.md
+    """
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "_meta.yml").write_text(
+        "product_name: acme\nauthor: Acme Co\n", encoding="utf-8"
+    )
+
+    current = tmp_path
+    for i in range(1, 11):
+        current = current / f"L{i:02d}"
+        current.mkdir()
+        # An intermediate _meta.yml at every level — none re-declare product_name
+        (current / "_meta.yml").write_text(f"layer{i}_key: value{i}\n", encoding="utf-8")
+
+    (current / "doc.md").write_text(
+        "---\n"
+        'output_filename: "{{ product_name | title }}-deep"\n'
+        "---\n\n"
+        "# {{ product_name | title }} (10 levels deep)\n\n"
+        "Author: {{ author }}\n",
+        encoding="utf-8",
+    )
+
+    return tmp_path, current
+
+
 class TestCascadeFromSubdir:
     def test_lint_full_repo_passes(self, deep_repo):
         """Sanity check: linting the whole repo finds product_name."""
@@ -74,3 +110,44 @@ class TestCascadeFromSubdir:
         result = runner.invoke(main, ["build", str(target)])
         # Should not abort with "Undefined" lint error — cascade reaches root
         assert "Undefined" not in result.output, f"build cascade truncated: {result.output}"
+
+
+class TestCascadeTenLevelsDeep:
+    """Stress test: cascade walking 10 levels of intermediate _meta.yml files."""
+
+    def test_lint_at_root_sees_var_10_deep(self, very_deep_repo):
+        repo, _doc_dir = very_deep_repo
+        runner = CliRunner()
+        result = runner.invoke(main, ["lint", str(repo)])
+        assert result.exit_code == 0, f"failed: {result.output}"
+        assert "Undefined" not in result.output
+
+    def test_lint_at_doc_dir_sees_var_10_levels_above(self, very_deep_repo):
+        """The fix: lint the deepest dir directly — should still inherit
+        product_name and author from the root _meta.yml."""
+        _repo, doc_dir = very_deep_repo
+        runner = CliRunner()
+        result = runner.invoke(main, ["lint", str(doc_dir)])
+        assert result.exit_code == 0, f"failed: {result.output}"
+        assert (
+            "Undefined" not in result.output
+        ), f"cascade should reach 10 levels up: {result.output}"
+
+    def test_lint_at_intermediate_level_sees_var_above(self, very_deep_repo):
+        """Lint at level 5 — should still see var defined at level 0 (root)."""
+        repo, _doc_dir = very_deep_repo
+        mid = repo / "L01" / "L02" / "L03" / "L04" / "L05"
+        runner = CliRunner()
+        result = runner.invoke(main, ["lint", str(mid)])
+        assert result.exit_code == 0, f"failed: {result.output}"
+        assert "Undefined" not in result.output
+
+    def test_render_strict_at_doc_dir_10_deep(self, very_deep_repo):
+        """--render does a full strict Jinja2 render. With 10 levels of
+        intermediate _meta.yml between root and doc, all vars must still
+        resolve."""
+        _repo, doc_dir = very_deep_repo
+        runner = CliRunner()
+        result = runner.invoke(main, ["lint", "--render", str(doc_dir)])
+        assert result.exit_code == 0, f"failed: {result.output}"
+        assert "Undefined" not in result.output
