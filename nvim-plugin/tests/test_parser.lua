@@ -44,6 +44,11 @@ describe("parser.parse_yaml", function()
     eq(vars["some-key"], "value")
   end)
 
+  it("strips trailing spaces from unquoted values", function()
+    local vars = P.parse_yaml("title: My Doc   ")
+    eq(vars.title, "My Doc")
+  end)
+
   it("silently skips nested/list values (lines starting with spaces)", function()
     local vars = P.parse_yaml("top_key: value\n  nested: ignored\nother: kept")
     eq(vars.top_key, "value")

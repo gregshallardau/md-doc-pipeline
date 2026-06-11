@@ -4,7 +4,7 @@ function M.parse_yaml(text)
   local result = {}
   for line in (text .. "\n"):gmatch("([^\n]*)\n") do
     if not line:match("^%s*#") and line:match("%S") and not line:match("^%s+") then
-      local key, value = line:match("^([%w_%-]+)%s*:%s*(.+)%s*$")
+      local key, value = line:match("^([%w_%-]+)%s*:%s*(.-)%s*$")
       if key and value then
         local quoted = value:match('^"(.*)"$') or value:match("^'(.*)'$")
         result[key] = quoted or value
