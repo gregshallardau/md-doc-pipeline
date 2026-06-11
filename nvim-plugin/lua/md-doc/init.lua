@@ -160,9 +160,9 @@ local function set_keymaps(bufnr)
   if ok then
     local prefix = km.toggle_float:match("^(.+)%a$") or "<leader>m"
     if wk.add then
-      wk.add({ { prefix, group = "md-doc", buffer = bufnr } })
+      wk.add({ { prefix, group = "md-doc", icon = "󰦪", buffer = bufnr } })
     elseif wk.register then
-      wk.register({ [prefix] = { name = "md-doc" } }, { buffer = bufnr })
+      wk.register({ [prefix] = { name = "󰦪 md-doc" } }, { buffer = bufnr })
     end
   end
 
