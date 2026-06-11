@@ -39,7 +39,14 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
 
-from ..docx_theme import apply_theme_to_doc, resolve_docx_theme, set_cell_shading
+from ..docx_theme import (
+    _hex_to_rgb,
+    apply_theme_to_doc,
+    patch_docx_theme_fonts,
+    resolve_docx_theme,
+    set_cell_shading,
+    set_para_shading,
+)
 from .pdf import _inject_page_breaks
 
 # Markdown extensions (consistent with pdf builder)
@@ -229,13 +236,23 @@ def _set_cell_bottom_border(cell: Any, color: str = "d5d8dc", pt: float = 0.5) -
 
 
 def _clear_table_borders(table: Any) -> None:
-    """Remove all table-level border declarations so cell borders control the look."""
+    """Explicitly set all table-level borders to none so cell borders control the look."""
     tbl = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
     if tblPr is None:
-        return
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
     for existing in tblPr.findall(qn("w:tblBorders")):
         tblPr.remove(existing)
+    tblBorders = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"), "none")
+        b.set(qn("w:sz"), "0")
+        b.set(qn("w:space"), "0")
+        b.set(qn("w:color"), "auto")
+        tblBorders.append(b)
+    tblPr.append(tblBorders)
 
 
 def _render_cell_html(
@@ -287,7 +304,11 @@ def _render_cell_html(
             run.italic = self._italic
             if self._code:
                 run.font.name = theme.get("font_code", "Courier New")
-                run.font.size = Pt(9)
+                run.font.size = Pt(theme.get("font_size_code", 9.0))
+                col = theme.get("color_code")
+                if col:
+                    r2, g2, b2 = _hex_to_rgb(col)
+                    run.font.color.rgb = RGBColor(r2, g2, b2)
 
     _CellParser().feed(html)
 
@@ -444,11 +465,24 @@ class _DocxBuilder(HTMLParser):
                                 run = paragraph.add_run(line)
                                 if bold:
                                     run.bold = True
+                                    col = self._theme.get("color_strong")
+                                    if col:
+                                        r, g, b = _hex_to_rgb(col)
+                                        run.font.color.rgb = RGBColor(r, g, b)
                                 if italic:
                                     run.italic = True
+                                    if not bold:
+                                        col = self._theme.get("color_em")
+                                        if col:
+                                            r, g, b = _hex_to_rgb(col)
+                                            run.font.color.rgb = RGBColor(r, g, b)
                                 if code:
                                     run.font.name = self._theme.get("font_code", "Courier New")
-                                    run.font.size = Pt(9)
+                                    run.font.size = Pt(self._theme.get("font_size_code", 9.0))
+                                    col = self._theme.get("color_code")
+                                    if col:
+                                        r, g, b = _hex_to_rgb(col)
+                                        run.font.color.rgb = RGBColor(r, g, b)
                 else:
                     # Field marker
                     if self._field_type == "merge":
@@ -469,11 +503,24 @@ class _DocxBuilder(HTMLParser):
                     run = paragraph.add_run(line)
                     if bold:
                         run.bold = True
+                        col = self._theme.get("color_strong")
+                        if col:
+                            r, g, b = _hex_to_rgb(col)
+                            run.font.color.rgb = RGBColor(r, g, b)
                     if italic:
                         run.italic = True
+                        if not bold:
+                            col = self._theme.get("color_em")
+                            if col:
+                                r, g, b = _hex_to_rgb(col)
+                                run.font.color.rgb = RGBColor(r, g, b)
                     if code:
                         run.font.name = self._theme.get("font_code", "Courier New")
-                        run.font.size = Pt(9)
+                        run.font.size = Pt(self._theme.get("font_size_code", 9.0))
+                        col = self._theme.get("color_code")
+                        if col:
+                            r, g, b = _hex_to_rgb(col)
+                            run.font.color.rgb = RGBColor(r, g, b)
 
     def _add_text(self, text: str) -> None:
         if not text:
@@ -518,11 +565,28 @@ class _DocxBuilder(HTMLParser):
                 self._paragraph.alignment = word_align
 
         elif tag == "p":
-            self._new_para("Intense Quote" if self._in_blockquote else "Normal")
+            self._new_para("Normal")
             inline_align = self._parse_text_align(attrs)
             word_align = self._effective_alignment(inline_align)
             if word_align is not None and self._paragraph is not None:
                 self._paragraph.alignment = word_align
+            if self._in_blockquote:
+                # Apply left border accent from theme
+                bq_color = self._theme.get("blockquote_border_color")
+                bq_pt = self._theme.get("blockquote_border_pt", 3.0)
+                if bq_color:
+                    pPr = self._paragraph._p.get_or_add_pPr()
+                    pBdr = OxmlElement("w:pBdr")
+                    left = OxmlElement("w:left")
+                    left.set(qn("w:val"), "single")
+                    left.set(qn("w:sz"), str(max(1, round(bq_pt * 8))))
+                    left.set(qn("w:space"), "12")
+                    left.set(qn("w:color"), bq_color.lstrip("#").upper())
+                    pBdr.append(left)
+                    pPr.append(pBdr)
+                # Indentation to match CSS padding-left
+                ind = self._paragraph._p.get_or_add_pPr().get_or_add_ind()
+                ind.set(qn("w:left"), str(int(10 * 20)))  # 10pt indent
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
@@ -561,6 +625,8 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "blockquote":
             self._in_blockquote = True
+            # Blockquote content is italic by default (CSS font-style: italic)
+            self._italic = True
 
         elif tag in ("strong", "b"):
             self._bold = True
@@ -577,6 +643,8 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = self.doc.add_paragraph()
             self._paragraph.paragraph_format.space_before = Pt(6)
             self._paragraph.paragraph_format.space_after = Pt(6)
+            hr_color = (self._theme.get("color_hr") or "#aaaaaa").lstrip("#").upper()
+            hr_sz = str(max(1, round(self._theme.get("size_hr", 0.75) * 8)))
             pPr = self._paragraph._p.get_or_add_pPr()
             pBdr = pPr.find(qn("w:pBdr"))
             if pBdr is None:
@@ -587,9 +655,9 @@ class _DocxBuilder(HTMLParser):
                 bottom = OxmlElement("w:bottom")
                 pBdr.append(bottom)
             bottom.set(qn("w:val"), "single")
-            bottom.set(qn("w:sz"), "6")
+            bottom.set(qn("w:sz"), hr_sz)
             bottom.set(qn("w:space"), "1")
-            bottom.set(qn("w:color"), "AAAAAA")
+            bottom.set(qn("w:color"), hr_color)
 
         elif tag == "table":
             self._in_table = True
@@ -617,6 +685,20 @@ class _DocxBuilder(HTMLParser):
             self._current_cell_html += f"</{tag}>"
             return
 
+        if tag == "h1" and self._paragraph is not None:
+            color = self._theme.get("h1_border_color")
+            pt = self._theme.get("h1_border_pt", 1.5)
+            if color:
+                pPr = self._paragraph._p.get_or_add_pPr()
+                pBdr = OxmlElement("w:pBdr")
+                bot = OxmlElement("w:bottom")
+                bot.set(qn("w:val"), "single")
+                bot.set(qn("w:sz"), str(max(1, round(pt * 8))))
+                bot.set(qn("w:space"), "6")
+                bot.set(qn("w:color"), color.lstrip("#").upper())
+                pBdr.append(bot)
+                pPr.append(pBdr)
+
         if tag in ("h1", "h2", "h3", "h4", "p"):
             self._paragraph = None
 
@@ -633,9 +715,32 @@ class _DocxBuilder(HTMLParser):
         elif tag == "pre":
             self._in_pre = False
             para = self.doc.add_paragraph(style="Normal")
+            pre_size = self._theme.get("font_size_pre", 9.0)
+            pre_font = self._theme.get("font_code", "Courier New")
+            pre_border_color = self._theme.get("pre_border_color")
+            pre_border_pt = self._theme.get("pre_border_pt", 3.0)
+            pre_bg = self._theme.get("pre_background_color")
+            # Apply background shading (CSS background)
+            if pre_bg:
+                set_para_shading(para, pre_bg)
+            # Apply left accent border (CSS border-left)
+            if pre_border_color:
+                pPr = para._p.get_or_add_pPr()
+                pBdr = OxmlElement("w:pBdr")
+                left = OxmlElement("w:left")
+                left.set(qn("w:val"), "single")
+                left.set(qn("w:sz"), str(max(1, round(pre_border_pt * 8))))
+                left.set(qn("w:space"), "12")
+                left.set(qn("w:color"), pre_border_color.lstrip("#").upper())
+                pBdr.append(left)
+                pPr.append(pBdr)
+                ind = pPr.get_or_add_ind()
+                ind.set(qn("w:left"), str(int(10 * 20)))  # 10pt indent
+            para.paragraph_format.space_before = Pt(6)
+            para.paragraph_format.space_after = Pt(10)
             run = para.add_run(self._pre_text.strip())
-            run.font.name = "Courier New"
-            run.font.size = Pt(9)
+            run.font.name = pre_font
+            run.font.size = Pt(pre_size)
             self._pre_text = ""
             self._paragraph = None
 
@@ -645,6 +750,7 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "blockquote":
             self._in_blockquote = False
+            self._italic = False
             self._paragraph = None
 
         elif tag == "div":
@@ -707,8 +813,39 @@ class _DocxBuilder(HTMLParser):
         except KeyError:
             table.style = "Normal Table"
 
-        # Remove all table-level borders so we can set per-cell borders below
+        # Explicitly set all table-level borders to none
         _clear_table_borders(table)
+
+        # Set table to 100% text width with autofit layout
+        tbl = table._tbl
+        tblPr = tbl.find(qn("w:tblPr"))
+        if tblPr is None:
+            tblPr = OxmlElement("w:tblPr")
+            tbl.insert(0, tblPr)
+
+        for existing_w in tblPr.findall(qn("w:tblW")):
+            tblPr.remove(existing_w)
+        tblW = OxmlElement("w:tblW")
+        tblW.set(qn("w:w"), "5000")
+        tblW.set(qn("w:type"), "pct")
+        tblPr.append(tblW)
+
+        for existing_layout in tblPr.findall(qn("w:tblLayout")):
+            tblPr.remove(existing_layout)
+        tblLayout = OxmlElement("w:tblLayout")
+        tblLayout.set(qn("w:type"), "autofit")
+        tblPr.append(tblLayout)
+
+        # Cell margins from CSS td { padding }
+        tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
+        lr_pt = self._theme.get("padding_cell_lr_pt", 9.0)
+        tblCellMar = OxmlElement("w:tblCellMar")
+        for side_name, pt_val in (("top", tb_pt), ("left", lr_pt), ("bottom", tb_pt), ("right", lr_pt)):
+            mar = OxmlElement(f"w:{side_name}")
+            mar.set(qn("w:w"), str(int(pt_val * 20)))  # twips = pt * 20
+            mar.set(qn("w:type"), "dxa")
+            tblCellMar.append(mar)
+        tblPr.append(tblCellMar)
 
         header_bg = self._theme.get("color_table_header_bg")
         header_text_color = self._theme.get("color_table_header_text")
@@ -719,6 +856,10 @@ class _DocxBuilder(HTMLParser):
         cell_border_size = self._theme.get("size_table_cell_border", 0.5)
         last_border_color = self._theme.get("color_table_last_row_border", cell_border_color)
         last_border_size = self._theme.get("size_table_last_row_border", 1.0)
+        font_body = self._theme.get("font_body")
+        font_code = self._theme.get("font_code", "Courier New")
+        uppercase_th = self._theme.get("uppercase_th", False)
+        letter_spacing_th = self._theme.get("letter_spacing_th_pt")
 
         n_rows = len(rows)
 
@@ -730,8 +871,18 @@ class _DocxBuilder(HTMLParser):
                 cell = table.cell(r_idx, c_idx)
                 cell.text = ""
                 para = cell.paragraphs[0]
+                # Zero paragraph spacing so cell padding alone controls whitespace
+                para.paragraph_format.space_before = Pt(0)
+                para.paragraph_format.space_after = Pt(0)
+
                 _render_cell_html(para, cell_html.strip(), self._theme, self._field_type,
                                   self._bookmark_id, bold_override=is_header)
+
+                # Apply body font explicitly (Word table cells don't always inherit Normal)
+                if font_body:
+                    for run in para.runs:
+                        if run.font.name is None or run.font.name not in (font_code, "Courier New"):
+                            run.font.name = font_body
 
                 # Apply font sizes
                 size = header_font_size if is_header else body_font_size
@@ -741,11 +892,20 @@ class _DocxBuilder(HTMLParser):
 
                 # Header styling
                 if is_header:
+                    if uppercase_th:
+                        for run in para.runs:
+                            run.text = run.text.upper()
                     if header_text_color:
-                        from ..docx_theme import _hex_to_rgb
                         r, g, b = _hex_to_rgb(header_text_color)
                         for run in para.runs:
                             run.font.color.rgb = RGBColor(r, g, b)
+                    if letter_spacing_th:
+                        twips = int(letter_spacing_th * 20)
+                        for run in para.runs:
+                            rPr = run._r.get_or_add_rPr()
+                            spacing = OxmlElement("w:spacing")
+                            spacing.set(qn("w:val"), str(twips))
+                            rPr.append(spacing)
                     if header_bg:
                         set_cell_shading(cell, header_bg)
                 else:
@@ -763,11 +923,166 @@ class _DocxBuilder(HTMLParser):
 
 
 # ---------------------------------------------------------------------------
-# Cover page (.dotx only)
+# Page setup
 # ---------------------------------------------------------------------------
 
 
-def _add_cover_page(doc: Document, config: dict[str, Any], builder: _DocxBuilder) -> None:
+def _setup_page(doc: Document) -> None:
+    """Set A4 page size and margins matching the default PDF layout."""
+    section = doc.sections[0]
+    section.page_width = Mm(210)
+    section.page_height = Mm(297)
+    section.left_margin = Mm(25)
+    section.right_margin = Mm(20)
+    section.top_margin = Mm(25)
+    section.bottom_margin = Mm(22)
+
+
+# ---------------------------------------------------------------------------
+# Cover page
+# ---------------------------------------------------------------------------
+
+
+def _add_docx_cover_page(
+    doc: Document,
+    config: dict[str, Any],
+    builder: "_DocxBuilder",
+    theme: dict[str, Any],
+) -> None:
+    """Insert a styled cover page for .docx output, then a page break.
+
+    Approximates the PDF cover design: coloured top bar, cover label, title,
+    thin divider, and metadata (author / date).
+    """
+    title = config.get("title", "")
+    author = config.get("author", "")
+    date_str = config.get("date", "")
+    product = config.get("product", "")
+    label = str(config.get("cover_label", "Report"))
+    show_bar = bool(config.get("cover_bar", True))
+    bar_height_str = str(config.get("cover_bar_height", "10mm"))
+    footer_text = config.get("cover_footer_text") or (
+        f"{author}  ·  Confidential" if author else ""
+    )
+    meta_label = str(config.get("cover_meta_label", "Prepared by"))
+
+    bar_color = (theme.get("color_table_header_bg") or theme.get("color_h1") or "1b4f72").lstrip("#")
+    label_color = (theme.get("color_h2") or theme.get("color_h1") or "2e86c1").lstrip("#")
+    bar_mm = float(re.sub(r"[^\d.]", "", bar_height_str) or "10")
+
+    # 1. Coloured top bar — full page width, bleeds into margins
+    if show_bar:
+        section = doc.sections[0]
+        left_margin = section.left_margin
+        right_margin = section.right_margin
+        page_width = section.page_width
+        # Twips: 1 EMU = 1/635 twips
+        page_twips = round(page_width / 635)
+        left_twips = round(left_margin / 635)
+
+        bar_tbl = doc.add_table(rows=1, cols=1)
+        _clear_table_borders(bar_tbl)
+
+        # Set table width to full page width
+        tbl = bar_tbl._tbl
+        tblPr = tbl.find(qn("w:tblPr"))
+        if tblPr is None:
+            tblPr = OxmlElement("w:tblPr")
+            tbl.insert(0, tblPr)
+        for old in tblPr.findall(qn("w:tblW")):
+            tblPr.remove(old)
+        tblW = OxmlElement("w:tblW")
+        tblW.set(qn("w:w"), str(page_twips))
+        tblW.set(qn("w:type"), "dxa")
+        tblPr.append(tblW)
+        # Negative left indent to bleed into left margin
+        tblInd = OxmlElement("w:tblInd")
+        tblInd.set(qn("w:w"), str(-left_twips))
+        tblInd.set(qn("w:type"), "dxa")
+        tblPr.append(tblInd)
+        tr = bar_tbl.rows[0]._tr
+        trPr = tr.get_or_add_trPr()
+        trHeight = OxmlElement("w:trHeight")
+        trHeight.set(qn("w:val"), str(int(Mm(bar_mm).pt * 20)))
+        trHeight.set(qn("w:hRule"), "exact")
+        trPr.append(trHeight)
+        cell = bar_tbl.rows[0].cells[0]
+        set_cell_shading(cell, bar_color)
+        tcPr = cell._tc.get_or_add_tcPr()
+        tcBorders = OxmlElement("w:tcBorders")
+        for side in ("top", "left", "bottom", "right"):
+            b = OxmlElement(f"w:{side}")
+            b.set(qn("w:val"), "none")
+            tcBorders.append(b)
+        tcPr.append(tcBorders)
+        cell.paragraphs[0].paragraph_format.space_before = Pt(0)
+        cell.paragraphs[0].paragraph_format.space_after = Pt(0)
+
+    # 2. Cover label (e.g. "REPORT")
+    if label:
+        lp = doc.add_paragraph()
+        lp.paragraph_format.space_before = Pt(30)
+        lp.paragraph_format.space_after = Pt(0)
+        run = lp.add_run(label.upper())
+        run.bold = True
+        run.font.size = Pt(8.5)
+        r, g, b = _hex_to_rgb(label_color)
+        run.font.color.rgb = RGBColor(r, g, b)
+
+    # 3. Title
+    title_para = doc.add_paragraph(style="Title")
+    title_para.paragraph_format.space_before = Pt(10)
+    builder._write_text(title_para, title or "Document")
+
+    # 4. Product subtitle
+    if product:
+        sub_para = doc.add_paragraph(style="Subtitle")
+        builder._write_text(sub_para, product)
+
+    # 5. Divider line (3pt, uses bar colour)
+    div_para = doc.add_paragraph()
+    div_para.paragraph_format.space_before = Pt(14)
+    div_para.paragraph_format.space_after = Pt(14)
+    pPr = div_para._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), "24")  # 3pt
+    bot.set(qn("w:space"), "0")
+    bot.set(qn("w:color"), bar_color.upper())
+    pBdr.append(bot)
+    pPr.append(pBdr)
+
+    # 6. Author / date metadata
+    if author:
+        mp = doc.add_paragraph()
+        mp.paragraph_format.space_before = Pt(0)
+        mp.paragraph_format.space_after = Pt(4)
+        mp.add_run(f"{meta_label}: ").bold = True
+        builder._write_text(mp, author)
+    if date_str:
+        mp = doc.add_paragraph()
+        mp.paragraph_format.space_before = Pt(0)
+        mp.paragraph_format.space_after = Pt(4)
+        mp.add_run("Date: ").bold = True
+        builder._write_text(mp, date_str)
+
+    # 7. Footer text (confidentiality notice)
+    if footer_text:
+        doc.add_paragraph()  # spacer
+        fp = doc.add_paragraph()
+        fp.paragraph_format.space_before = Pt(0)
+        run = fp.add_run(footer_text)
+        run.font.size = Pt(8)
+        col = theme.get("color_em") or theme.get("color_h3")
+        if col:
+            r, g, b = _hex_to_rgb(col)
+            run.font.color.rgb = RGBColor(r, g, b)
+
+    doc.add_page_break()
+
+
+def _add_cover_page(doc: Document, config: dict[str, Any], builder: "_DocxBuilder") -> None:
     """Insert a cover page section followed by a page break.
 
     All text values may contain ``[[field]]`` markers — rendered via *builder*
@@ -1057,21 +1372,19 @@ def build(
     is_dotx = output_format == "dotx"
 
     field_type: str | None = None
-    cover_page = False
+    cover_page = bool(config.get("cover_page", True))
 
     if is_dotx:
         ft = str(config.get("dotx_field_type", "form")).lower()
         field_type = ft if ft in ("form", "merge") else "form"
-        cover_page = bool(config.get("cover_page", True))
 
     body = _strip_frontmatter(rendered_md)
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     author: str = config.get("author", "")
 
-    if is_dotx:
-        if cover_page:
-            body = _strip_leading_h1(body)
-    else:
+    if cover_page:
+        body = _strip_leading_h1(body)
+    elif not is_dotx:
         body = _strip_leading_h1(body)
 
     body = _inject_page_breaks(body)
@@ -1081,6 +1394,7 @@ def build(
 
     theme = _resolve_docx_theme(doc_path, repo_root)
     doc = Document()
+    _setup_page(doc)
 
     props = doc.core_properties
     if is_dotx:
@@ -1098,14 +1412,23 @@ def build(
     body_text_align = str(config.get("body_text_align", "")).lower() or None
     builder = _DocxBuilder(doc, theme=theme, field_type=field_type, body_text_align=body_text_align)
 
-    if is_dotx and cover_page:
-        _add_cover_page(doc, {**config, "title": title}, builder)
+    if cover_page:
+        if is_dotx:
+            _add_cover_page(doc, {**config, "title": title}, builder)
+        else:
+            _add_docx_cover_page(doc, {**config, "title": title}, builder, theme)
     elif not is_dotx:
         doc.add_paragraph(title, style="Title")
 
     builder.feed(html)
 
     doc.save(str(out_path))
+
+    # Patch the document theme XML to match the CSS font — ensures LibreOffice
+    # and other renderers show the correct font family instead of Calibri/Cambria.
+    font_body = theme.get("font_body")
+    if font_body:
+        patch_docx_theme_fonts(out_path, font_body)
 
     if is_dotx:
         _patch_to_dotx(out_path)

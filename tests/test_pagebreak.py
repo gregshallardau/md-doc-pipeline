@@ -97,9 +97,9 @@ class TestDocxPagebreak:
 
         md = "---\ntitle: Test\n---\n\nJust one page of content.\n"
 
-        build_docx(md, {"title": "Test"}, out, repo_root=tmp_path)
+        # cover_page=False suppresses the cover page for plain .docx
+        build_docx(md, {"title": "Test", "cover_page": False}, out, repo_root=tmp_path)
 
         doc = Document(str(out))
         xml = "\n".join(p._p.xml for p in doc.paragraphs)
-        # Cover page is not added for plain .docx, so no page break should appear.
         assert 'w:type="page"' not in xml
