@@ -862,7 +862,13 @@ def export(
         "an empty string."
     ),
 )
-def lint(root: Path, workspace: str | None, render: bool) -> None:
+@click.option(
+    "--fix",
+    is_flag=True,
+    default=False,
+    help="Auto-fix repairable issues in-place (currently: CRLF → LF line endings).",
+)
+def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
     """Lint all Markdown documents under ROOT for build errors.
 
     Checks:
@@ -909,6 +915,20 @@ def lint(root: Path, workspace: str | None, render: bool) -> None:
     # the user's chosen subdirectory.
     cascade_root = _find_repo_root(root)
     results = lint_directory(root, repo_root=cascade_root)
+
+    # --fix: rewrite CRLF files to LF before reporting
+    if fix:
+        fixed: list[Path] = []
+        for path, issues in results.items():
+            if any("CRLF" in issue.message for issue in issues):
+                text = path.read_text(encoding="utf-8")
+                path.write_text(text.replace("\r\n", "\n").replace("\r", "\n"), encoding="utf-8")
+                fixed.append(path)
+        if fixed:
+            for p in fixed:
+                click.echo(_ok("fixed") + f"  {p.relative_to(root)}  (CRLF → LF)")
+            # Re-lint so the CRLF warnings are cleared from the report
+            results = lint_directory(root, repo_root=cascade_root)
 
     error_count = 0
     warning_count = 0

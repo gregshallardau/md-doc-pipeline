@@ -104,6 +104,19 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
         repo_root = Path(repo_root).resolve()
 
     raw = doc_path.read_text(encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # 0. Line endings
+    # ------------------------------------------------------------------
+    if "\r\n" in raw or raw.endswith("\r"):
+        issues.append(
+            LintIssue(
+                path=doc_path,
+                message="File has Windows (CRLF) line endings — run `md-doc lint --fix` to convert to LF",
+                severity="warning",
+            )
+        )
+
     frontmatter_block, body = _strip_frontmatter(raw)
 
     # ------------------------------------------------------------------
