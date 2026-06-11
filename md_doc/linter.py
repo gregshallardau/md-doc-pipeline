@@ -117,6 +117,15 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
             )
         )
 
+    if "\x1a" in raw:
+        issues.append(
+            LintIssue(
+                path=doc_path,
+                message="File contains ^Z (Windows EOF marker, 0x1A) — run `md-doc lint --fix` to remove",
+                severity="warning",
+            )
+        )
+
     frontmatter_block, body = _strip_frontmatter(raw)
 
     # ------------------------------------------------------------------

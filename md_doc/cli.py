@@ -939,9 +939,10 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
     if fix:
         fixed: list[Path] = []
         for path, issues in results.items():
-            if any("CRLF" in issue.message for issue in issues):
+            if any("CRLF" in issue.message or "^Z" in issue.message for issue in issues):
                 text = path.read_text(encoding="utf-8")
-                path.write_text(text.replace("\r\n", "\n").replace("\r", "\n"), encoding="utf-8")
+                text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x1a", "")
+                path.write_text(text, encoding="utf-8")
                 fixed.append(path)
         if fixed:
             for p in fixed:
