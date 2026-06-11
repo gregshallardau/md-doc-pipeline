@@ -100,10 +100,17 @@ local function render_document(bufnr)
   content = resolve_includes(content, 0)
 
   -- Resolve variables
+  local log = io.open("/tmp/mddoc-render-debug.txt", "w")
   content = content:gsub("{{%s*([^}]+)%s*}}", function(expr)
     local value = resolve.resolve_variable(expr, context)
+    local var_name = expr:match("^%s*([%w_]+)") or "?"
+    if log then
+      log:write(string.format("expr=%q  var=%q  value=%s  type=%s\n",
+        expr, var_name, tostring(value), type(value)))
+    end
     return value or ("{{ " .. expr:match("^%s*(.-)%s*$") .. " }}")
   end)
+  if log then log:close() end
 
   local result = {}
   for line in (content .. "\n"):gmatch("([^\n]*)\n") do
