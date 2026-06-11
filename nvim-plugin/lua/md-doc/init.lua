@@ -10,7 +10,7 @@ local default_config = {
   auto_show = true,
   auto_show_delay = 500,
   modes = { float = true, virtual = false, split = false, document = false },
-  resolve_frontmatter = false,
+  resolve_frontmatter = true,
   keymaps = {
     toggle_float       = "<leader>mf",
     toggle_virtual     = "<leader>mv",
@@ -72,8 +72,9 @@ local function render_document(bufnr)
   local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
   if not repo_root then return nil end
 
-  local state = get_state(bufnr)
-  local context = cascade.load_context(doc_path, state.resolve_frontmatter)
+  -- Always include frontmatter for full document render — variables defined
+  -- there are part of the document and should always be resolved.
+  local context = cascade.load_context(doc_path, true)
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local content = table.concat(lines, "\n")
