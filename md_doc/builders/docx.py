@@ -974,7 +974,6 @@ def _add_docx_cover_page(
     if show_bar:
         section = doc.sections[0]
         left_margin = section.left_margin
-        right_margin = section.right_margin
         page_width = section.page_width
         # Twips: 1 EMU = 1/635 twips
         page_twips = round(page_width / 635)
