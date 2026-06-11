@@ -96,6 +96,8 @@ def _short_path(p: Path, *, verbose: bool = False) -> str:
 # Directories never containing buildable documents
 _SKIP_DIRS = {
     ".git",
+    ".github",
+    ".gitlab",
     ".venv",
     "venv",
     ".tox",
