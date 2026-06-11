@@ -928,8 +928,10 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
         if root.suffix != ".md":
             raise click.UsageError(f"Not a Markdown file: {root}")
         from .linter import lint_file as _lint_file
-        file_issues = _lint_file(root, repo_root=cascade_root)
-        results = {root: file_issues} if file_issues else {}
+        single_file = root
+        root = root.parent  # needed so _discover_markdown checks below work
+        file_issues = _lint_file(single_file, repo_root=cascade_root)
+        results = {single_file: file_issues} if file_issues else {}
     else:
         results = lint_directory(root, repo_root=cascade_root)
 
