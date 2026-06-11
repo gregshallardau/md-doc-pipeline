@@ -66,21 +66,26 @@ local function parse_cursor_line(line, col)
   return nil, nil
 end
 
+local parser = require("md-doc.parser")
+
 -- Render the full document with all includes and variables resolved.
 local function render_document(bufnr)
   local doc_path = vim.api.nvim_buf_get_name(bufnr)
   local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
   if not repo_root then return nil end
 
-  -- Always include frontmatter for full document render — variables defined
-  -- there are part of the document and should always be resolved.
-  local context = cascade.load_context(doc_path, true)
-
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local content = table.concat(lines, "\n")
+  local raw = table.concat(lines, "\n")
 
-  -- Strip YAML frontmatter
-  content = content:gsub("^%-%-%-[^\n]*\n.-\n%-%-%-\n?", "")
+  -- Parse frontmatter from the live buffer (handles unsaved changes).
+  -- Use the parser's strip_frontmatter which correctly handles multi-line YAML.
+  local fm = parser.strip_frontmatter(raw)
+  local content = fm.body
+
+  -- Load _meta.yml cascade from disk, then overlay live buffer frontmatter
+  -- (buffer values take highest precedence, same as the build pipeline).
+  local context = cascade.load_context(doc_path, false)
+  for k, v in pairs(fm.vars) do context[k] = v end
 
   -- Resolve includes (guard against infinite loops with a depth counter)
   local function resolve_includes(text, depth)
