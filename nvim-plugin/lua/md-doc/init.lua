@@ -95,31 +95,42 @@ local function set_keymaps(bufnr)
   local km = config.keymaps
   local opts = { buffer = bufnr, noremap = true, silent = true }
 
+  -- Register which-key group if available (supports both v2 and v3 APIs)
+  local ok, wk = pcall(require, "which-key")
+  if ok then
+    local prefix = km.toggle_float:match("^(.+)%a$") or "<leader>m"
+    if wk.add then
+      wk.add({ { prefix, group = "md-doc", buffer = bufnr } })
+    elseif wk.register then
+      wk.register({ [prefix] = { name = "md-doc" } }, { buffer = bufnr })
+    end
+  end
+
   vim.keymap.set("n", km.toggle_float, function()
     state.modes.float = not state.modes.float
     vim.notify("md-doc: float " .. (state.modes.float and "on" or "off"))
-  end, opts)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: toggle float preview" }))
 
   vim.keymap.set("n", km.toggle_virtual, function()
     state.modes.virtual = not state.modes.virtual
     if not state.modes.virtual then virtual.clear_all(bufnr) end
     vim.notify("md-doc: virtual text " .. (state.modes.virtual and "on" or "off"))
-  end, opts)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: toggle virtual text" }))
 
   vim.keymap.set("n", km.toggle_split, function()
     state.modes.split = not state.modes.split
     if not state.modes.split then split.close(bufnr) end
     vim.notify("md-doc: split " .. (state.modes.split and "on" or "off"))
-  end, opts)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: toggle split pane" }))
 
   vim.keymap.set("n", km.toggle_frontmatter, function()
     state.resolve_frontmatter = not state.resolve_frontmatter
     vim.notify("md-doc: frontmatter " .. (state.resolve_frontmatter and "on" or "off"))
-  end, opts)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: toggle frontmatter resolution" }))
 
   vim.keymap.set("n", km.show_now, function()
     M.show_preview(bufnr, true)
-  end, opts)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: show preview now" }))
 end
 
 local function setup_highlights()
