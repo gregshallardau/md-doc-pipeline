@@ -135,6 +135,11 @@ dismiss it.
 | `<leader>ms` | Toggle split pane (cursor fragment) on/off |
 | `<leader>mD` | Toggle full document preview on/off |
 | `<leader>mr` | Toggle frontmatter resolution on/off |
+| `<leader>mb` | Build current file |
+| `<leader>ml` | Lint current file |
+| `<leader>mB` | Build workspace |
+| `<leader>mL` | Lint workspace |
+| `<leader>m?` | Dump resolved variable context |
 
 ### What it previews
 
@@ -156,6 +161,28 @@ All three modes can be active at the same time.
 | **Virtual text** | Dimmed lines inserted below the include/variable line | `<leader>mv` |
 | **Split** | Persistent right-side pane showing the fragment under the cursor | `<leader>ms` |
 | **Document** | Persistent right-side pane showing the whole rendered document | `<leader>mD` |
+
+---
+
+## Running builds and lints from Neovim
+
+Add a `.md-doc.yml` file to the root of your document project pointing at your `md-doc-pipeline` installation:
+
+```yaml
+# ~/aib-document-generator/.md-doc.yml
+pipeline: ~/md-doc-pipeline
+```
+
+Then from any `.md` file in the project:
+
+| Key | Command |
+|---|---|
+| `<leader>mb` | `md-doc build <current file>` |
+| `<leader>ml` | `md-doc lint <current file>` |
+| `<leader>mB` | `md-doc build <workspace root>` |
+| `<leader>mL` | `md-doc lint <workspace root>` |
+
+Output streams live into the split pane. A notification fires on completion.
 
 ---
 

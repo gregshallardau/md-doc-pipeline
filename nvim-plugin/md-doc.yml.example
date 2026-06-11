@@ -1,0 +1,4 @@
+# Place this file at the root of your document project as .md-doc.yml
+# It tells the Neovim plugin where your md-doc-pipeline installation lives.
+
+pipeline: ~/md-doc-pipeline

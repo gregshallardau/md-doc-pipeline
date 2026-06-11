@@ -2,6 +2,7 @@ local M = {}
 
 local cascade = require("md-doc.cascade")
 local resolve  = require("md-doc.resolve")
+local runner   = require("md-doc.runner")
 local float    = require("md-doc.ui.float")
 local virtual  = require("md-doc.ui.virtual")
 local split    = require("md-doc.ui.split")
@@ -19,6 +20,10 @@ local default_config = {
     toggle_frontmatter = "<leader>mr",
     show_now           = "K",
     debug_context      = "<leader>m?",
+    build_file         = "<leader>mb",
+    lint_file          = "<leader>ml",
+    build_workspace    = "<leader>mB",
+    lint_workspace     = "<leader>mL",
   },
 }
 
@@ -111,6 +116,40 @@ local function render_document(bufnr)
   end
   while #result > 0 and result[#result] == "" do table.remove(result) end
   return result
+end
+
+local function get_pipeline(bufnr)
+  local doc_path = vim.api.nvim_buf_get_name(bufnr)
+  local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
+  return runner.find_pipeline(repo_root), doc_path, repo_root
+end
+
+function M.build_file(bufnr)
+  local pipeline, doc_path = get_pipeline(bufnr)
+  runner.run({ "build", doc_path }, pipeline, bufnr, "󰆨 build: " .. vim.fn.fnamemodify(doc_path, ":t"))
+end
+
+function M.lint_file(bufnr)
+  local pipeline, doc_path = get_pipeline(bufnr)
+  runner.run({ "lint", doc_path }, pipeline, bufnr, "󰸖 lint: " .. vim.fn.fnamemodify(doc_path, ":t"))
+end
+
+function M.build_workspace(bufnr)
+  local pipeline, _, repo_root = get_pipeline(bufnr)
+  if not repo_root then
+    vim.notify("md-doc: cannot detect workspace root", vim.log.levels.ERROR)
+    return
+  end
+  runner.run({ "build", repo_root }, pipeline, bufnr, "󰆨 build workspace")
+end
+
+function M.lint_workspace(bufnr)
+  local pipeline, _, repo_root = get_pipeline(bufnr)
+  if not repo_root then
+    vim.notify("md-doc: cannot detect workspace root", vim.log.levels.ERROR)
+    return
+  end
+  runner.run({ "lint", repo_root }, pipeline, bufnr, "󰸖 lint workspace")
 end
 
 function M.show_document_preview(bufnr)
@@ -216,8 +255,12 @@ local function set_keymaps(bufnr)
         { km.toggle_split,       icon = toggle_icon(function() return state.modes.split end),          desc = state_desc("split pane",          function() return state.modes.split end),         buffer = bufnr },
         { km.toggle_document,    icon = toggle_icon(function() return state.modes.document end),       desc = state_desc("document preview",    function() return state.modes.document end),      buffer = bufnr },
         { km.toggle_frontmatter, icon = toggle_icon(function() return state.resolve_frontmatter end),  desc = state_desc("frontmatter vars",    function() return state.resolve_frontmatter end), buffer = bufnr },
-        { km.show_now,           desc = "show preview now",              buffer = bufnr },
-        { km.debug_context,      desc = "dump resolved variable context", buffer = bufnr },
+        { km.show_now,           desc = "show preview now",               buffer = bufnr },
+        { km.debug_context,      desc = "dump resolved variable context",  buffer = bufnr },
+        { km.build_file,         desc = "build this file",                 buffer = bufnr },
+        { km.lint_file,          desc = "lint this file",                  buffer = bufnr },
+        { km.build_workspace,    desc = "build workspace",                 buffer = bufnr },
+        { km.lint_workspace,     desc = "lint workspace",                  buffer = bufnr },
       })
     elseif wk.register then
       wk.register({ [prefix] = { name = "󰦪 md-doc" } }, { buffer = bufnr })
@@ -296,6 +339,22 @@ local function set_keymaps(bufnr)
     end
     float.show(out, "󰦪 md-doc context")
   end, vim.tbl_extend("force", opts, { desc = "md-doc: dump resolved variable context" }))
+
+  vim.keymap.set("n", km.build_file, function()
+    M.build_file(bufnr)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: build this file" }))
+
+  vim.keymap.set("n", km.lint_file, function()
+    M.lint_file(bufnr)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: lint this file" }))
+
+  vim.keymap.set("n", km.build_workspace, function()
+    M.build_workspace(bufnr)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: build workspace" }))
+
+  vim.keymap.set("n", km.lint_workspace, function()
+    M.lint_workspace(bufnr)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: lint workspace" }))
 end
 
 local function setup_highlights()
