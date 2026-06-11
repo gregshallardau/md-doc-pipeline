@@ -18,6 +18,7 @@ local default_config = {
     toggle_document    = "<leader>mD",
     toggle_frontmatter = "<leader>mr",
     show_now           = "K",
+    debug_context      = "<leader>m?",
   },
 }
 
@@ -202,6 +203,7 @@ local function set_keymaps(bufnr)
         { km.toggle_document,    desc = state_desc("document preview",    function() return state.modes.document end),     buffer = bufnr },
         { km.toggle_frontmatter, desc = state_desc("frontmatter vars",    function() return state.resolve_frontmatter end), buffer = bufnr },
         { km.show_now,           desc = "show preview now",               buffer = bufnr },
+        { km.debug_context,      desc = "dump resolved variable context",  buffer = bufnr },
       })
     elseif wk.register then
       wk.register({ [prefix] = { name = "󰦪 md-doc" } }, { buffer = bufnr })
@@ -245,6 +247,41 @@ local function set_keymaps(bufnr)
   vim.keymap.set("n", km.show_now, function()
     M.show_preview(bufnr, true)
   end, vim.tbl_extend("force", opts, { desc = "md-doc: show preview now" }))
+
+  vim.keymap.set("n", km.debug_context, function()
+    local doc_path = vim.api.nvim_buf_get_name(bufnr)
+    local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local raw = table.concat(lines, "\n")
+    local fm = parser.strip_frontmatter(raw)
+    local cascade_ctx = repo_root and cascade.load_context(doc_path, false) or {}
+    local merged = vim.deepcopy(cascade_ctx)
+    for k, v in pairs(fm.vars) do merged[k] = v end
+
+    local out = { "## md-doc context", "", "### Frontmatter (buffer)" }
+    local fm_keys = vim.tbl_keys(fm.vars)
+    table.sort(fm_keys)
+    if #fm_keys == 0 then table.insert(out, "  (none parsed)") end
+    for _, k in ipairs(fm_keys) do
+      table.insert(out, string.format("  %s = %s", k, tostring(fm.vars[k])))
+    end
+    table.insert(out, "")
+    table.insert(out, "### Cascade (_meta.yml)")
+    local cas_keys = vim.tbl_keys(cascade_ctx)
+    table.sort(cas_keys)
+    if #cas_keys == 0 then table.insert(out, "  (none)") end
+    for _, k in ipairs(cas_keys) do
+      table.insert(out, string.format("  %s = %s", k, tostring(cascade_ctx[k])))
+    end
+    table.insert(out, "")
+    table.insert(out, "### Merged (what the preview uses)")
+    local merged_keys = vim.tbl_keys(merged)
+    table.sort(merged_keys)
+    for _, k in ipairs(merged_keys) do
+      table.insert(out, string.format("  %s = %s", k, tostring(merged[k])))
+    end
+    float.show(out, "󰦪 md-doc context")
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: dump resolved variable context" }))
 end
 
 local function setup_highlights()
