@@ -35,11 +35,34 @@ local function get_state(bufnr)
   return buf_state[bufnr]
 end
 
-local function parse_cursor_line(line)
+-- col is the 0-indexed cursor byte offset; when given, picks the {{ }}
+-- closest to the cursor rather than always the first one on the line.
+local function parse_cursor_line(line, col)
   local tmpl = line:match("{%%%-?%s*include%s+\"([^\"]+)\"%s*%-?%%}")
   if tmpl then return "include", tmpl end
-  local var = line:match("{{%s*([^}]+)}}")
-  if var then return "variable", var end
+
+  -- Collect all {{ expr }} spans with their positions (1-indexed)
+  local best_expr, best_dist = nil, math.huge
+  local pos = 1
+  while true do
+    local s, e, expr = line:find("{{%s*([^}]+)}}", pos)
+    if not s then break end
+    if col then
+      local c = col + 1  -- convert nvim 0-indexed col to Lua 1-indexed
+      local dist = (c >= s and c <= e) and 0
+                   or math.min(math.abs(c - s), math.abs(c - e))
+      if dist < best_dist then
+        best_dist = dist
+        best_expr = expr
+      end
+    else
+      best_expr = expr
+      break
+    end
+    pos = e + 1
+  end
+
+  if best_expr then return "variable", best_expr end
   return nil, nil
 end
 
@@ -106,10 +129,11 @@ function M.show_preview(bufnr, force)
 
   local win = vim.fn.bufwinid(bufnr)
   if win == -1 then return end
-  local lnum = vim.api.nvim_win_get_cursor(win)[1]
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local lnum, col = cursor[1], cursor[2]
   local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
 
-  local action, arg = parse_cursor_line(line)
+  local action, arg = parse_cursor_line(line, col)
   if not action then return end
 
   local doc_path = vim.api.nvim_buf_get_name(bufnr)
