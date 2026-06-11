@@ -100,17 +100,10 @@ local function render_document(bufnr)
   content = resolve_includes(content, 0)
 
   -- Resolve variables
-  local log = io.open("/tmp/mddoc-render-debug.txt", "w")
   content = content:gsub("{{%s*([^}]+)%s*}}", function(expr)
     local value = resolve.resolve_variable(expr, context)
-    local var_name = expr:match("^%s*([%w_]+)") or "?"
-    if log then
-      log:write(string.format("expr=%q  var=%q  value=%s  type=%s\n",
-        expr, var_name, tostring(value), type(value)))
-    end
     return value or ("{{ " .. expr:match("^%s*(.-)%s*$") .. " }}")
   end)
-  if log then log:close() end
 
   local result = {}
   for line in (content .. "\n"):gmatch("([^\n]*)\n") do
@@ -168,7 +161,13 @@ function M.show_preview(bufnr, force)
       table.remove(display_lines)
     end
   else
-    local context = cascade.load_context(doc_path, state.resolve_frontmatter)
+    -- Build context from cascade + live buffer frontmatter (not disk).
+    local context = cascade.load_context(doc_path, false)
+    if state.resolve_frontmatter then
+      local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      local fm = parser.strip_frontmatter(table.concat(all_lines, "\n"))
+      for k, v in pairs(fm.vars) do context[k] = v end
+    end
     local value = resolve.resolve_variable(arg, context)
     local var_name = arg:match("^%s*([%w_]+)") or arg
     title = "⚙ " .. var_name
