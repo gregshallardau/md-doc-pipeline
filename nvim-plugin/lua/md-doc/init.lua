@@ -9,12 +9,13 @@ local split    = require("md-doc.ui.split")
 local default_config = {
   auto_show = true,
   auto_show_delay = 500,
-  modes = { float = true, virtual = false, split = false },
+  modes = { float = true, virtual = false, split = false, document = false },
   resolve_frontmatter = false,
   keymaps = {
     toggle_float       = "<leader>mf",
     toggle_virtual     = "<leader>mv",
     toggle_split       = "<leader>ms",
+    toggle_document    = "<leader>mD",
     toggle_frontmatter = "<leader>mr",
     show_now           = "K",
   },
@@ -42,8 +43,67 @@ local function parse_cursor_line(line)
   return nil, nil
 end
 
+-- Render the full document with all includes and variables resolved.
+local function render_document(bufnr)
+  local doc_path = vim.api.nvim_buf_get_name(bufnr)
+  local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
+  if not repo_root then return nil end
+
+  local state = get_state(bufnr)
+  local context = cascade.load_context(doc_path, state.resolve_frontmatter)
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local content = table.concat(lines, "\n")
+
+  -- Strip YAML frontmatter
+  content = content:gsub("^%-%-%-[^\n]*\n.-\n%-%-%-\n?", "")
+
+  -- Resolve includes (guard against infinite loops with a depth counter)
+  local function resolve_includes(text, depth)
+    if depth > 10 then return text end
+    return (text:gsub("{%%%-?%s*include%s+\"([^\"]+)\"%s*%-?%%}", function(tmpl)
+      local result = resolve.resolve_include(tmpl, doc_path, repo_root)
+      if not result then return "(include not found: " .. tmpl .. ")" end
+      return resolve_includes(result.content, depth + 1)
+    end))
+  end
+  content = resolve_includes(content, 0)
+
+  -- Resolve variables
+  content = content:gsub("{{%s*([^}]+)%s*}}", function(expr)
+    local value = resolve.resolve_variable(expr, context)
+    return value or ("{{ " .. expr:match("^%s*(.-)%s*$") .. " }}")
+  end)
+
+  local result = {}
+  for line in (content .. "\n"):gmatch("([^\n]*)\n") do
+    table.insert(result, line)
+  end
+  while #result > 0 and result[#result] == "" do table.remove(result) end
+  return result
+end
+
+function M.show_document_preview(bufnr)
+  local doc_path = vim.api.nvim_buf_get_name(bufnr)
+  local name = vim.fn.fnamemodify(doc_path, ":t:r")
+  local lines = render_document(bufnr)
+  if not lines or #lines == 0 then return end
+  if split.is_open(bufnr) then
+    split.update(bufnr, lines, "📋 " .. name)
+  else
+    split.open(bufnr, lines, "📋 " .. name)
+  end
+end
+
 function M.show_preview(bufnr, force)
   local state = get_state(bufnr)
+
+  -- Document mode takes over the split pane entirely
+  if state.modes.document then
+    M.show_document_preview(bufnr)
+    return
+  end
+
   local win = vim.fn.bufwinid(bufnr)
   if win == -1 then return end
   local lnum = vim.api.nvim_win_get_cursor(win)[1]
@@ -123,6 +183,19 @@ local function set_keymaps(bufnr)
     vim.notify("md-doc: split " .. (state.modes.split and "on" or "off"))
   end, vim.tbl_extend("force", opts, { desc = "md-doc: toggle split pane" }))
 
+  vim.keymap.set("n", km.toggle_document, function()
+    state.modes.document = not state.modes.document
+    if state.modes.document then
+      -- Document mode overrides per-fragment split; disable fragment split
+      state.modes.split = false
+      M.show_document_preview(bufnr)
+      vim.notify("md-doc: document preview on")
+    else
+      split.close(bufnr)
+      vim.notify("md-doc: document preview off")
+    end
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: toggle full document preview" }))
+
   vim.keymap.set("n", km.toggle_frontmatter, function()
     state.resolve_frontmatter = not state.resolve_frontmatter
     vim.notify("md-doc: frontmatter " .. (state.resolve_frontmatter and "on" or "off"))
@@ -152,6 +225,14 @@ local function activate(bufnr)
     vim.api.nvim_create_autocmd("CursorHold", {
       buffer = bufnr,
       callback = function() M.show_preview(bufnr, false) end,
+    })
+    -- Keep document preview fresh when the buffer is written
+    vim.api.nvim_create_autocmd("BufWritePost", {
+      buffer = bufnr,
+      callback = function()
+        local s = get_state(bufnr)
+        if s.modes.document then M.show_document_preview(bufnr) end
+      end,
     })
   end
 

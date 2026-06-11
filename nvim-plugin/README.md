@@ -89,9 +89,10 @@ require("md-doc").setup({
 
   -- Which display modes are active by default
   modes = {
-    float   = true,   -- LSP-style hover popup (closes on cursor move)
-    virtual = false,  -- Inline virtual text inserted below the line
-    split   = false,  -- Persistent right-side split pane
+    float    = true,   -- LSP-style hover popup (closes on cursor move)
+    virtual  = false,  -- Inline virtual text inserted below the line
+    split    = false,  -- Persistent right-side split pane (cursor fragment)
+    document = false,  -- Full rendered document in the split pane
   },
 
   -- Also use the current document's frontmatter in {{ }} resolution
@@ -102,6 +103,7 @@ require("md-doc").setup({
     toggle_float       = "<leader>mf",
     toggle_virtual     = "<leader>mv",
     toggle_split       = "<leader>ms",
+    toggle_document    = "<leader>mD",
     toggle_frontmatter = "<leader>mr",
     show_now           = "K",   -- force-show float immediately
   },
@@ -130,7 +132,8 @@ dismiss it.
 | `K` | Show float preview immediately |
 | `<leader>mf` | Toggle float mode on/off |
 | `<leader>mv` | Toggle virtual text mode on/off |
-| `<leader>ms` | Toggle split pane mode on/off |
+| `<leader>ms` | Toggle split pane (cursor fragment) on/off |
+| `<leader>mD` | Toggle full document preview on/off |
 | `<leader>mr` | Toggle frontmatter resolution on/off |
 
 ### What it previews
@@ -151,7 +154,8 @@ All three modes can be active at the same time.
 |---|---|---|
 | **Float** | Popup window at the cursor, closes when cursor moves | `<leader>mf` |
 | **Virtual text** | Dimmed lines inserted below the include/variable line | `<leader>mv` |
-| **Split** | Persistent right-side pane, updates as the cursor moves | `<leader>ms` |
+| **Split** | Persistent right-side pane showing the fragment under the cursor | `<leader>ms` |
+| **Document** | Persistent right-side pane showing the whole rendered document | `<leader>mD` |
 
 ---
 
