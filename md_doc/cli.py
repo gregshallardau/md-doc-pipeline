@@ -308,7 +308,7 @@ def main() -> None:
 
 
 @main.command()
-@click.argument("root", default=".", type=click.Path(file_okay=False, path_type=Path))
+@click.argument("root", default=".", type=click.Path(path_type=Path))
 @click.option(
     "--output",
     "-o",
@@ -391,7 +391,15 @@ def build(
     if output is not None:
         output = output.resolve()
 
-    docs = _discover_markdown(root)
+    # Accept a single .md file as ROOT — build only that file
+    single_file: Path | None = None
+    if root.is_file():
+        if root.suffix != ".md":
+            raise click.UsageError(f"Not a Markdown file: {root}")
+        single_file = root
+        root = root.parent
+
+    docs = [single_file] if single_file else _discover_markdown(root)
     if not docs:
         click.echo(
             _dim(f"No Markdown documents found under {_short_path(root, verbose=verbose)}"),
@@ -845,7 +853,7 @@ def export(
 
 
 @main.command()
-@click.argument("root", default=".", type=click.Path(file_okay=False, path_type=Path))
+@click.argument("root", default=".", type=click.Path(path_type=Path))
 @click.option(
     "--workspace",
     "-w",
@@ -914,7 +922,16 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
     # config / merge-fields cascade picks up _meta.yml files defined above
     # the user's chosen subdirectory.
     cascade_root = _find_repo_root(root)
-    results = lint_directory(root, repo_root=cascade_root)
+
+    # Accept a single .md file as ROOT — lint only that file
+    if root.is_file():
+        if root.suffix != ".md":
+            raise click.UsageError(f"Not a Markdown file: {root}")
+        from .linter import lint_file as _lint_file
+        file_issues = _lint_file(root, repo_root=cascade_root)
+        results = {root: file_issues} if file_issues else {}
+    else:
+        results = lint_directory(root, repo_root=cascade_root)
 
     # --fix: rewrite CRLF files to LF before reporting
     if fix:
