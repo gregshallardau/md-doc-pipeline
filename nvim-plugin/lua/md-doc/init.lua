@@ -180,12 +180,24 @@ local function set_keymaps(bufnr)
   local km = config.keymaps
   local opts = { buffer = bufnr, noremap = true, silent = true }
 
-  -- Register which-key group if available (supports both v2 and v3 APIs)
+  local function state_desc(label, getter)
+    return function() return (getter() and "disable" or "enable") .. " " .. label end
+  end
+
+  -- Register which-key group + dynamic state descriptions if available
   local ok, wk = pcall(require, "which-key")
   if ok then
     local prefix = km.toggle_float:match("^(.+)%a$") or "<leader>m"
     if wk.add then
-      wk.add({ { prefix, group = "md-doc", icon = "󰦪", buffer = bufnr } })
+      wk.add({
+        { prefix,                group = "md-doc", icon = "󰦪", buffer = bufnr },
+        { km.toggle_float,       desc = state_desc("float preview",      function() return state.modes.float end),        buffer = bufnr },
+        { km.toggle_virtual,     desc = state_desc("virtual text",        function() return state.modes.virtual end),      buffer = bufnr },
+        { km.toggle_split,       desc = state_desc("split pane",          function() return state.modes.split end),        buffer = bufnr },
+        { km.toggle_document,    desc = state_desc("document preview",    function() return state.modes.document end),     buffer = bufnr },
+        { km.toggle_frontmatter, desc = state_desc("frontmatter vars",    function() return state.resolve_frontmatter end), buffer = bufnr },
+        { km.show_now,           desc = "show preview now",               buffer = bufnr },
+      })
     elseif wk.register then
       wk.register({ [prefix] = { name = "󰦪 md-doc" } }, { buffer = bufnr })
     end
@@ -211,7 +223,6 @@ local function set_keymaps(bufnr)
   vim.keymap.set("n", km.toggle_document, function()
     state.modes.document = not state.modes.document
     if state.modes.document then
-      -- Document mode overrides per-fragment split; disable fragment split
       state.modes.split = false
       M.show_document_preview(bufnr)
       vim.notify("md-doc: document preview on")
