@@ -44,7 +44,9 @@ end
 
 function M.show_preview(bufnr, force)
   local state = get_state(bufnr)
-  local lnum = vim.api.nvim_win_get_cursor(0)[1]
+  local win = vim.fn.bufwinid(bufnr)
+  if win == -1 then return end
+  local lnum = vim.api.nvim_win_get_cursor(win)[1]
   local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
 
   local action, arg = parse_cursor_line(line)

@@ -14,7 +14,7 @@ end
 function M.find_repo_root(start_dir)
   local dir = start_dir
   while true do
-    if exists(dir .. "/pyproject.toml") or exists(dir .. "/.git") then
+    if exists(dir .. "/pyproject.toml") or vim.fn.isdirectory(dir .. "/.git") == 1 or vim.fn.filereadable(dir .. "/.git") == 1 then
       return dir
     end
     local parent = dir:match("^(.+)/[^/]+$")
