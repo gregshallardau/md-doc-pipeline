@@ -204,6 +204,95 @@ def _insert_form_field(
 
 
 # ---------------------------------------------------------------------------
+# Table helpers
+# ---------------------------------------------------------------------------
+
+
+def _set_cell_bottom_border(cell: Any, color: str = "d5d8dc", pt: float = 0.5) -> None:
+    """Add a bottom border to a table cell. ``pt`` is the border thickness in points."""
+    sz = str(max(1, round(pt * 8)))  # Word sz unit = 1/8 pt
+    fill = color.lstrip("#").upper()
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = tcPr.find(qn("w:tcBorders"))
+    if tcBorders is None:
+        tcBorders = OxmlElement("w:tcBorders")
+        tcPr.append(tcBorders)
+    bottom = tcBorders.find(qn("w:bottom"))
+    if bottom is None:
+        bottom = OxmlElement("w:bottom")
+        tcBorders.append(bottom)
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), sz)
+    bottom.set(qn("w:space"), "0")
+    bottom.set(qn("w:color"), fill)
+
+
+def _clear_table_borders(table: Any) -> None:
+    """Remove all table-level border declarations so cell borders control the look."""
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        return
+    for existing in tblPr.findall(qn("w:tblBorders")):
+        tblPr.remove(existing)
+
+
+def _render_cell_html(
+    paragraph: Any,
+    html: str,
+    theme: dict,
+    field_type: str | None,
+    bookmark_id: int,
+    *,
+    bold_override: bool = False,
+) -> None:
+    """Parse the inner HTML of a table cell and write runs into *paragraph*.
+
+    Handles inline tags: strong/b (bold), em/i (italic), code (monospace).
+    Plain text is written with *bold_override* when no inline tag is active.
+    """
+    from html.parser import HTMLParser as _HP
+
+    class _CellParser(_HP):
+        def __init__(self) -> None:
+            super().__init__()
+            self._bold = bold_override
+            self._italic = False
+            self._code = False
+
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            tag = tag.lower()
+            if tag in ("strong", "b"):
+                self._bold = True
+            elif tag in ("em", "i"):
+                self._italic = True
+            elif tag == "code":
+                self._code = True
+
+        def handle_endtag(self, tag: str) -> None:
+            tag = tag.lower()
+            if tag in ("strong", "b"):
+                self._bold = bold_override  # back to cell default
+            elif tag in ("em", "i"):
+                self._italic = False
+            elif tag == "code":
+                self._code = False
+
+        def handle_data(self, data: str) -> None:
+            if not data:
+                return
+            run = paragraph.add_run(data)
+            run.bold = self._bold
+            run.italic = self._italic
+            if self._code:
+                run.font.name = theme.get("font_code", "Courier New")
+                run.font.size = Pt(9)
+
+    _CellParser().feed(html)
+
+
+# ---------------------------------------------------------------------------
 # HTML → docx walker
 # ---------------------------------------------------------------------------
 
@@ -246,12 +335,13 @@ class _DocxBuilder(HTMLParser):
         self._list_stack: list[str] = []
         self._list_counters: list[int] = []
 
-        # Table state
+        # Table state — cells store raw inner HTML to preserve inline markup
         self._in_table = False
+        self._in_cell = False   # True while cursor is inside a <th> or <td>
         self._in_th = False
         self._table_rows: list[list[tuple[bool, str]]] = []
         self._current_row: list[tuple[bool, str]] = []
-        self._current_cell_text = ""
+        self._current_cell_html = ""
 
         self._pre_text = ""
         self._tag_stack: list[str] = []
@@ -412,6 +502,14 @@ class _DocxBuilder(HTMLParser):
         self._tag_stack.append(tag)
         tag = tag.lower()
 
+        # Inside a cell, collect all inline tags as raw HTML instead of processing them
+        if self._in_cell:
+            attr_str = ""
+            for k, v in attrs:
+                attr_str += f' {k}="{v}"' if v is not None else f" {k}"
+            self._current_cell_html += f"<{tag}{attr_str}>"
+            return
+
         if tag in ("h1", "h2", "h3", "h4"):
             self._new_para(f"Heading {int(tag[1])}")
             inline_align = self._parse_text_align(attrs)
@@ -497,7 +595,8 @@ class _DocxBuilder(HTMLParser):
             self._in_table = True
             self._table_rows = []
             self._current_row = []
-            self._current_cell_text = ""
+            self._current_cell_html = ""
+            self._in_cell = False
             self._in_th = False
 
         elif tag == "tr":
@@ -505,12 +604,18 @@ class _DocxBuilder(HTMLParser):
 
         elif tag in ("th", "td"):
             self._in_th = tag == "th"
-            self._current_cell_text = ""
+            self._in_cell = True
+            self._current_cell_html = ""
 
     def handle_endtag(self, tag: str) -> None:
         if self._tag_stack and self._tag_stack[-1] == tag:
             self._tag_stack.pop()
         tag = tag.lower()
+
+        # Inside a cell, collect closing inline tags as raw HTML
+        if self._in_cell and tag not in ("th", "td"):
+            self._current_cell_html += f"</{tag}>"
+            return
 
         if tag in ("h1", "h2", "h3", "h4", "p"):
             self._paragraph = None
@@ -564,7 +669,8 @@ class _DocxBuilder(HTMLParser):
 
         elif tag in ("th", "td"):
             if self._in_table:
-                self._current_row.append((self._in_th, self._current_cell_text))
+                self._current_row.append((self._in_th, self._current_cell_html))
+            self._in_cell = False
 
         elif tag == "tr":
             if self._in_table:
@@ -579,7 +685,7 @@ class _DocxBuilder(HTMLParser):
             self._pre_text += data
             return
         if self._in_table:
-            self._current_cell_text += data
+            self._current_cell_html += data
             return
         self._add_text(data)
 
@@ -596,27 +702,62 @@ class _DocxBuilder(HTMLParser):
             return
 
         table = self.doc.add_table(rows=len(rows), cols=max_cols)
-        table.style = "Table Grid"
+        try:
+            table.style = "Table Normal"
+        except KeyError:
+            table.style = "Normal Table"
+
+        # Remove all table-level borders so we can set per-cell borders below
+        _clear_table_borders(table)
 
         header_bg = self._theme.get("color_table_header_bg")
         header_text_color = self._theme.get("color_table_header_text")
+        header_font_size = self._theme.get("font_size_th")
+        body_font_size = self._theme.get("font_size_table")
+        row_alt_bg = self._theme.get("color_table_row_alt_bg")
+        cell_border_color = self._theme.get("color_table_cell_border", "d5d8dc")
+        cell_border_size = self._theme.get("size_table_cell_border", 0.5)
+        last_border_color = self._theme.get("color_table_last_row_border", cell_border_color)
+        last_border_size = self._theme.get("size_table_last_row_border", 1.0)
 
-        for r_idx, row in enumerate(rows):
-            for c_idx, (is_header, text) in enumerate(row):
+        n_rows = len(rows)
+
+        for r_idx, row_cells in enumerate(rows):
+            is_last_row = r_idx == n_rows - 1
+            for c_idx, (is_header, cell_html) in enumerate(row_cells):
                 if c_idx >= max_cols:
                     break
                 cell = table.cell(r_idx, c_idx)
                 cell.text = ""
-                self._write_text(cell.paragraphs[0], text.strip(), bold=is_header)
+                para = cell.paragraphs[0]
+                _render_cell_html(para, cell_html.strip(), self._theme, self._field_type,
+                                  self._bookmark_id, bold_override=is_header)
+
+                # Apply font sizes
+                size = header_font_size if is_header else body_font_size
+                if size:
+                    for run in para.runs:
+                        run.font.size = Pt(size)
+
+                # Header styling
                 if is_header:
                     if header_text_color:
                         from ..docx_theme import _hex_to_rgb
-
                         r, g, b = _hex_to_rgb(header_text_color)
-                        for run in cell.paragraphs[0].runs:
+                        for run in para.runs:
                             run.font.color.rgb = RGBColor(r, g, b)
                     if header_bg:
                         set_cell_shading(cell, header_bg)
+                else:
+                    # Alternating row shading (even body rows: r_idx 2, 4, 6, …)
+                    if row_alt_bg and r_idx % 2 == 0:
+                        set_cell_shading(cell, row_alt_bg)
+                    # Bottom border
+                    _set_cell_bottom_border(
+                        cell,
+                        color=last_border_color if is_last_row else cell_border_color,
+                        pt=last_border_size if is_last_row else cell_border_size,
+                    )
 
         self._paragraph = None
 

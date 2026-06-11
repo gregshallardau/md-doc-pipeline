@@ -249,11 +249,17 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
     if "font-family" in code_props:
         theme["font_code"] = _first_font(code_props["font-family"])
 
-    # table header (th) — background and colour
+    # table — font size
+    table_props = blocks.get("table", {})
+    if "font-size" in table_props:
+        pt = _parse_pt(table_props["font-size"])
+        if pt is not None:
+            theme["font_size_table"] = pt
+
+    # table header (th) — background, colour, font size
     th_props = blocks.get("th", {})
     if "background" in th_props:
         val = th_props["background"]
-        # Only use it if it looks like a plain hex colour
         col = _first_color(val)
         if col and val.strip().startswith("#"):
             theme["color_table_header_bg"] = col
@@ -261,6 +267,39 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         col = _first_color(th_props["color"])
         if col:
             theme["color_table_header_text"] = col
+    if "font-size" in th_props:
+        pt = _parse_pt(th_props["font-size"])
+        if pt is not None:
+            theme["font_size_th"] = pt
+
+    # table body cells (td) — bottom border colour and size
+    td_props = blocks.get("td", {})
+    if "border-bottom" in td_props:
+        val = td_props["border-bottom"]
+        col = _first_color(val)
+        if col:
+            theme["color_table_cell_border"] = col
+        pt = _parse_pt(val)
+        if pt is not None:
+            theme["size_table_cell_border"] = pt
+
+    # alternating row background — tr:nth-child(even) td
+    even_row_props = blocks.get("tr:nth-child(even) td", {})
+    if "background" in even_row_props:
+        col = _first_color(even_row_props["background"])
+        if col:
+            theme["color_table_row_alt_bg"] = col
+
+    # last row border — tr:last-child td
+    last_row_props = blocks.get("tr:last-child td", {})
+    if "border-bottom" in last_row_props:
+        val = last_row_props["border-bottom"]
+        col = _first_color(val)
+        if col:
+            theme["color_table_last_row_border"] = col
+        pt = _parse_pt(val)
+        if pt is not None:
+            theme["size_table_last_row_border"] = pt
 
     return theme
 
