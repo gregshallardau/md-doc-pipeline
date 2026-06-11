@@ -196,6 +196,14 @@ local function set_keymaps(bufnr)
     return function() return (getter() and "disable" or "enable") .. " " .. label end
   end
 
+  local function toggle_icon(getter)
+    return function()
+      return getter()
+        and { icon = "󰔡", color = "green" }
+        or  { icon = "󰔢", color = "orange" }
+    end
+  end
+
   -- Register which-key group + dynamic state descriptions if available
   local ok, wk = pcall(require, "which-key")
   if ok then
@@ -203,13 +211,13 @@ local function set_keymaps(bufnr)
     if wk.add then
       wk.add({
         { prefix,                group = "md-doc", icon = "󰦪", buffer = bufnr },
-        { km.toggle_float,       desc = state_desc("float preview",      function() return state.modes.float end),        buffer = bufnr },
-        { km.toggle_virtual,     desc = state_desc("virtual text",        function() return state.modes.virtual end),      buffer = bufnr },
-        { km.toggle_split,       desc = state_desc("split pane",          function() return state.modes.split end),        buffer = bufnr },
-        { km.toggle_document,    desc = state_desc("document preview",    function() return state.modes.document end),     buffer = bufnr },
-        { km.toggle_frontmatter, desc = state_desc("frontmatter vars",    function() return state.resolve_frontmatter end), buffer = bufnr },
-        { km.show_now,           desc = "show preview now",               buffer = bufnr },
-        { km.debug_context,      desc = "dump resolved variable context",  buffer = bufnr },
+        { km.toggle_float,       icon = toggle_icon(function() return state.modes.float end),          desc = state_desc("float preview",      function() return state.modes.float end),         buffer = bufnr },
+        { km.toggle_virtual,     icon = toggle_icon(function() return state.modes.virtual end),        desc = state_desc("virtual text",        function() return state.modes.virtual end),       buffer = bufnr },
+        { km.toggle_split,       icon = toggle_icon(function() return state.modes.split end),          desc = state_desc("split pane",          function() return state.modes.split end),         buffer = bufnr },
+        { km.toggle_document,    icon = toggle_icon(function() return state.modes.document end),       desc = state_desc("document preview",    function() return state.modes.document end),      buffer = bufnr },
+        { km.toggle_frontmatter, icon = toggle_icon(function() return state.resolve_frontmatter end),  desc = state_desc("frontmatter vars",    function() return state.resolve_frontmatter end), buffer = bufnr },
+        { km.show_now,           desc = "show preview now",              buffer = bufnr },
+        { km.debug_context,      desc = "dump resolved variable context", buffer = bufnr },
       })
     elseif wk.register then
       wk.register({ [prefix] = { name = "󰦪 md-doc" } }, { buffer = bufnr })
