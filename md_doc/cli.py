@@ -929,10 +929,15 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
     if root.is_file():
         if root.suffix != ".md":
             raise click.UsageError(f"Not a Markdown file: {root}")
-        from .linter import lint_file as _lint_file
+        from .linter import lint_file as _lint_file, lint_template_file as _lint_tmpl_file
         single_file = root
         root = root.parent  # needed so _discover_markdown checks below work
-        file_issues = _lint_file(single_file, repo_root=cascade_root)
+        is_template = any(part in {"templates", "themes"} for part in single_file.parts)
+        file_issues = (
+            _lint_tmpl_file(single_file, repo_root=cascade_root)
+            if is_template
+            else _lint_file(single_file, repo_root=cascade_root)
+        )
         results = {single_file: file_issues} if file_issues else {}
     else:
         results = lint_directory(root, repo_root=cascade_root)
@@ -944,21 +949,6 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
         for path, issues in results.items():
             if any("CRLF" in issue.message or "^Z" in issue.message for issue in issues):
                 text = path.read_text(encoding="utf-8")
-                text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x1a", "")
-                path.write_text(text, encoding="utf-8")
-                fixed.append(path)
-        # Fix template/theme .md files — excluded from lint discovery so they
-        # never appear in results, but they can still carry CRLF line endings.
-        for path in sorted(root.rglob("*.md")):
-            if not any(part in {"templates", "themes"} for part in path.parts):
-                continue
-            if _SKIP_DIRS.intersection(path.parts):
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            if "\r\n" in text or text.endswith("\r") or "\x1a" in text:
                 text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x1a", "")
                 path.write_text(text, encoding="utf-8")
                 fixed.append(path)

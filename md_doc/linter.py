@@ -257,6 +257,109 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     return issues
 
 
+def lint_template_file(tmpl_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
+    """
+    Lint a template fragment (.md file inside a ``templates/`` or ``themes/``
+    directory).
+
+    Template partials have no frontmatter and receive their ``{{ variable }}``
+    context from whichever document includes them, so the checks are narrower
+    than :func:`lint_file`:
+
+    Checks performed:
+      - CRLF / ^Z line endings
+      - Jinja2 syntax is valid
+      - ``{% include %}`` targets resolve in the template search path
+      - ``[[field]]`` references exist in the ``_merge_fields.yml`` cascade
+
+    Intentionally **not** checked:
+      - Frontmatter (templates have none)
+      - ``outputs:`` values
+      - Undefined ``{{ variable }}`` references (context comes from the caller)
+    """
+    tmpl_path = Path(tmpl_path).resolve()
+    issues: list[LintIssue] = []
+
+    if repo_root is None:
+        repo_root = _find_repo_root(tmpl_path.parent)
+    else:
+        repo_root = Path(repo_root).resolve()
+
+    raw = tmpl_path.read_text(encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # 1. Line endings
+    # ------------------------------------------------------------------
+    if "\r\n" in raw or raw.endswith("\r"):
+        issues.append(
+            LintIssue(
+                path=tmpl_path,
+                message="File has Windows (CRLF) line endings — run `md-doc lint --fix` to convert to LF",
+                severity="warning",
+            )
+        )
+
+    if "\x1a" in raw:
+        issues.append(
+            LintIssue(
+                path=tmpl_path,
+                message="File contains ^Z (Windows EOF marker, 0x1A) — run `md-doc lint --fix` to remove",
+                severity="warning",
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # 2. Jinja2 syntax
+    # ------------------------------------------------------------------
+    search_dirs = _build_search_dirs(tmpl_path, repo_root) if repo_root else [tmpl_path.parent]
+    loader = _MarkdownLoader(search_dirs)
+    env = Environment(loader=loader, autoescape=False, keep_trailing_newline=True)
+
+    try:
+        ast = env.parse(raw)
+    except TemplateSyntaxError as exc:
+        issues.append(
+            LintIssue(
+                path=tmpl_path,
+                message=f"Jinja2 syntax error: {exc}",
+                severity="error",
+            )
+        )
+        return issues
+
+    # ------------------------------------------------------------------
+    # 3. {% include %} resolution
+    # ------------------------------------------------------------------
+    referenced_templates = meta.find_referenced_templates(ast)
+    for tmpl_name in sorted(t for t in referenced_templates if t is not None):
+        resolved = any((directory / tmpl_name).is_file() for directory in search_dirs)
+        if not resolved:
+            issues.append(
+                LintIssue(
+                    path=tmpl_path,
+                    message=f"Include not found: '{tmpl_name}'",
+                    severity="error",
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # 4. [[field]] references
+    # ------------------------------------------------------------------
+    merge_fields = load_merge_fields(tmpl_path, repo_root=repo_root)
+    if merge_fields:
+        for field_name in sorted(set(_FIELD_RE.findall(raw))):
+            if field_name not in merge_fields:
+                issues.append(
+                    LintIssue(
+                        path=tmpl_path,
+                        message=f"Undefined merge field '[[{field_name}]]' — not in _merge_fields.yml cascade",
+                        severity="warning",
+                    )
+                )
+
+    return issues
+
+
 def lint_meta_file(meta_path: Path) -> list[LintIssue]:
     """
     Lint a ``_meta.yml`` file for structural issues.
@@ -351,6 +454,19 @@ def lint_directory(root: Path, repo_root: Path | None = None) -> dict[Path, list
         doc_issues = lint_file(doc_path, repo_root=repo_root)
         if doc_issues:
             results[doc_path] = doc_issues
+
+    # Lint template/theme fragments — different rule set (no frontmatter checks,
+    # no undefined-variable checks; Jinja2 syntax + include resolution only).
+    _TEMPLATE_DIRS = {"templates", "themes"}
+    _SKIP = {".git", ".venv", "node_modules"}
+    for tmpl_path in sorted(root.rglob("*.md")):
+        if not any(part in _TEMPLATE_DIRS for part in tmpl_path.parts):
+            continue
+        if any(part in _SKIP for part in tmpl_path.parts):
+            continue
+        tmpl_issues = lint_template_file(tmpl_path, repo_root=repo_root)
+        if tmpl_issues:
+            results[tmpl_path] = tmpl_issues
 
     # Also lint every _meta.yml in the tree for structural issues (extra '---'
     # separators, non-mapping top-level, invalid YAML).
