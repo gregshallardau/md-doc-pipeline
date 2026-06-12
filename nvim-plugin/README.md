@@ -98,6 +98,13 @@ require("md-doc").setup({
   -- Also use the current document's frontmatter in {{ }} resolution
   resolve_frontmatter = true,
 
+  -- Detach Marksman LSP from md-doc buffers (recommended).
+  -- Marksman treats [[field]] as wiki-links; in md-doc projects they are Word
+  -- merge field placeholders, causing spurious diagnostics.  Set to false to
+  -- keep Marksman attached but only suppress the "Link to non-existent document"
+  -- warnings (requires Neovim 0.10+).
+  disable_marksman = true,
+
   -- Buffer-local keymaps (only active inside md-doc .md files)
   keymaps = {
     toggle_float       = "<leader>mf",

@@ -12,6 +12,7 @@ local default_config = {
   auto_show_delay = 500,
   modes = { float = true, virtual = false, split = false, document = false },
   resolve_frontmatter = true,
+  disable_marksman = true,
   keymaps = {
     toggle_float       = "<leader>mf",
     toggle_virtual     = "<leader>mv",
@@ -520,25 +521,32 @@ local function activate(bufnr)
   set_keymaps(bufnr)
 
   -- Marksman treats [[field]] as wiki-links; in md-doc projects they are Word
-  -- merge field placeholders.  Suppress the false-positive "Link to non-existent
-  -- document" diagnostics so they don't clutter the buffer.
-  -- Requires Neovim 0.10+ for namespace-scoped diagnostic config.
-  if vim.fn.has("nvim-0.10") == 1 then
-    vim.api.nvim_create_autocmd("LspAttach", {
-      buffer = bufnr,
-      callback = function(ev)
-        local client = vim.lsp.get_client_by_id(ev.data.client_id)
-        if not (client and client.name == "marksman") then return end
+  -- merge field placeholders.  When disable_marksman = true (default), stop the
+  -- client from attaching to this buffer entirely.  Otherwise fall back to
+  -- suppressing only the false-positive "Link to non-existent document"
+  -- diagnostics (requires Neovim 0.10+ for namespace-scoped config).
+  vim.api.nvim_create_autocmd("LspAttach", {
+    buffer = bufnr,
+    callback = function(ev)
+      local client = vim.lsp.get_client_by_id(ev.data.client_id)
+      if not (client and client.name == "marksman") then return end
+      if config.disable_marksman then
+        vim.lsp.buf_detach_client(bufnr, ev.data.client_id)
+        return
+      end
+      -- Suppress [[field]] false positives without disabling marksman fully
+      if vim.fn.has("nvim-0.10") == 1 then
         local ok, ns = pcall(vim.lsp.diagnostic.get_namespace, ev.data.client_id)
-        if not ok then return end
-        vim.diagnostic.config({
-          filter = function(diag)
-            return not diag.message:match("Link to non%-existent document")
-          end,
-        }, ns)
-      end,
-    })
-  end
+        if ok then
+          vim.diagnostic.config({
+            filter = function(diag)
+              return not diag.message:match("Link to non%-existent document")
+            end,
+          }, ns)
+        end
+      end
+    end,
+  })
 
   if config.auto_show then
     if config.auto_show_delay < vim.o.updatetime then
