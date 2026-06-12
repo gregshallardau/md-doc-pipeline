@@ -327,9 +327,11 @@ def lint_template_file(tmpl_path: Path, repo_root: Path | None = None) -> list[L
             if not any(p in {"templates", "themes"} for p in parts):
                 break
             ctx_dir = ctx_dir.parent
-        # Use a synthetic placeholder so _build_search_dirs treats ctx_dir as
-        # a document directory rather than building relative to the template.
-        search_dirs = _build_search_dirs(ctx_dir / "_lint_ctx.md", repo_root)
+        # Pass ctx_dir directly — _build_search_dirs uses doc_path.parent when
+        # it's a file, or doc_path as-is when it's a directory, so passing the
+        # directory itself gives the right search root without needing a
+        # synthetic placeholder file.
+        search_dirs = _build_search_dirs(ctx_dir, repo_root)
     else:
         search_dirs = [tmpl_path.parent]
     loader = _MarkdownLoader(search_dirs)
