@@ -940,9 +940,25 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
     # --fix: rewrite CRLF files to LF before reporting
     if fix:
         fixed: list[Path] = []
+        # Fix documents that the linter flagged
         for path, issues in results.items():
             if any("CRLF" in issue.message or "^Z" in issue.message for issue in issues):
                 text = path.read_text(encoding="utf-8")
+                text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x1a", "")
+                path.write_text(text, encoding="utf-8")
+                fixed.append(path)
+        # Fix template/theme .md files — excluded from lint discovery so they
+        # never appear in results, but they can still carry CRLF line endings.
+        for path in sorted(root.rglob("*.md")):
+            if not any(part in {"templates", "themes"} for part in path.parts):
+                continue
+            if _SKIP_DIRS.intersection(path.parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if "\r\n" in text or text.endswith("\r") or "\x1a" in text:
                 text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x1a", "")
                 path.write_text(text, encoding="utf-8")
                 fixed.append(path)
