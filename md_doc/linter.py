@@ -311,7 +311,27 @@ def lint_template_file(tmpl_path: Path, repo_root: Path | None = None) -> list[L
     # ------------------------------------------------------------------
     # 2. Jinja2 syntax
     # ------------------------------------------------------------------
-    search_dirs = _build_search_dirs(tmpl_path, repo_root) if repo_root else [tmpl_path.parent]
+    # Build search dirs from the *document context* — the first ancestor
+    # directory that isn't itself inside a templates/ or themes/ subtree.
+    # At build time Jinja2 resolves includes using the including document's
+    # search dirs (which include the templates/ parent), not the template's
+    # own directory.  Using the template file's own dir produces false
+    # "include not found" errors for siblings and cousins in the tree.
+    if repo_root:
+        ctx_dir = tmpl_path.parent
+        while ctx_dir != repo_root and ctx_dir.parent != ctx_dir:
+            try:
+                parts = ctx_dir.relative_to(repo_root).parts
+            except ValueError:
+                break
+            if not any(p in {"templates", "themes"} for p in parts):
+                break
+            ctx_dir = ctx_dir.parent
+        # Use a synthetic placeholder so _build_search_dirs treats ctx_dir as
+        # a document directory rather than building relative to the template.
+        search_dirs = _build_search_dirs(ctx_dir / "_lint_ctx.md", repo_root)
+    else:
+        search_dirs = [tmpl_path.parent]
     loader = _MarkdownLoader(search_dirs)
     env = Environment(loader=loader, autoescape=False, keep_trailing_newline=True)
 
