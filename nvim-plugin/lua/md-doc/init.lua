@@ -156,7 +156,7 @@ end
 
 function M.lint_file(bufnr)
   local pipeline, doc_path = get_pipeline(bufnr)
-  runner.run({ "lint", doc_path }, pipeline, bufnr, "󰸖 lint: " .. vim.fn.fnamemodify(doc_path, ":t"))
+  runner.run({ "lint", "--fix", doc_path }, pipeline, bufnr, "󰸖 lint: " .. vim.fn.fnamemodify(doc_path, ":t"))
 end
 
 function M.build_workspace(bufnr)
@@ -174,7 +174,7 @@ function M.lint_workspace(bufnr)
     vim.notify("md-doc: cannot detect workspace root", vim.log.levels.ERROR)
     return
   end
-  runner.run({ "lint", repo_root }, pipeline, bufnr, "󰸖 lint workspace")
+  runner.run({ "lint", "--fix", repo_root }, pipeline, bufnr, "󰸖 lint workspace")
 end
 
 function M.show_document_preview(bufnr)
