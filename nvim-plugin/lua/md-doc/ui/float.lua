@@ -14,8 +14,15 @@ end
 function M.show(lines, title)
   M.close()
 
-  local width = math.min(60, vim.o.columns - 4)
-  local height = math.min(#lines, 15)
+  local width = math.min(72, vim.o.columns - 4)
+
+  -- Calculate height accounting for lines that wrap within the window.
+  local height = 0
+  for _, line in ipairs(lines) do
+    local display_len = vim.fn.strdisplaywidth(line)
+    height = height + math.max(1, math.ceil(display_len / width))
+  end
+  height = math.min(height, 20)
   if height == 0 then return end
 
   local buf = vim.api.nvim_create_buf(false, true)
@@ -34,6 +41,8 @@ function M.show(lines, title)
     title = " " .. title .. " ",
     title_pos = "left",
   })
+
+  vim.api.nvim_set_option_value("wrap", true, { win = win })
 
   _win = win
   _buf = buf
