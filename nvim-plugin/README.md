@@ -96,7 +96,7 @@ require("md-doc").setup({
   },
 
   -- Also use the current document's frontmatter in {{ }} resolution
-  resolve_frontmatter = false,
+  resolve_frontmatter = true,
 
   -- Buffer-local keymaps (only active inside md-doc .md files)
   keymaps = {
@@ -139,6 +139,8 @@ dismiss it.
 | `<leader>ml` | Lint current file |
 | `<leader>mB` | Build workspace |
 | `<leader>mL` | Lint workspace |
+| `<leader>mg` | Go to source (open the file where the variable/include is defined) |
+| `<leader>mu` | Show files that include this file (quickfix list) |
 | `<leader>m?` | Dump resolved variable context |
 
 ### What it previews
@@ -146,8 +148,32 @@ dismiss it.
 | Cursor on | What you see |
 |---|---|
 | `{% include "partials/header.md" %}` | Full resolved contents of the template file |
-| `{{ client }}` | Value from the `_meta.yml` cascade |
+| `{{ client }}` | Value from the `_meta.yml` cascade + which file it came from |
 | `{{ status \| upper }}` | Resolved value (Jinja2 filters stripped for lookup) |
+
+The hover float shows where each variable is inherited from:
+
+```
+⚙ client
+  ⟶  Acme Corp
+  📄 workspace/acme/_meta.yml
+```
+
+Or for variables defined in the document's own frontmatter:
+
+```
+⚙ type
+  ⟶  Policy Wording
+  📝 frontmatter
+```
+
+### Navigation
+
+**Go to source** (`<leader>mg`): jump to where the thing under the cursor is defined.
+- On `{{ variable }}` → opens the `_meta.yml` file at the line where the variable is set (or jumps to the frontmatter line if it's defined in this document). Press `<C-o>` to come back.
+- On `{% include "path" %}` → opens the template file directly.
+
+**Show dependents** (`<leader>mu`): find all `.md` files in the workspace that `{% include %}` the current file. Results appear in the quickfix list — press `<CR>` on any entry to open it.
 
 ---
 
@@ -202,9 +228,10 @@ a plain Markdown file and the plugin stays inactive.
 - Check `:messages` for any Lua errors during startup.
 
 **`{{ variable }}` shows `(undefined)`**
-- Verify a `_meta.yml` file exists at or above the document directory.
-- Enable frontmatter resolution with `<leader>mr` if the variable is defined in
-  the document's own YAML front matter.
+- Verify a `_meta.yml` file exists at or above the document directory, or that
+  the variable is defined in the document's own YAML front matter.
+- The hover/float preview always resolves both cascade and frontmatter variables.
+  Use `<leader>m?` to dump the full resolved context and confirm the variable exists.
 
 **`{% include %}` preview is empty**
 - The template path is resolved relative to the document's directory, then

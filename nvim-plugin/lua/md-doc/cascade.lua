@@ -76,4 +76,23 @@ function M.load_context(doc_path, include_frontmatter)
   return context
 end
 
+-- Like load_context but returns {var_name -> {value, source (file path)}} so
+-- callers can show which _meta.yml each variable was inherited from.
+function M.load_context_with_sources(doc_path)
+  local repo_root = M.find_repo_root(dir_of(doc_path))
+  local sourced = {}
+  if not repo_root then return sourced end
+  for _, meta_path in ipairs(collect_meta_files(doc_path, repo_root)) do
+    local f = io.open(meta_path, "r")
+    if f then
+      local vars = parser.parse_yaml(f:read("*a"))
+      f:close()
+      for k, v in pairs(vars) do
+        sourced[k] = { value = v, source = meta_path }
+      end
+    end
+  end
+  return sourced
+end
+
 return M

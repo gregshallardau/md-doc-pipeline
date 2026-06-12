@@ -20,6 +20,8 @@ local default_config = {
     toggle_frontmatter = "<leader>mr",
     show_now           = "K",
     debug_context      = "<leader>m?",
+    goto_source        = "<leader>mg",
+    show_dependents    = "<leader>mu",
     build_file         = "<leader>mb",
     lint_file          = "<leader>ml",
     build_workspace    = "<leader>mB",
@@ -73,6 +75,29 @@ local function parse_cursor_line(line, col)
 end
 
 local parser = require("md-doc.parser")
+
+-- Find the 1-indexed line in a file where `var_name:` is defined.
+local function find_var_in_file(filepath, var_name)
+  local pat = "^" .. var_name:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%1") .. "%s*:"
+  local f = io.open(filepath, "r")
+  if not f then return 1 end
+  local n = 0
+  for line in f:lines() do
+    n = n + 1
+    if line:match(pat) then f:close(); return n end
+  end
+  f:close()
+  return 1
+end
+
+-- Same but searches an already-loaded lines table (for the live buffer).
+local function find_var_in_lines(lines, var_name)
+  local pat = "^" .. var_name:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%1") .. "%s*:"
+  for i, line in ipairs(lines) do
+    if line:match(pat) then return i end
+  end
+  return 1
+end
 
 -- Render the full document with all includes and variables resolved.
 local function render_document(bufnr)
@@ -200,17 +225,29 @@ function M.show_preview(bufnr, force)
       table.remove(display_lines)
     end
   else
-    -- Build context from cascade + live buffer frontmatter (not disk).
-    local context = cascade.load_context(doc_path, false)
-    if state.resolve_frontmatter then
-      local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-      local fm = parser.strip_frontmatter(table.concat(all_lines, "\n"))
-      for k, v in pairs(fm.vars) do context[k] = v end
+    -- Always build context from cascade + live buffer frontmatter for hover.
+    -- Track sources so we can show which file each variable comes from.
+    local sourced = cascade.load_context_with_sources(doc_path)
+    local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local fm = parser.strip_frontmatter(table.concat(all_lines, "\n"))
+    for k, v in pairs(fm.vars) do
+      sourced[k] = { value = v, source = doc_path, frontmatter = true }
     end
-    local value = resolve.resolve_variable(arg, context)
     local var_name = arg:match("^%s*([%w_]+)") or arg
+    local entry = sourced[var_name]
+    local value = entry and tostring(entry.value)
     title = "⚙ " .. var_name
-    display_lines = { value and ("⟶  " .. value) or "(undefined)" }
+    if value then
+      local src_label
+      if entry.frontmatter then
+        src_label = "  📝 frontmatter"
+      else
+        src_label = "  📄 " .. entry.source:sub(#repo_root + 2)
+      end
+      display_lines = { "  ⟶  " .. value, src_label }
+    else
+      display_lines = { "  (undefined)" }
+    end
   end
 
   if #display_lines == 0 then return end
@@ -224,6 +261,109 @@ function M.show_preview(bufnr, force)
       split.open(bufnr, display_lines, title)
     end
   end
+end
+
+-- Jump to where a {{ variable }} is defined or open an {% include %} template.
+function M.goto_source(bufnr)
+  local doc_path = vim.api.nvim_buf_get_name(bufnr)
+  local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
+  if not repo_root then return end
+
+  local win = vim.fn.bufwinid(bufnr)
+  if win == -1 then return end
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local lnum, col = cursor[1], cursor[2]
+  local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
+  local action, arg = parse_cursor_line(line, col)
+  if not action then
+    vim.notify("md-doc: cursor is not on a template tag", vim.log.levels.INFO)
+    return
+  end
+
+  if action == "include" then
+    local result = resolve.resolve_include(arg, doc_path, repo_root)
+    if not result then
+      vim.notify("md-doc: include not found: " .. arg, vim.log.levels.WARN)
+      return
+    end
+    vim.cmd("normal! m'")
+    vim.cmd("edit " .. vim.fn.fnameescape(result.path))
+  else
+    local sourced = cascade.load_context_with_sources(doc_path)
+    local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local fm = parser.strip_frontmatter(table.concat(all_lines, "\n"))
+    for k, v in pairs(fm.vars) do
+      sourced[k] = { value = v, source = doc_path, frontmatter = true }
+    end
+    local var_name = arg:match("^%s*([%w_]+)") or arg
+    local entry = sourced[var_name]
+    if not entry then
+      vim.notify("md-doc: '" .. var_name .. "' not found in cascade", vim.log.levels.WARN)
+      return
+    end
+    vim.cmd("normal! m'")
+    if entry.frontmatter then
+      local n = find_var_in_lines(all_lines, var_name)
+      vim.fn.cursor(n, 1)
+    else
+      local target_line = find_var_in_file(entry.source, var_name)
+      vim.cmd("edit " .. vim.fn.fnameescape(entry.source))
+      vim.fn.cursor(target_line, 1)
+    end
+  end
+end
+
+-- Find all .md files in the workspace that {% include %} the current file.
+-- Results open in the quickfix list so the user can navigate them with <CR>.
+function M.show_dependents(bufnr)
+  local doc_path = vim.api.nvim_buf_get_name(bufnr)
+  local repo_root = cascade.find_repo_root(vim.fn.fnamemodify(doc_path, ":h"))
+  if not repo_root then
+    vim.notify("md-doc: not in a project", vim.log.levels.WARN)
+    return
+  end
+  local filename = vim.fn.fnamemodify(doc_path, ":t")
+  local output = {}
+  vim.fn.jobstart(
+    {
+      "grep", "-rl",
+      "--include=*.md",
+      "--exclude-dir=.git",
+      "--exclude-dir=.venv",
+      "--exclude-dir=node_modules",
+      filename,
+      repo_root,
+    },
+    {
+      stdout_buffered = true,
+      on_stdout = function(_, data)
+        for _, p in ipairs(data) do
+          if p ~= "" then table.insert(output, p) end
+        end
+      end,
+      on_exit = function()
+        vim.schedule(function()
+          if #output == 0 then
+            vim.notify("md-doc: nothing includes '" .. filename .. "'", vim.log.levels.INFO)
+            return
+          end
+          local items = {}
+          for _, path in ipairs(output) do
+            table.insert(items, {
+              filename = path,
+              lnum = 1,
+              text = path:sub(#repo_root + 2),
+            })
+          end
+          vim.fn.setqflist({}, "r", {
+            title = "md-doc: includes ← " .. filename,
+            items = items,
+          })
+          vim.cmd("copen")
+        end)
+      end,
+    }
+  )
 end
 
 local function set_keymaps(bufnr)
@@ -257,6 +397,8 @@ local function set_keymaps(bufnr)
         { km.toggle_frontmatter, icon = toggle_icon(function() return state.resolve_frontmatter end),  desc = state_desc("frontmatter vars",    function() return state.resolve_frontmatter end), buffer = bufnr },
         { km.show_now,           desc = "show preview now",               buffer = bufnr },
         { km.debug_context,      desc = "dump resolved variable context",  buffer = bufnr },
+        { km.goto_source,        desc = "go to source / definition",       buffer = bufnr },
+        { km.show_dependents,    desc = "show files that include this",     buffer = bufnr },
         { km.build_file,         desc = "build this file",                 buffer = bufnr },
         { km.lint_file,          desc = "lint this file",                  buffer = bufnr },
         { km.build_workspace,    desc = "build workspace",                 buffer = bufnr },
@@ -339,6 +481,14 @@ local function set_keymaps(bufnr)
     end
     float.show(out, "󰦪 md-doc context")
   end, vim.tbl_extend("force", opts, { desc = "md-doc: dump resolved variable context" }))
+
+  vim.keymap.set("n", km.goto_source, function()
+    M.goto_source(bufnr)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: go to source" }))
+
+  vim.keymap.set("n", km.show_dependents, function()
+    M.show_dependents(bufnr)
+  end, vim.tbl_extend("force", opts, { desc = "md-doc: show dependents" }))
 
   vim.keymap.set("n", km.build_file, function()
     M.build_file(bufnr)
