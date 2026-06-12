@@ -519,6 +519,27 @@ local function activate(bufnr)
 
   set_keymaps(bufnr)
 
+  -- Marksman treats [[field]] as wiki-links; in md-doc projects they are Word
+  -- merge field placeholders.  Suppress the false-positive "Link to non-existent
+  -- document" diagnostics so they don't clutter the buffer.
+  -- Requires Neovim 0.10+ for namespace-scoped diagnostic config.
+  if vim.fn.has("nvim-0.10") == 1 then
+    vim.api.nvim_create_autocmd("LspAttach", {
+      buffer = bufnr,
+      callback = function(ev)
+        local client = vim.lsp.get_client_by_id(ev.data.client_id)
+        if not (client and client.name == "marksman") then return end
+        local ok, ns = pcall(vim.lsp.diagnostic.get_namespace, ev.data.client_id)
+        if not ok then return end
+        vim.diagnostic.config({
+          filter = function(diag)
+            return not diag.message:match("Link to non%-existent document")
+          end,
+        }, ns)
+      end,
+    })
+  end
+
   if config.auto_show then
     if config.auto_show_delay < vim.o.updatetime then
       vim.o.updatetime = config.auto_show_delay
