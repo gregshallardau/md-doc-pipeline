@@ -525,28 +525,35 @@ local function activate(bufnr)
   -- client from attaching to this buffer entirely.  Otherwise fall back to
   -- suppressing only the false-positive "Link to non-existent document"
   -- diagnostics (requires Neovim 0.10+ for namespace-scoped config).
+  local function handle_marksman(client_id)
+    local client = vim.lsp.get_client_by_id(client_id)
+    if not (client and client.name == "marksman") then return end
+    if config.disable_marksman then
+      vim.lsp.buf_detach_client(bufnr, client_id)
+      return
+    end
+    -- Suppress [[field]] false positives without disabling marksman fully
+    if vim.fn.has("nvim-0.10") == 1 then
+      local ok, ns = pcall(vim.lsp.diagnostic.get_namespace, client_id)
+      if ok then
+        vim.diagnostic.config({
+          filter = function(diag)
+            return not diag.message:match("Link to non%-existent document")
+          end,
+        }, ns)
+      end
+    end
+  end
+
   vim.api.nvim_create_autocmd("LspAttach", {
     buffer = bufnr,
-    callback = function(ev)
-      local client = vim.lsp.get_client_by_id(ev.data.client_id)
-      if not (client and client.name == "marksman") then return end
-      if config.disable_marksman then
-        vim.lsp.buf_detach_client(bufnr, ev.data.client_id)
-        return
-      end
-      -- Suppress [[field]] false positives without disabling marksman fully
-      if vim.fn.has("nvim-0.10") == 1 then
-        local ok, ns = pcall(vim.lsp.diagnostic.get_namespace, ev.data.client_id)
-        if ok then
-          vim.diagnostic.config({
-            filter = function(diag)
-              return not diag.message:match("Link to non%-existent document")
-            end,
-          }, ns)
-        end
-      end
-    end,
+    callback = function(ev) handle_marksman(ev.data.client_id) end,
   })
+
+  -- Handle the race where Marksman attached before activate() was called
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
+    handle_marksman(client.id)
+  end
 
   if config.auto_show then
     if config.auto_show_delay < vim.o.updatetime then

@@ -1239,6 +1239,26 @@ def _add_page_header_bar(
     if tblPr is None:
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
+
+    # Override width to 100% (pct) — matches body tables and avoids any
+    # rounding difference vs the absolute-EMU value set by add_table().
+    for old in tblPr.findall(qn("w:tblW")):
+        tblPr.remove(old)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), "5000")
+    tblW.set(qn("w:type"), "pct")
+    tblPr.append(tblW)
+
+    # Zero the table indent so the bar starts at the left margin — Word
+    # applies a default ~108-twip indent which makes the header narrower
+    # than body tables.
+    for old in tblPr.findall(qn("w:tblInd")):
+        tblPr.remove(old)
+    tblInd = OxmlElement("w:tblInd")
+    tblInd.set(qn("w:w"), "0")
+    tblInd.set(qn("w:type"), "dxa")
+    tblPr.append(tblInd)
+
     tblBorders = OxmlElement("w:tblBorders")
     for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
         b = OxmlElement(f"w:{side}")
