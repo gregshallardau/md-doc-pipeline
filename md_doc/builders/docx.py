@@ -796,6 +796,8 @@ class _DocxBuilder(HTMLParser):
         self._add_text(data)
 
     def handle_comment(self, data: str) -> None:
+        if self._in_table:
+            return
         stripped = data.strip()
         if stripped.lower().startswith("col-widths:"):
             raw = stripped[len("col-widths:"):].strip()
@@ -917,6 +919,7 @@ class _DocxBuilder(HTMLParser):
 
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
+            n_row_cells = len(row_cells)
             for c_idx, (is_header, cell_html) in enumerate(row_cells):
                 if c_idx >= max_cols:
                     break
@@ -980,6 +983,19 @@ class _DocxBuilder(HTMLParser):
                         color=last_border_color if is_last_row else cell_border_color,
                         pt=last_border_size if is_last_row else cell_border_size,
                     )
+
+            # Rows shorter than max_cols still have Word cells that need
+            # explicit tcW; without it fixed-layout tables render incorrectly.
+            for c_idx in range(min(n_row_cells, max_cols), max_cols):
+                cell = table.cell(r_idx, c_idx)
+                tc = cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                for old in tcPr.findall(qn("w:tcW")):
+                    tcPr.remove(old)
+                tcW_el = OxmlElement("w:tcW")
+                tcW_el.set(qn("w:w"), str(col_widths_twips[c_idx]))
+                tcW_el.set(qn("w:type"), "dxa")
+                tcPr.append(tcW_el)
 
         self._paragraph = None
 

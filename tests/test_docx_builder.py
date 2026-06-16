@@ -83,6 +83,20 @@ class TestTableColWidths:
         grids = tbl.findall(qn("w:tblGrid"))
         assert len(grids) == 1
 
+    def test_short_rows_all_cells_get_tcW(self, tmp_repo):
+        """Rows with fewer cells than max_cols must still have explicit tcW on all cells."""
+        # Row 1 has 3 cols, row 2 has 2 cols — the 3rd cell in row 2 must still get tcW
+        body = "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |\n| x | y |\n"
+        doc = _build_docx(tmp_repo, body, {})
+        table = doc.tables[0]
+        for row in table.rows:
+            for cell in row.cells:
+                tcPr = cell._tc.find(qn("w:tcPr"))
+                assert tcPr is not None
+                tcW = tcPr.find(qn("w:tcW"))
+                assert tcW is not None, "Every cell must have explicit tcW for fixed layout"
+                assert int(tcW.get(qn("w:w"))) > 0
+
 
 class TestColWidthsComment:
     def test_comment_sets_widths_for_that_table(self, tmp_repo):
