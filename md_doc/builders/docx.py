@@ -1297,6 +1297,14 @@ def _add_page_header_bar(
     cols = 2 if logo_path else 1
     table = header.add_table(rows=1, cols=cols, width=text_width_emu)
 
+    # Set the same style as body tables so the style-level tblInd is 0.
+    # Without this, Word applies the default table style (tblInd ~108 twips)
+    # which shifts the bar right of body content even with explicit tblInd=0.
+    try:
+        table.style = "Table Normal"
+    except KeyError:
+        table.style = "Normal Table"
+
     tbl = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
     if tblPr is None:
