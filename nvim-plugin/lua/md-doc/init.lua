@@ -596,17 +596,30 @@ function M.setup(opts)
   config = vim.tbl_deep_extend("force", default_config, opts or {})
   setup_highlights()
 
+  local function try_activate(bufnr)
+    local path = vim.api.nvim_buf_get_name(bufnr)
+    if path == "" then return end
+    local dir = vim.fn.fnamemodify(path, ":h")
+    if cascade.find_repo_root(dir) or cascade.find_meta_root(dir) then
+      activate(bufnr)
+    end
+  end
+
   vim.api.nvim_create_autocmd({ "BufEnter", "BufReadPost" }, {
     pattern = "*.md",
-    callback = function(ev)
-      local path = vim.api.nvim_buf_get_name(ev.buf)
-      if path == "" then return end
-      local dir = vim.fn.fnamemodify(path, ":h")
-      if cascade.find_repo_root(dir) or cascade.find_meta_root(dir) then
-        activate(ev.buf)
-      end
-    end,
+    callback = function(ev) try_activate(ev.buf) end,
   })
+
+  -- When loaded lazily (ft = "markdown"), BufReadPost has already fired for
+  -- the triggering buffer before setup() runs. Activate any open md buffers now.
+  vim.schedule(function()
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(bufnr)
+         and vim.bo[bufnr].filetype == "markdown" then
+        try_activate(bufnr)
+      end
+    end
+  end)
 end
 
 return M

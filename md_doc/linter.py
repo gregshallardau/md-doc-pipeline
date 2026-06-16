@@ -427,11 +427,6 @@ def lint_template_file(tmpl_path: Path, repo_root: Path | None = None) -> list[L
                     )
                 )
 
-    # ------------------------------------------------------------------
-    # 5. Pipe-table content missing GFM separator row
-    # ------------------------------------------------------------------
-    _check_table_separators(raw, tmpl_path, issues)
-
     return issues
 
 
