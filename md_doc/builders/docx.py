@@ -1180,6 +1180,34 @@ def _add_cover_page(doc: Document, config: dict[str, Any], builder: "_DocxBuilde
 # ---------------------------------------------------------------------------
 
 
+def _patch_compatibility_mode(path: Path) -> None:
+    """Upgrade compatibilityMode from 14 (Word 2010) to 15 (Word 2016+).
+
+    python-docx's built-in template ships with compatibilityMode=14, which
+    causes Word to open the file in Compatibility Mode.  Patching to 15 tells
+    Word the document is fully modern and suppresses the banner.
+    """
+    tmp = path.with_suffix(".tmp")
+    shutil.move(str(path), str(tmp))
+    try:
+        with zipfile.ZipFile(tmp, "r") as zin:
+            with zipfile.ZipFile(path, "w") as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/settings.xml":
+                        data = data.replace(
+                            b'w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"',
+                            b'w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"',
+                        )
+                    zout.writestr(item, data)
+    except Exception:
+        shutil.move(str(tmp), str(path))
+        raise
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
 def _patch_to_dotx(path: Path) -> None:
     """Re-write *path* with the Word Template content type.
 
@@ -1560,6 +1588,8 @@ def build(
     font_body = theme.get("font_body")
     if font_body:
         patch_docx_theme_fonts(out_path, font_body)
+
+    _patch_compatibility_mode(out_path)
 
     if is_dotx:
         _patch_to_dotx(out_path)
