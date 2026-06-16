@@ -594,7 +594,7 @@ function M.setup(opts)
       local path = vim.api.nvim_buf_get_name(ev.buf)
       if path == "" then return end
       local dir = vim.fn.fnamemodify(path, ":h")
-      if cascade.find_repo_root(dir) then
+      if cascade.find_repo_root(dir) or cascade.find_meta_root(dir) then
         activate(ev.buf)
       end
     end,
