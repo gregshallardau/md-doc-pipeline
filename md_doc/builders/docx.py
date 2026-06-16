@@ -336,12 +336,14 @@ class _DocxBuilder(HTMLParser):
         theme: dict[str, Any] | None = None,
         field_type: str | None = None,
         body_text_align: str | None = None,
+        table_col_widths: list[float] | None = None,
     ) -> None:
         super().__init__()
         self.doc = doc
         self._theme: dict[str, Any] = theme or {}
         self._field_type = field_type  # None | "form" | "merge"
         self._body_text_align = body_text_align  # default alignment for Normal paragraphs
+        self._table_col_widths = table_col_widths  # e.g. [30, 70] — relative column widths
 
         apply_theme_to_doc(self.doc, self._theme)
 
@@ -363,6 +365,9 @@ class _DocxBuilder(HTMLParser):
         self._table_rows: list[list[tuple[bool, str]]] = []
         self._current_row: list[tuple[bool, str]] = []
         self._current_cell_html = ""
+        # Set by <!-- col-widths: 30, 70 --> comments; consumed by the next table
+        self._next_table_col_widths: list[float] | None = None
+        self._active_table_col_widths: list[float] | None = None
 
         self._pre_text = ""
         self._tag_stack: list[str] = []
@@ -666,6 +671,9 @@ class _DocxBuilder(HTMLParser):
             self._current_cell_html = ""
             self._in_cell = False
             self._in_th = False
+            # Consume any col-widths comment that immediately preceded this table
+            self._active_table_col_widths = self._next_table_col_widths
+            self._next_table_col_widths = None
 
         elif tag == "tr":
             self._current_row = []
@@ -795,6 +803,17 @@ class _DocxBuilder(HTMLParser):
             return
         self._add_text(data)
 
+    def handle_comment(self, data: str) -> None:
+        stripped = data.strip()
+        if stripped.lower().startswith("col-widths:"):
+            raw = stripped[len("col-widths:"):].strip()
+            try:
+                widths = [float(v.strip()) for v in raw.split(",") if v.strip()]
+                if widths:
+                    self._next_table_col_widths = widths
+            except ValueError:
+                pass
+
     # ------------------------------------------------------------------
     # Table rendering
     # ------------------------------------------------------------------
@@ -816,25 +835,66 @@ class _DocxBuilder(HTMLParser):
         # Explicitly set all table-level borders to none
         _clear_table_borders(table)
 
-        # Set table to 100% text width with autofit layout
+        # Set table to 100% text width with fixed layout and equal column widths.
+        # autofit collapses columns in DOTX templates because form-field cells
+        # have no content to measure against; fixed layout uses the declared
+        # gridCol widths regardless of content.
         tbl = table._tbl
         tblPr = tbl.find(qn("w:tblPr"))
         if tblPr is None:
             tblPr = OxmlElement("w:tblPr")
             tbl.insert(0, tblPr)
 
+        section = self.doc.sections[0]
+        text_width_emu = section.page_width - section.left_margin - section.right_margin
+        text_width_twips = round(text_width_emu / 914400 * 1440)
+
+        # Build per-column widths. Priority: <!-- col-widths --> comment on this
+        # table > table_col_widths config key > equal distribution.
+        col_widths_twips: list[int]
+        weights = self._active_table_col_widths or self._table_col_widths
+        self._active_table_col_widths = None
+        if weights and len(weights) == max_cols:
+            total = sum(weights)
+            col_widths_twips = [round(text_width_twips * w / total) for w in weights]
+            # Correct rounding drift so columns exactly fill the text width
+            diff = text_width_twips - sum(col_widths_twips)
+            col_widths_twips[-1] += diff
+        else:
+            col_width_twips = text_width_twips // max_cols
+            col_widths_twips = [col_width_twips] * max_cols
+
         for existing_w in tblPr.findall(qn("w:tblW")):
             tblPr.remove(existing_w)
         tblW = OxmlElement("w:tblW")
-        tblW.set(qn("w:w"), "5000")
-        tblW.set(qn("w:type"), "pct")
+        tblW.set(qn("w:w"), str(text_width_twips))
+        tblW.set(qn("w:type"), "dxa")
         tblPr.append(tblW)
 
         for existing_layout in tblPr.findall(qn("w:tblLayout")):
             tblPr.remove(existing_layout)
         tblLayout = OxmlElement("w:tblLayout")
-        tblLayout.set(qn("w:type"), "autofit")
+        tblLayout.set(qn("w:type"), "fixed")
         tblPr.append(tblLayout)
+
+        for old in tblPr.findall(qn("w:tblInd")):
+            tblPr.remove(old)
+        tblInd = OxmlElement("w:tblInd")
+        tblInd.set(qn("w:w"), "0")
+        tblInd.set(qn("w:type"), "dxa")
+        tblPr.append(tblInd)
+
+        # Replace the tblGrid python-docx already created with our own.
+        # Must remove first: with fixed layout Word reads tblGrid, and having
+        # two of them produces invalid OOXML that corrupts table rendering.
+        for old_grid in tbl.findall(qn("w:tblGrid")):
+            tbl.remove(old_grid)
+        tblGrid = OxmlElement("w:tblGrid")
+        for cw in col_widths_twips:
+            gridCol = OxmlElement("w:gridCol")
+            gridCol.set(qn("w:w"), str(cw))
+            tblGrid.append(gridCol)
+        tbl.insert(list(tbl).index(tblPr) + 1, tblGrid)
 
         # Cell margins from CSS td { padding }
         tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
@@ -870,6 +930,16 @@ class _DocxBuilder(HTMLParser):
                     break
                 cell = table.cell(r_idx, c_idx)
                 cell.text = ""
+                # Explicitly set cell width so fixed-layout tables honour the
+                # grid widths rather than falling back to Word's own heuristic.
+                tc = cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                for old in tcPr.findall(qn("w:tcW")):
+                    tcPr.remove(old)
+                tcW_el = OxmlElement("w:tcW")
+                tcW_el.set(qn("w:w"), str(col_widths_twips[c_idx]))
+                tcW_el.set(qn("w:type"), "dxa")
+                tcPr.append(tcW_el)
                 para = cell.paragraphs[0]
                 # Zero paragraph spacing so cell padding alone controls whitespace
                 para.paragraph_format.space_before = Pt(0)
@@ -1429,7 +1499,19 @@ def build(
     _add_footer(doc, config)
 
     body_text_align = str(config.get("body_text_align", "")).lower() or None
-    builder = _DocxBuilder(doc, theme=theme, field_type=field_type, body_text_align=body_text_align)
+
+    raw_col_widths = config.get("table_col_widths")
+    table_col_widths: list[float] | None = None
+    if isinstance(raw_col_widths, list) and all(isinstance(v, (int, float)) for v in raw_col_widths):
+        table_col_widths = [float(v) for v in raw_col_widths]
+
+    builder = _DocxBuilder(
+        doc,
+        theme=theme,
+        field_type=field_type,
+        body_text_align=body_text_align,
+        table_col_widths=table_col_widths,
+    )
 
     if cover_page:
         if is_dotx:
