@@ -29,6 +29,9 @@ from .renderer import _build_search_dirs, _MarkdownLoader, _strip_frontmatter
 
 _VALID_FORMATS: frozenset[str] = frozenset({"pdf", "docx", "dotx"})
 _FIELD_RE = re.compile(r"\[\[(\w+)\]\]")
+_PIPE_LINE_RE = re.compile(r"^\s*\|")
+_SEP_ROW_RE = re.compile(r"^\s*\|[\s\-:|]*-[\s\-:|]*\|\s*$")
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 
 
 @dataclass
@@ -77,6 +80,46 @@ def _frontmatter_jinja_vars(
         _walk(v, str(k))
 
     return found
+
+
+def _check_table_separators(body: str, path: Path, issues: list[LintIssue]) -> None:
+    """Warn about groups of pipe-table-like lines that have no GFM separator row.
+
+    GFM tables require a separator as the second row (|---|---|).  Without it
+    the content is not parsed as a table and renders as plain text in Word.
+    """
+    lines = body.split("\n")
+    in_fence = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            i += 1
+            continue
+        if in_fence:
+            i += 1
+            continue
+        if _PIPE_LINE_RE.match(line):
+            start = i
+            group: list[str] = []
+            while i < len(lines) and not in_fence and _PIPE_LINE_RE.match(lines[i]):
+                group.append(lines[i])
+                i += 1
+            if len(group) >= 2 and not any(_SEP_ROW_RE.match(ln) for ln in group):
+                issues.append(
+                    LintIssue(
+                        path=path,
+                        message=(
+                            f"Table at line {start + 1} is missing a separator row "
+                            f"(e.g. |---|---|) — without it the table renders as "
+                            f"plain text, not a Word table"
+                        ),
+                        severity="warning",
+                    )
+                )
+        else:
+            i += 1
 
 
 def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
@@ -254,6 +297,11 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
                     )
                 )
 
+    # ------------------------------------------------------------------
+    # 6. Pipe-table content missing GFM separator row
+    # ------------------------------------------------------------------
+    _check_table_separators(body, doc_path, issues)
+
     return issues
 
 
@@ -378,6 +426,11 @@ def lint_template_file(tmpl_path: Path, repo_root: Path | None = None) -> list[L
                         severity="warning",
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # 5. Pipe-table content missing GFM separator row
+    # ------------------------------------------------------------------
+    _check_table_separators(raw, tmpl_path, issues)
 
     return issues
 
