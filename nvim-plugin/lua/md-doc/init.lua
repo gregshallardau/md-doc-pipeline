@@ -530,6 +530,14 @@ local function activate(bufnr)
     if not (client and client.name == "marksman") then return end
     if config.disable_marksman then
       vim.lsp.buf_detach_client(bufnr, client_id)
+      -- Detaching stops future updates but leaves already-published diagnostics
+      -- in the buffer. Clear them explicitly after the current event loop tick.
+      vim.schedule(function()
+        pcall(function()
+          local ns = vim.lsp.diagnostic.get_namespace(client_id)
+          vim.diagnostic.reset(ns, bufnr)
+        end)
+      end)
       return
     end
     -- Suppress [[field]] false positives without disabling marksman fully
