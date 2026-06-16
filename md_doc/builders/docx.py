@@ -1292,9 +1292,10 @@ def _add_page_header_bar(
     for para in list(header.paragraphs):
         para._p.getparent().remove(para._p)
 
-    text_width = section.page_width - section.left_margin - section.right_margin
+    text_width_emu = section.page_width - section.left_margin - section.right_margin
+    text_width_twips = round(text_width_emu / 914400 * 1440)
     cols = 2 if logo_path else 1
-    table = header.add_table(rows=1, cols=cols, width=text_width)
+    table = header.add_table(rows=1, cols=cols, width=text_width_emu)
 
     tbl = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
@@ -1302,24 +1303,53 @@ def _add_page_header_bar(
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
 
-    # Override width to 100% (pct) — matches body tables and avoids any
-    # rounding difference vs the absolute-EMU value set by add_table().
+    # Use absolute dxa width — same unit as body tables so they align exactly.
     for old in tblPr.findall(qn("w:tblW")):
         tblPr.remove(old)
     tblW = OxmlElement("w:tblW")
-    tblW.set(qn("w:w"), "5000")
-    tblW.set(qn("w:type"), "pct")
+    tblW.set(qn("w:w"), str(text_width_twips))
+    tblW.set(qn("w:type"), "dxa")
     tblPr.append(tblW)
 
-    # Zero the table indent so the bar starts at the left margin — Word
-    # applies a default ~108-twip indent which makes the header narrower
-    # than body tables.
+    for old in tblPr.findall(qn("w:tblLayout")):
+        tblPr.remove(old)
+    tblLayout = OxmlElement("w:tblLayout")
+    tblLayout.set(qn("w:type"), "fixed")
+    tblPr.append(tblLayout)
+
+    # Zero indent — Word applies a default ~108-twip indent in headers.
     for old in tblPr.findall(qn("w:tblInd")):
         tblPr.remove(old)
     tblInd = OxmlElement("w:tblInd")
     tblInd.set(qn("w:w"), "0")
     tblInd.set(qn("w:type"), "dxa")
     tblPr.append(tblInd)
+
+    # Replace the tblGrid python-docx created with one using our exact widths.
+    if cols == 2:
+        col_widths = [round(text_width_twips * 0.7), 0]
+        col_widths[1] = text_width_twips - col_widths[0]
+    else:
+        col_widths = [text_width_twips]
+    for old_grid in tbl.findall(qn("w:tblGrid")):
+        tbl.remove(old_grid)
+    tblGrid = OxmlElement("w:tblGrid")
+    for cw in col_widths:
+        gridCol = OxmlElement("w:gridCol")
+        gridCol.set(qn("w:w"), str(cw))
+        tblGrid.append(gridCol)
+    tbl.insert(list(tbl).index(tblPr) + 1, tblGrid)
+
+    # Set explicit tcW on each cell to match the grid.
+    for c_idx, cell in enumerate(table.rows[0].cells):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        for old in tcPr.findall(qn("w:tcW")):
+            tcPr.remove(old)
+        tcW_el = OxmlElement("w:tcW")
+        tcW_el.set(qn("w:w"), str(col_widths[c_idx]))
+        tcW_el.set(qn("w:type"), "dxa")
+        tcPr.append(tcW_el)
 
     tblBorders = OxmlElement("w:tblBorders")
     for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
