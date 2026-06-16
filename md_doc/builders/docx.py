@@ -259,15 +259,16 @@ def _render_cell_html(
     paragraph: Any,
     html: str,
     theme: dict,
-    field_type: str | None,
-    bookmark_id: int,
+    write_text: Any,
     *,
     bold_override: bool = False,
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
     Handles inline tags: strong/b (bold), em/i (italic), code (monospace).
-    Plain text is written with *bold_override* when no inline tag is active.
+    Text (including ``[[field]]`` markers) is written via *write_text*, which
+    is the builder's ``_write_text`` method — ensuring field conversion and
+    bookmark tracking work identically to body text.
     """
     from html.parser import HTMLParser as _HP
 
@@ -299,16 +300,7 @@ def _render_cell_html(
         def handle_data(self, data: str) -> None:
             if not data:
                 return
-            run = paragraph.add_run(data)
-            run.bold = self._bold
-            run.italic = self._italic
-            if self._code:
-                run.font.name = theme.get("font_code", "Courier New")
-                run.font.size = Pt(theme.get("font_size_code", 9.0))
-                col = theme.get("color_code")
-                if col:
-                    r2, g2, b2 = _hex_to_rgb(col)
-                    run.font.color.rgb = RGBColor(r2, g2, b2)
+            write_text(paragraph, data, bold=self._bold, italic=self._italic, code=self._code)
 
     _CellParser().feed(html)
 
@@ -945,8 +937,8 @@ class _DocxBuilder(HTMLParser):
                 para.paragraph_format.space_before = Pt(0)
                 para.paragraph_format.space_after = Pt(0)
 
-                _render_cell_html(para, cell_html.strip(), self._theme, self._field_type,
-                                  self._bookmark_id, bold_override=is_header)
+                _render_cell_html(para, cell_html.strip(), self._theme, self._write_text,
+                                  bold_override=is_header)
 
                 # Apply body font explicitly (Word table cells don't always inherit Normal)
                 if font_body:

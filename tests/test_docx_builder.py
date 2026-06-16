@@ -117,3 +117,38 @@ class TestColWidthsComment:
         widths = _col_widths(doc)
         # Comment says 60/40, config says 30/70 — comment wins, so first >= second
         assert widths[0] > widths[1]
+
+
+class TestMergeFieldsInTableCells:
+    def _dotx_xml(self, path: Path) -> str:
+        import zipfile
+        with zipfile.ZipFile(path) as zf:
+            return zf.read("word/document.xml").decode("utf-8")
+
+    def test_form_field_in_cell_creates_word_field(self, tmp_repo):
+        body = "| Label | Value |\n|---|---|\n| Client | [[contact_name]] |\n"
+        out = tmp_repo / "out.dotx"
+        from md_doc.builders.docx import build
+        build("---\ntitle: T\n---\n\n" + body,
+              {"title": "T", "cover_page": False}, out, output_format="dotx")
+        xml = self._dotx_xml(out)
+        assert "fldChar" in xml or "bookmarkStart" in xml
+
+    def test_form_field_not_left_as_literal_text(self, tmp_repo):
+        body = "| Label | Value |\n|---|---|\n| Client | [[contact_name]] |\n"
+        out = tmp_repo / "out.dotx"
+        from md_doc.builders.docx import build
+        build("---\ntitle: T\n---\n\n" + body,
+              {"title": "T", "cover_page": False}, out, output_format="dotx")
+        xml = self._dotx_xml(out)
+        assert "[[contact_name]]" not in xml
+
+    def test_merge_field_in_cell(self, tmp_repo):
+        body = "| Label | Value |\n|---|---|\n| Client | [[contact_name]] |\n"
+        out = tmp_repo / "out.dotx"
+        from md_doc.builders.docx import build
+        build("---\ntitle: T\n---\n\n" + body,
+              {"title": "T", "cover_page": False, "dotx_field_type": "merge"},
+              out, output_format="dotx")
+        xml = self._dotx_xml(out)
+        assert "MERGEFIELD" in xml
