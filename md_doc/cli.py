@@ -180,6 +180,29 @@ def _resolve_output_path(
         return doc_path.with_suffix(ext)
 
 
+def _render_config_strings(config: dict[str, Any]) -> dict[str, Any]:
+    """Render Jinja2 expressions in string config values against the config itself.
+
+    Frontmatter values like ``title: "{{ product_name | title }} Guidelines"``
+    are stored as raw strings by load_config().  This function resolves them so
+    builders receive the final text rather than the template expression.
+
+    Uses DebugUndefined so that references to genuinely missing variables are
+    kept as ``{{ var }}`` rather than silently becoming empty strings.
+    """
+    from jinja2 import DebugUndefined, Environment
+
+    env = Environment(undefined=DebugUndefined, trim_blocks=True, lstrip_blocks=True)
+    result = dict(config)
+    for key, value in config.items():
+        if isinstance(value, str) and "{{" in value:
+            try:
+                result[key] = env.from_string(value).render(**config)
+            except Exception:
+                pass  # leave unrendered on any error
+    return result
+
+
 def _apply_filename_override(out_path: Path, config: dict[str, Any], format_name: str) -> Path:
     """Apply output_filename override from config, with Jinja2 variable support.
 
@@ -456,6 +479,7 @@ def build(
 
     for doc_path in docs:
         config = load_config(doc_path, repo_root=cascade_root)
+        config = _render_config_strings(config)
 
         if theme is not None:
             config["pdf_theme"] = str(theme.resolve())
