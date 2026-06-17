@@ -528,7 +528,8 @@ local function activate(bufnr)
     if root and doc_path ~= "" then
       local rel = doc_path:sub(#root + 2)
       -- Highlight: dim icon, normal path
-      local bar = "%#Comment#󰦪 %*" .. rel
+      -- %< = truncate here (from left) so the filename end is always visible
+      local bar = "%<%#Comment#󰦪 %*" .. rel
       local function set_bar()
         local win = vim.api.nvim_get_current_win()
         if vim.api.nvim_win_get_buf(win) == bufnr then
