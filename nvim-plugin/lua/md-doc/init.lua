@@ -13,6 +13,7 @@ local default_config = {
   modes = { float = true, virtual = false, split = false, document = false },
   resolve_frontmatter = true,
   disable_marksman = true,
+  show_winbar = true,   -- show full project-relative path in the winbar
   keymaps = {
     toggle_float       = "<leader>mf",
     toggle_virtual     = "<leader>mv",
@@ -517,6 +518,30 @@ local function activate(bufnr)
   local state = get_state(bufnr)
   if state._active then return end
   state._active = true
+
+  -- Winbar: show the full path relative to the project root so you can always
+  -- tell which client/product/template you're in, even in deep trees.
+  if config.show_winbar then
+    local doc_path = vim.api.nvim_buf_get_name(bufnr)
+    local dir = vim.fn.fnamemodify(doc_path, ":h")
+    local root = cascade.find_repo_root(dir) or cascade.find_meta_root(dir)
+    if root and doc_path ~= "" then
+      local rel = doc_path:sub(#root + 2)
+      -- Highlight: dim icon, normal path
+      local bar = "%#Comment#󰦪 %*" .. rel
+      local function set_bar()
+        local win = vim.api.nvim_get_current_win()
+        if vim.api.nvim_win_get_buf(win) == bufnr then
+          vim.wo[win].winbar = bar
+        end
+      end
+      set_bar()
+      vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
+        buffer = bufnr,
+        callback = set_bar,
+      })
+    end
+  end
 
   set_keymaps(bufnr)
 
