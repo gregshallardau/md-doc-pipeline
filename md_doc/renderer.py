@@ -170,6 +170,8 @@ def render(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,
+        trim_blocks=True,    # remove newline after {% %} tags so included
+        lstrip_blocks=True,  # fragments join without blank lines between them
         autoescape=False,  # Markdown — no HTML escaping
     )
 
@@ -219,6 +221,8 @@ def render_string(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
         autoescape=False,
     )
     tmpl = env.from_string(source)
