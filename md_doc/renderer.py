@@ -46,7 +46,7 @@ class _MarkdownLoader(BaseLoader):
         for directory in self._dirs:
             candidate = directory / template
             if candidate.is_file():
-                source = candidate.read_text(encoding="utf-8")
+                source = candidate.read_text(encoding="utf-8").rstrip() + "\n"
                 mtime = candidate.stat().st_mtime
                 return source, str(candidate), lambda: candidate.stat().st_mtime == mtime
         raise TemplateNotFound(template)
