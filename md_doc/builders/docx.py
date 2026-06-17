@@ -946,6 +946,13 @@ class _DocxBuilder(HTMLParser):
                 _render_cell_html(para, cell_html.strip(), self._theme, self._write_text,
                                   bold_override=is_header)
 
+                # Apply body_text_align to cell paragraphs — Word table cells
+                # don't inherit document-level alignment the way body text does.
+                if not is_header:
+                    word_align = self._to_word_alignment(self._body_text_align)
+                    if word_align is not None:
+                        para.alignment = word_align
+
                 # Apply body font explicitly (Word table cells don't always inherit Normal)
                 if font_body:
                     for run in para.runs:
