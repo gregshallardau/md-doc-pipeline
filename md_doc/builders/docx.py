@@ -287,6 +287,9 @@ def _render_cell_html(
                 self._italic = True
             elif tag == "code":
                 self._code = True
+            elif tag == "br":
+                br_run = paragraph.add_run()
+                br_run._r.append(OxmlElement("w:br"))
 
         def handle_endtag(self, tag: str) -> None:
             tag = tag.lower()
