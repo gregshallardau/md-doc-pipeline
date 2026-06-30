@@ -355,7 +355,7 @@ class _DocxBuilder(HTMLParser):
 
         # Table state — cells store raw inner HTML to preserve inline markup
         self._in_table = False
-        self._in_cell = False   # True while cursor is inside a <th> or <td>
+        self._in_cell = False  # True while cursor is inside a <th> or <td>
         self._in_th = False
         self._table_rows: list[list[tuple[bool, str]]] = []
         self._current_row: list[tuple[bool, str]] = []
@@ -803,7 +803,7 @@ class _DocxBuilder(HTMLParser):
             return
         stripped = data.strip()
         if stripped.lower().startswith("col-widths:"):
-            raw = stripped[len("col-widths:"):].strip()
+            raw = stripped[len("col-widths:") :].strip()
             try:
                 widths = [float(v.strip()) for v in raw.split(",") if v.strip()]
                 if widths:
@@ -897,7 +897,12 @@ class _DocxBuilder(HTMLParser):
         tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
         lr_pt = self._theme.get("padding_cell_lr_pt", 9.0)
         tblCellMar = OxmlElement("w:tblCellMar")
-        for side_name, pt_val in (("top", tb_pt), ("left", lr_pt), ("bottom", tb_pt), ("right", lr_pt)):
+        for side_name, pt_val in (
+            ("top", tb_pt),
+            ("left", lr_pt),
+            ("bottom", tb_pt),
+            ("right", lr_pt),
+        ):
             mar = OxmlElement(f"w:{side_name}")
             mar.set(qn("w:w"), str(int(pt_val * 20)))  # twips = pt * 20
             mar.set(qn("w:type"), "dxa")
@@ -943,8 +948,9 @@ class _DocxBuilder(HTMLParser):
                 para.paragraph_format.space_before = Pt(0)
                 para.paragraph_format.space_after = Pt(0)
 
-                _render_cell_html(para, cell_html.strip(), self._theme, self._write_text,
-                                  bold_override=is_header)
+                _render_cell_html(
+                    para, cell_html.strip(), self._theme, self._write_text, bold_override=is_header
+                )
 
                 # Apply body_text_align to cell paragraphs — Word table cells
                 # don't inherit document-level alignment the way body text does.
@@ -1054,7 +1060,9 @@ def _add_docx_cover_page(
     )
     meta_label = str(config.get("cover_meta_label", "Prepared by"))
 
-    bar_color = (theme.get("color_table_header_bg") or theme.get("color_h1") or "1b4f72").lstrip("#")
+    bar_color = (theme.get("color_table_header_bg") or theme.get("color_h1") or "1b4f72").lstrip(
+        "#"
+    )
     label_color = (theme.get("color_h2") or theme.get("color_h1") or "2e86c1").lstrip("#")
     bar_mm = float(re.sub(r"[^\d.]", "", bar_height_str) or "10")
 
@@ -1586,7 +1594,9 @@ def build(
 
     raw_col_widths = config.get("table_col_widths")
     table_col_widths: list[float] | None = None
-    if isinstance(raw_col_widths, list) and all(isinstance(v, (int, float)) for v in raw_col_widths):
+    if isinstance(raw_col_widths, list) and all(
+        isinstance(v, (int, float)) for v in raw_col_widths
+    ):
         table_col_widths = [float(v) for v in raw_col_widths]
 
     builder = _DocxBuilder(

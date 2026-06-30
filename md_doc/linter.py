@@ -214,8 +214,13 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     # ------------------------------------------------------------------
     search_dirs = _build_search_dirs(doc_path, repo_root)
     loader = _MarkdownLoader(search_dirs)
-    env = Environment(loader=loader, autoescape=False, keep_trailing_newline=True,
-                      trim_blocks=True, lstrip_blocks=True)
+    env = Environment(
+        loader=loader,
+        autoescape=False,
+        keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
 
     try:
         ast = env.parse(body)
@@ -384,8 +389,13 @@ def lint_template_file(tmpl_path: Path, repo_root: Path | None = None) -> list[L
     else:
         search_dirs = [tmpl_path.parent]
     loader = _MarkdownLoader(search_dirs)
-    env = Environment(loader=loader, autoescape=False, keep_trailing_newline=True,
-                      trim_blocks=True, lstrip_blocks=True)
+    env = Environment(
+        loader=loader,
+        autoescape=False,
+        keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
 
     try:
         ast = env.parse(raw)

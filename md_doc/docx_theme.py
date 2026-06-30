@@ -274,7 +274,9 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
     for sel in ("p", "body p"):
         props = blocks.get(sel, {})
         # Handle both shorthand `margin` and explicit `margin-top`/`margin-bottom`
-        if "margin" in props and ("para_space_after" not in theme or "para_space_before" not in theme):
+        if "margin" in props and (
+            "para_space_after" not in theme or "para_space_before" not in theme
+        ):
             m = _parse_margin(props["margin"])
             if m.get("bottom") is not None and "para_space_after" not in theme:
                 theme["para_space_after"] = m["bottom"]
@@ -754,14 +756,16 @@ def patch_docx_theme_fonts(path: "Path", font_body: str, font_heading: str | Non
                         # Patch <a:majorFont><a:latin typeface="..."/>
                         xml = re.sub(
                             r'(<a:majorFont>\s*<a:latin typeface=")[^"]*(")',
-                            rf'\g<1>{heading_font}\g<2>',
-                            xml, flags=re.DOTALL,
+                            rf"\g<1>{heading_font}\g<2>",
+                            xml,
+                            flags=re.DOTALL,
                         )
                         # Patch <a:minorFont><a:latin typeface="..."/>
                         xml = re.sub(
                             r'(<a:minorFont>\s*<a:latin typeface=")[^"]*(")',
-                            rf'\g<1>{font_body}\g<2>',
-                            xml, flags=re.DOTALL,
+                            rf"\g<1>{font_body}\g<2>",
+                            xml,
+                            flags=re.DOTALL,
                         )
                         data = xml.encode("utf-8")
                     zout.writestr(item, data)

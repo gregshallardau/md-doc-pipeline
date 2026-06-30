@@ -750,7 +750,7 @@ def export(
                 (source / cfg_path).resolve() if not cfg_path.is_absolute() else cfg_path.resolve()
             )
         else:
-            dest = (source / "exported").resolve()
+            dest = (source / "Exports").resolve()
 
     click.echo(f"{_bold('Exporting to:')} {_info(str(dest))}")
 
@@ -779,12 +779,15 @@ def export(
     pipeline_root = Path(__file__).resolve().parent.parent
     staging_dir = pipeline_root / "workspace" / "obsidian-exports" / "docs"
 
-    staged = stage_files(exportable, staging_dir, use_symlinks=not no_symlinks)
+    staged = stage_files(exportable, staging_dir, use_symlinks=not no_symlinks, source_dir=source)
     click.echo("\n" + _dim(f"Staged {len(staged)} file(s) for build."))
 
-    # Build using the same logic as the build command
+    # Build using the same logic as the build command. Track each produced
+    # output alongside its original source note and frontmatter so outputs are
+    # placed correctly even when output_filename renames them.
+    built_outputs: list[tuple[Path, Path | None, dict]] = []
     errors: list[str] = []
-    for doc_path, fm in staged:
+    for doc_path, orig_path, fm in staged:
         config = load_config(doc_path, repo_root=source)
 
         # Determine formats: CLI flag > frontmatter export_format > outputs > pdf
@@ -816,7 +819,15 @@ def export(
             else:
                 ext = f".{format_name}"
             out_path = _resolve_output_path(doc_path, staging_dir, None, ext)
-            out_path = _apply_filename_override(out_path, config, format_name)
+            try:
+                out_path = _apply_filename_override(out_path, config, format_name)
+            except Exception as exc:
+                click.echo(
+                    f"    {_err('ERROR')} bad output_filename: {type(exc).__name__}: {exc}",
+                    err=True,
+                )
+                errors.append(str(doc_path))
+                continue
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             try:
@@ -838,6 +849,7 @@ def export(
                         err=True,
                     )
                     continue
+                built_outputs.append((out_path, orig_path, fm))
                 click.echo(f"    {_ok('✓')} built {_info(out_path.name)}")
             except ImportError as exc:
                 click.echo(
@@ -858,7 +870,7 @@ def export(
                 errors.append(str(doc_path))
 
     # Collect outputs to destination, preserving folder structure
-    copied = collect_outputs(staging_dir, dest, source, staged, exportable)
+    copied = collect_outputs(built_outputs, dest, source)
     click.echo("\n" + _ok(f"✓ {len(copied)} output(s) exported to ") + _info(str(dest)))
     for p in copied:
         try:
@@ -954,6 +966,7 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
         if root.suffix != ".md":
             raise click.UsageError(f"Not a Markdown file: {root}")
         from .linter import lint_file as _lint_file, lint_template_file as _lint_tmpl_file
+
         single_file = root
         root = root.parent  # needed so _discover_markdown checks below work
         is_template = any(part in {"templates", "themes"} for part in single_file.parts)
@@ -1570,7 +1583,7 @@ def extract(file_path: str, dest: str, force: bool) -> None:
 
     except FileNotFoundError as e:
         click.echo(f"{_err('ERROR')} {e}", err=True)
-        raise click.Exit(1)  # type: ignore[operator]
+        sys.exit(1)
     except ValueError as e:
         click.echo(f"{_err('ERROR')} {e}", err=True)
-        raise click.Exit(1)  # type: ignore[operator]
+        sys.exit(1)

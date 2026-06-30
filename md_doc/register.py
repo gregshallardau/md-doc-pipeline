@@ -246,7 +246,10 @@ def generate(
             continue
         if file_path.name in _EXCLUDE_NAMES:
             continue
-        if any(part.startswith("_") for part in file_path.parts):
+        # Skip internal/underscore-prefixed dirs, but only check components
+        # *below* root so an underscore in the root's own path doesn't drop
+        # every record.
+        if any(part.startswith("_") for part in file_path.relative_to(root).parts):
             continue
 
         records.append(_build_record(file_path, root))

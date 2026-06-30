@@ -17,10 +17,13 @@ Frontmatter / _meta.yml keys:
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 
 from .config import load_config
+
+logger = logging.getLogger(__name__)
 
 
 def find_exportable(
@@ -44,10 +47,19 @@ def find_exportable(
     """
     results: list[tuple[Path, dict]] = []
     for md_file in sorted(source_dir.rglob("*.md")):
-        if any(part.startswith(".") for part in md_file.parts):
+        # Only inspect path components *below* source_dir so a vault that itself
+        # lives under a dotted directory (e.g. ``/home/user/.vault``) is not
+        # entirely skipped.
+        try:
+            rel_parts = md_file.relative_to(source_dir).parts
+        except ValueError:
+            rel_parts = md_file.parts
+        if any(part.startswith(".") for part in rel_parts):
             continue
         config = load_config(md_file, repo_root=repo_root)
-        if config.get("export") is False:
+        # ``export: true`` is required (it may be inherited from a parent
+        # _meta.yml). A missing or non-True value means "do not export".
+        if config.get("export") is not True:
             continue
         if config.get("draft") is True:
             continue
@@ -66,13 +78,20 @@ def stage_files(
     staging_dir: Path,
     *,
     use_symlinks: bool = True,
-) -> list[tuple[Path, dict]]:
+    source_dir: Path | None = None,
+) -> list[tuple[Path, Path, dict]]:
     """Copy or symlink exportable files into *staging_dir*, returning staged paths.
 
     Cleans any existing .md symlinks/files in the staging dir first.
-    Returns list of (staged_path, frontmatter_dict) tuples.
+    Returns list of (staged_path, original_source_path, frontmatter_dict) tuples
+    so callers can map each build output back to the note it came from regardless
+    of any output-filename override.
+
+    When *source_dir* is given, a source that is itself a symlink resolving
+    *outside* the source tree is skipped (prevents staging out-of-tree targets).
     """
     staging_dir.mkdir(parents=True, exist_ok=True)
+    root = Path(source_dir).resolve() if source_dir is not None else None
 
     # Clean previous staged .md files
     for existing in staging_dir.iterdir():
@@ -80,15 +99,18 @@ def stage_files(
             if existing.suffix == ".md":
                 existing.unlink()
 
-    staged: list[tuple[Path, dict]] = []
+    staged: list[tuple[Path, Path, dict]] = []
     seen_names: set[str] = set()
 
     for src, fm in files:
-        # Security: resolve the source path and skip if it's itself a symlink
-        # pointing outside the expected source tree (prevents symlink chains)
         real_src = src.resolve()
-        if real_src != src.resolve():
-            continue
+        # Security: skip a source that is a symlink pointing outside the tree.
+        if root is not None and src.is_symlink():
+            try:
+                real_src.relative_to(root)
+            except ValueError:
+                logger.warning("Skipping %s — symlink resolves outside source tree.", src)
+                continue
 
         name = src.name
         if name in seen_names:
@@ -103,71 +125,57 @@ def stage_files(
         else:
             shutil.copy2(real_src, dest)
 
-        staged.append((dest, fm))
+        staged.append((dest, src, fm))
 
     return staged
 
 
 def collect_outputs(
-    staging_dir: Path,
+    built: list[tuple[Path, Path | None, dict]],
     dest_dir: Path,
     source_dir: Path,
-    staged_files: list[tuple[Path, dict]],
-    original_files: list[tuple[Path, dict]],
-    extensions: tuple[str, ...] = (".pdf", ".docx", ".dotx"),
 ) -> list[Path]:
-    """Copy built outputs from *staging_dir* to *dest_dir*, preserving structure.
+    """Copy *built* outputs to *dest_dir*, preserving structure.
+
+    *built* is a list of ``(output_path, original_source_path, frontmatter)``
+    tuples produced by the build loop. Matching each output to its source
+    explicitly (rather than by filename-stem guessing) keeps placement correct
+    even when ``output_filename``/``export_filename`` renames the output.
 
     Output placement logic:
     1. If the note has ``export_path`` in frontmatter → dest_dir / export_path /
     2. Otherwise → mirrors the source directory structure relative to source_dir
 
     Filename logic:
-    1. If the note has ``export_filename`` in frontmatter → use that (extension added automatically)
-    2. Otherwise → use the source filename with the output extension
+    1. If the note has ``export_filename`` in frontmatter → use that (extension added)
+    2. Otherwise → use the built output's filename verbatim
 
     Returns list of copied output paths.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build a map from staged filename (stem) to (original_path, frontmatter)
-    stem_to_original: dict[str, tuple[Path, dict]] = {}
-    for (staged_path, fm), (orig_path, _) in zip(staged_files, original_files):
-        stem_to_original[staged_path.stem] = (orig_path, fm)
+    dest_root = dest_dir.resolve()
 
     copied: list[Path] = []
-    for output in staging_dir.iterdir():
-        if output.suffix not in extensions or output.is_symlink():
+    for output, orig_path, fm in built:
+        if not output.exists():
             continue
-
-        # Match output back to its source note
-        # Handle -form.pdf suffix: "doc-form.pdf" → stem is "doc-form", source stem is "doc"
-        output_stem = output.stem
-        if output_stem.endswith("-form"):
-            lookup_stem = output_stem[:-5]
-        else:
-            lookup_stem = output_stem
-
-        orig_path, fm = stem_to_original.get(lookup_stem, (None, {}))  # type: ignore[assignment]
 
         # Determine target directory
         export_path = fm.get("export_path")
         if export_path:
             target_dir = (dest_dir / export_path).resolve()
-        elif orig_path:
+        elif orig_path is not None:
             try:
                 rel = orig_path.relative_to(source_dir)
                 target_dir = (dest_dir / rel.parent).resolve()
             except ValueError:
-                target_dir = dest_dir.resolve()
+                target_dir = dest_root
         else:
-            target_dir = dest_dir.resolve()
+            target_dir = dest_root
 
         # Security: ensure target stays within dest_dir
-        if not target_dir.is_relative_to(dest_dir.resolve()):
-            import logging
-
-            logging.getLogger(__name__).warning(
+        if not target_dir.is_relative_to(dest_root):
+            logger.warning(
                 "Skipping output %s — export_path %r resolves outside destination directory.",
                 output.name,
                 export_path,
@@ -180,17 +188,14 @@ def collect_outputs(
         export_filename = fm.get("export_filename")
         if export_filename:
             # Strip any extension and path components — only use the stem as a filename
-            clean_name = Path(export_filename).name
-            clean_name = Path(clean_name).stem
+            clean_name = Path(Path(export_filename).name).stem
             target = target_dir / (clean_name + output.suffix)
         else:
             target = target_dir / output.name
 
         # Security: final check that resolved target is within dest_dir
-        if not target.resolve().is_relative_to(dest_dir.resolve()):
-            import logging
-
-            logging.getLogger(__name__).warning(
+        if not target.resolve().is_relative_to(dest_root):
+            logger.warning(
                 "Skipping output %s — resolved path escapes destination directory.",
                 output.name,
             )

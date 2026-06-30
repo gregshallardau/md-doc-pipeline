@@ -108,7 +108,7 @@ def _strip_frontmatter(md_content: str) -> tuple[str, str]:
         ``frontmatter_block`` is the raw ``---\\n...\\n---\\n`` block (or empty
         string if none).  ``body`` is the remaining Markdown.
     """
-    pattern = re.compile(r"^(---\s*\n.*?\n---\s*\n)", re.DOTALL)
+    pattern = re.compile(r"^(---\s*\n.*?\n---\s*(?:\n|$))", re.DOTALL)
     match = pattern.match(md_content)
     if match:
         return match.group(1), md_content[match.end() :]
@@ -170,7 +170,7 @@ def render(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,
-        trim_blocks=True,    # remove newline after {% %} tags so included
+        trim_blocks=True,  # remove newline after {% %} tags so included
         lstrip_blocks=True,  # fragments join without blank lines between them
         autoescape=False,  # Markdown — no HTML escaping
     )
