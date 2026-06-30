@@ -190,9 +190,10 @@ def _render_config_strings(config: dict[str, Any]) -> dict[str, Any]:
     Uses DebugUndefined so that references to genuinely missing variables are
     kept as ``{{ var }}`` rather than silently becoming empty strings.
     """
-    from jinja2 import DebugUndefined, Environment
+    from jinja2 import DebugUndefined
+    from jinja2.sandbox import SandboxedEnvironment
 
-    env = Environment(undefined=DebugUndefined, trim_blocks=True, lstrip_blocks=True)
+    env = SandboxedEnvironment(undefined=DebugUndefined, trim_blocks=True, lstrip_blocks=True)
     result = dict(config)
     for key, value in config.items():
         if isinstance(value, str) and "{{" in value:
@@ -218,9 +219,12 @@ def _apply_filename_override(out_path: Path, config: dict[str, Any], format_name
     if not raw:
         return out_path
 
-    from jinja2 import Environment, StrictUndefined
+    from jinja2 import StrictUndefined
+    from jinja2.sandbox import SandboxedEnvironment
 
-    rendered = Environment(undefined=StrictUndefined).from_string(str(raw)).render(**config)
+    rendered = (
+        SandboxedEnvironment(undefined=StrictUndefined).from_string(str(raw)).render(**config)
+    )
     # Strip any extension the user may have typed
     stem = Path(rendered).stem if Path(rendered).suffix else rendered
 
@@ -985,7 +989,13 @@ def lint(root: Path, workspace: str | None, render: bool, fix: bool) -> None:
         # Fix documents that the linter flagged
         for path, issues in results.items():
             if any("CRLF" in issue.message or "^Z" in issue.message for issue in issues):
-                text = path.read_text(encoding="utf-8")
+                # Files flagged for line-ending problems may contain non-UTF-8
+                # bytes; tolerate them so one bad file doesn't abort the run.
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    click.echo(_err("ERROR") + f"  could not read {path}: {exc}", err=True)
+                    continue
                 text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x1a", "")
                 path.write_text(text, encoding="utf-8")
                 fixed.append(path)
@@ -1417,7 +1427,8 @@ def theme() -> None:
     default=".",
     type=click.Path(file_okay=False, path_type=Path),
 )
-def theme_init(directory: Path) -> None:
+@click.option("--force", is_flag=True, default=False, help="Overwrite an existing _pdf-theme.css.")
+def theme_init(directory: Path, force: bool) -> None:
     """Generate a full _pdf-theme.css for a project or company root.
 
     \b
@@ -1429,6 +1440,10 @@ def theme_init(directory: Path) -> None:
 
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
+
+    css_path = directory / "_pdf-theme.css"
+    if css_path.exists() and not force:
+        raise click.ClickException(f"{css_path} already exists. Use --force to overwrite.")
 
     click.echo(
         _bold("Creating a new PDF theme.") + " " + _dim("Press Enter to accept defaults.") + "\n"
@@ -1483,7 +1498,8 @@ def theme_init(directory: Path) -> None:
     default=".",
     type=click.Path(file_okay=False, path_type=Path),
 )
-def theme_override(directory: Path) -> None:
+@click.option("--force", is_flag=True, default=False, help="Overwrite an existing _pdf-theme.css.")
+def theme_override(directory: Path, force: bool) -> None:
     """Generate a minimal colour-override _pdf-theme.css for a sub-folder.
 
     Finds the nearest parent _pdf-theme.css automatically and writes an
@@ -1502,6 +1518,10 @@ def theme_override(directory: Path) -> None:
 
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
+
+    css_path = directory / "_pdf-theme.css"
+    if css_path.exists() and not force:
+        raise click.ClickException(f"{css_path} already exists. Use --force to overwrite.")
 
     # Find parent theme
     parent = find_parent_theme(directory)

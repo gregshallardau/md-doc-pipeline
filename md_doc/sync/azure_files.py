@@ -63,6 +63,8 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
     service_client = ShareServiceClient.from_connection_string(connection_string)
     share_client = service_client.get_share_client(share_name)
 
+    from azure.core.exceptions import ResourceExistsError
+
     def _ensure_directory(dir_path: str) -> None:
         """Create the directory (and parents) inside the share if not present."""
         parts = [p for p in dir_path.split("/") if p]
@@ -72,8 +74,8 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
             dir_client = share_client.get_directory_client("/".join(built))
             try:
                 dir_client.create_directory()
-            except Exception:
-                pass  # Already exists
+            except ResourceExistsError:
+                pass  # Already exists — any other error propagates so failures surface
 
     for src in files:
         rel = src.relative_to(root)

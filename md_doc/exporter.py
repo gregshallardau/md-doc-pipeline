@@ -93,11 +93,12 @@ def stage_files(
     staging_dir.mkdir(parents=True, exist_ok=True)
     root = Path(source_dir).resolve() if source_dir is not None else None
 
-    # Clean previous staged .md files
+    # Clean previous staged .md sources and any build outputs left from a prior
+    # run so deleted/renamed notes don't leave phantom outputs behind.
+    _stale_suffixes = {".md", ".pdf", ".docx", ".dotx"}
     for existing in staging_dir.iterdir():
-        if existing.is_symlink() or existing.is_file():
-            if existing.suffix == ".md":
-                existing.unlink()
+        if (existing.is_symlink() or existing.is_file()) and existing.suffix in _stale_suffixes:
+            existing.unlink()
 
     staged: list[tuple[Path, Path, dict]] = []
     seen_names: set[str] = set()
