@@ -2690,6 +2690,50 @@ def _detect_diagram_type(source: str) -> str:
     return "flowchart"  # default
 
 
+def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
+    """Render a single Mermaid diagram *source* string to an SVG string.
+
+    Dispatches on the detected diagram type. Used by both the HTML pipeline
+    (PDF) and the docx builder (which rasterizes the SVG for embedding).
+    """
+    diagram_type = _detect_diagram_type(source)
+
+    if diagram_type == "pie":
+        return render_pie_svg(parse_pie(source), theme)
+    elif diagram_type == "donut":
+        return render_donut_svg(parse_pie(source), theme)
+    elif diagram_type == "sequence":
+        return render_sequence_svg(parse_sequence(source), theme)
+    elif diagram_type == "bar":
+        return render_bar_svg(parse_bar(source), theme)
+    elif diagram_type == "gauge":
+        return render_gauge_svg(parse_gauge(source), theme)
+    elif diagram_type == "timeline":
+        return render_timeline_svg(parse_timeline(source), theme)
+    elif diagram_type == "gantt":
+        return render_gantt_svg(parse_gantt(source), theme)
+    elif diagram_type == "mindmap":
+        return render_mindmap_svg(parse_mindmap(source), theme)
+    elif diagram_type == "er":
+        return render_er_svg(parse_er(source), theme)
+    elif diagram_type == "state":
+        return render_state_svg(parse_state(source), theme)
+    else:
+        # flowchart (default for unrecognized types too)
+        return render_svg(parse(source), theme)
+
+
+def _unescape_mermaid_source(source: str) -> str:
+    """Reverse the HTML entity escaping the markdown converter applies."""
+    return (
+        source.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+
+
 def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     """Replace all Mermaid code blocks in HTML with rendered SVGs.
 
@@ -2697,53 +2741,8 @@ def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     """
 
     def _replace(m: re.Match) -> str:
-        source = m.group(1)
-        # Unescape HTML entities that the markdown converter may have added
-        source = (
-            source.replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", '"')
-            .replace("&#39;", "'")
-        )
-
-        diagram_type = _detect_diagram_type(source)
-
-        if diagram_type == "pie":
-            pc = parse_pie(source)
-            svg = render_pie_svg(pc, theme)
-        elif diagram_type == "donut":
-            pc = parse_pie(source)  # same data model, different renderer
-            svg = render_donut_svg(pc, theme)
-        elif diagram_type == "sequence":
-            seq = parse_sequence(source)
-            svg = render_sequence_svg(seq, theme)
-        elif diagram_type == "bar":
-            bc = parse_bar(source)
-            svg = render_bar_svg(bc, theme)
-        elif diagram_type == "gauge":
-            gauge = parse_gauge(source)
-            svg = render_gauge_svg(gauge, theme)
-        elif diagram_type == "timeline":
-            tl = parse_timeline(source)
-            svg = render_timeline_svg(tl, theme)
-        elif diagram_type == "gantt":
-            gantt = parse_gantt(source)
-            svg = render_gantt_svg(gantt, theme)
-        elif diagram_type == "mindmap":
-            root = parse_mindmap(source)
-            svg = render_mindmap_svg(root, theme)
-        elif diagram_type == "er":
-            erd = parse_er(source)
-            svg = render_er_svg(erd, theme)
-        elif diagram_type == "state":
-            state = parse_state(source)
-            svg = render_state_svg(state, theme)
-        else:
-            # flowchart (default for unrecognized types too)
-            fc = parse(source)
-            svg = render_svg(fc, theme)
-
+        source = _unescape_mermaid_source(m.group(1))
+        svg = render_to_svg(source, theme)
         return f'<div class="mermaid-diagram" style="text-align:center;margin:8pt 0 12pt 0;">{svg}</div>'
 
     return _MERMAID_BLOCK_RE.sub(_replace, html)

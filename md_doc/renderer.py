@@ -23,6 +23,7 @@ from jinja2 import (
     Undefined,
     StrictUndefined,
 )
+from jinja2.sandbox import SandboxedEnvironment
 
 from .config import load_config
 
@@ -166,7 +167,10 @@ def render(
     loader = _MarkdownLoader(search_dirs)
 
     undefined_cls = StrictUndefined if strict else Undefined
-    env = Environment(
+    # SandboxedEnvironment blocks access to unsafe attributes/dunders so a
+    # document body authored by a third party can't execute arbitrary code at
+    # build time. Normal templating (vars, filters, includes) is unaffected.
+    env = SandboxedEnvironment(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,
@@ -217,7 +221,7 @@ def render_string(
     """
     undefined_cls = StrictUndefined if strict else Undefined
     loader = _MarkdownLoader(search_dirs or [])
-    env = Environment(
+    env = SandboxedEnvironment(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,

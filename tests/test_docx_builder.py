@@ -39,16 +39,18 @@ class TestTableColWidths:
         assert abs(widths[0] - widths[1]) <= 1  # rounding tolerance of 1 twip
 
     def test_custom_col_widths_applied(self, tmp_repo):
-        doc = _build_docx(tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n",
-                          {"table_col_widths": [30, 70]})
+        doc = _build_docx(
+            tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n", {"table_col_widths": [30, 70]}
+        )
         widths = _col_widths(doc)
         assert len(widths) == 2
         # 30:70 ratio — second column should be more than twice the first
         assert widths[1] > widths[0] * 2
 
     def test_col_widths_sum_to_text_width(self, tmp_repo):
-        doc = _build_docx(tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n",
-                          {"table_col_widths": [40, 60]})
+        doc = _build_docx(
+            tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n", {"table_col_widths": [40, 60]}
+        )
         widths = _col_widths(doc)
         tbl = doc.tables[0]._tbl
         tblPr = tbl.find(qn("w:tblPr"))
@@ -58,16 +60,20 @@ class TestTableColWidths:
 
     def test_mismatched_col_widths_falls_back_to_equal(self, tmp_repo):
         # [30, 70] has 2 values but table has 3 columns — falls back to equal
-        doc = _build_docx(tmp_repo, "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |\n",
-                          {"table_col_widths": [30, 70]})
+        doc = _build_docx(
+            tmp_repo,
+            "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |\n",
+            {"table_col_widths": [30, 70]},
+        )
         widths = _col_widths(doc)
         assert len(widths) == 3
         assert abs(widths[0] - widths[1]) <= 1
         assert abs(widths[1] - widths[2]) <= 1
 
     def test_cell_widths_match_grid(self, tmp_repo):
-        doc = _build_docx(tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n",
-                          {"table_col_widths": [30, 70]})
+        doc = _build_docx(
+            tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n", {"table_col_widths": [30, 70]}
+        )
         grid_widths = _col_widths(doc)
         table = doc.tables[0]
         for row in table.rows:
@@ -136,6 +142,7 @@ class TestColWidthsComment:
 class TestMergeFieldsInTableCells:
     def _dotx_xml(self, path: Path) -> str:
         import zipfile
+
         with zipfile.ZipFile(path) as zf:
             return zf.read("word/document.xml").decode("utf-8")
 
@@ -143,8 +150,13 @@ class TestMergeFieldsInTableCells:
         body = "| Label | Value |\n|---|---|\n| Client | [[contact_name]] |\n"
         out = tmp_repo / "out.dotx"
         from md_doc.builders.docx import build
-        build("---\ntitle: T\n---\n\n" + body,
-              {"title": "T", "cover_page": False}, out, output_format="dotx")
+
+        build(
+            "---\ntitle: T\n---\n\n" + body,
+            {"title": "T", "cover_page": False},
+            out,
+            output_format="dotx",
+        )
         xml = self._dotx_xml(out)
         assert "fldChar" in xml or "bookmarkStart" in xml
 
@@ -152,8 +164,13 @@ class TestMergeFieldsInTableCells:
         body = "| Label | Value |\n|---|---|\n| Client | [[contact_name]] |\n"
         out = tmp_repo / "out.dotx"
         from md_doc.builders.docx import build
-        build("---\ntitle: T\n---\n\n" + body,
-              {"title": "T", "cover_page": False}, out, output_format="dotx")
+
+        build(
+            "---\ntitle: T\n---\n\n" + body,
+            {"title": "T", "cover_page": False},
+            out,
+            output_format="dotx",
+        )
         xml = self._dotx_xml(out)
         assert "[[contact_name]]" not in xml
 
@@ -161,8 +178,12 @@ class TestMergeFieldsInTableCells:
         body = "| Label | Value |\n|---|---|\n| Client | [[contact_name]] |\n"
         out = tmp_repo / "out.dotx"
         from md_doc.builders.docx import build
-        build("---\ntitle: T\n---\n\n" + body,
-              {"title": "T", "cover_page": False, "dotx_field_type": "merge"},
-              out, output_format="dotx")
+
+        build(
+            "---\ntitle: T\n---\n\n" + body,
+            {"title": "T", "cover_page": False, "dotx_field_type": "merge"},
+            out,
+            output_format="dotx",
+        )
         xml = self._dotx_xml(out)
         assert "MERGEFIELD" in xml

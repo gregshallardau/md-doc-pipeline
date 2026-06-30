@@ -25,9 +25,11 @@ Use ``[[field_name]]`` in Markdown source alongside Jinja2 ``{{ }}``:
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import zipfile
+from io import BytesIO
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -37,7 +39,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Mm, Pt, RGBColor
+from docx.shared import Emu, Mm, Pt, RGBColor
 
 from ..docx_theme import (
     _hex_to_rgb,
@@ -48,6 +50,75 @@ from ..docx_theme import (
     set_para_shading,
 )
 from .pdf import _inject_page_breaks
+
+logger = logging.getLogger(__name__)
+
+# EMU per pixel at 96 DPI — used to size embedded raster images.
+_EMU_PER_PX = 9525
+
+
+def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
+    """Rasterize an SVG string to PNG bytes via cairosvg.
+
+    Returns ``(png_bytes, viewbox_w_px, viewbox_h_px)`` or ``None`` if cairosvg
+    is unavailable. The viewBox dimensions are used to size the embedded image
+    so diagrams keep their aspect ratio.
+    """
+    try:
+        import cairosvg  # type: ignore
+    except Exception:
+        return None
+
+    m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    if m:
+        vb_w, vb_h = float(m.group(1)), float(m.group(2))
+    else:
+        vb_w, vb_h = 800.0, 600.0
+
+    try:
+        png = cairosvg.svg2png(
+            bytestring=svg.encode("utf-8"),
+            output_width=int(vb_w * scale),
+            output_height=int(vb_h * scale),
+        )
+    except Exception as exc:  # pragma: no cover - depends on system cairo
+        logger.warning("Mermaid SVG rasterization failed: %s", exc)
+        return None
+    return png, int(vb_w), int(vb_h)
+
+
+_MERMAID_IMG_RE = re.compile(r"mermaid://(\d+)")
+
+
+def _render_mermaid_to_images(
+    html: str, theme: dict[str, str] | None
+) -> tuple[str, list[tuple[bytes, int, int]]]:
+    """Replace mermaid code blocks in *html* with ``<img src="mermaid://N">``.
+
+    Returns the rewritten HTML and a list of ``(png_bytes, w_px, h_px)`` tuples
+    indexed by N. Diagrams that can't be rasterized (cairosvg missing or a parse
+    error) are left as-is so they still render as a code block.
+    """
+    from ..mermaid import _MERMAID_BLOCK_RE, _unescape_mermaid_source, render_to_svg
+
+    images: list[tuple[bytes, int, int]] = []
+
+    def _replace(m: re.Match) -> str:
+        source = _unescape_mermaid_source(m.group(1))
+        try:
+            svg = render_to_svg(source, theme)
+            png = _svg_to_png(svg)
+        except Exception as exc:
+            logger.warning("Mermaid render failed: %s", exc)
+            png = None
+        if png is None:
+            return m.group(0)  # leave original code block
+        images.append(png)
+        idx = len(images) - 1
+        return f'<p><img src="mermaid://{idx}"></p>'
+
+    return _MERMAID_BLOCK_RE.sub(_replace, html), images
+
 
 # Markdown extensions (consistent with pdf builder)
 _MD_EXTENSIONS = [
@@ -332,13 +403,23 @@ class _DocxBuilder(HTMLParser):
         field_type: str | None = None,
         body_text_align: str | None = None,
         table_col_widths: list[float] | None = None,
+        *,
+        mermaid_images: list[tuple[bytes, int, int]] | None = None,
+        doc_path: Path | None = None,
+        repo_root: Path | None = None,
+        section_bar: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
+        self.convert_charrefs = True
         self.doc = doc
         self._theme: dict[str, Any] = theme or {}
         self._field_type = field_type  # None | "form" | "merge"
         self._body_text_align = body_text_align  # default alignment for Normal paragraphs
         self._table_col_widths = table_col_widths  # e.g. [30, 70] — relative column widths
+        self._mermaid_images = mermaid_images or []
+        self._doc_path = doc_path
+        self._repo_root = repo_root
+        self._section_bar = section_bar  # None or parsed section_bar config
 
         apply_theme_to_doc(self.doc, self._theme)
 
@@ -383,6 +464,9 @@ class _DocxBuilder(HTMLParser):
         self._current_href: str | None = None
         self._link_text_buf: str = ""
 
+        # Section-bar state — the heading tag currently wearing a bar (or None)
+        self._section_bar_active_tag: str | None = None
+
     # ------------------------------------------------------------------
     # Alignment helpers
     # ------------------------------------------------------------------
@@ -420,6 +504,48 @@ class _DocxBuilder(HTMLParser):
         if align is None:
             align = self._body_text_align
         return self._to_word_alignment(align)
+
+    # ------------------------------------------------------------------
+    # Section bar helpers (mirror pdf._build_section_bar_style)
+    # ------------------------------------------------------------------
+
+    def _apply_section_bar_start(self, tag: str) -> None:
+        """Apply the section-bar background/border to a freshly created heading."""
+        self._section_bar_active_tag = None
+        sb = self._section_bar
+        if not sb or tag not in sb["headings"] or self._paragraph is None:
+            return
+        self._section_bar_active_tag = tag
+        para = self._paragraph
+        if sb["text_on_bar"]:
+            set_para_shading(para, sb["color"].lstrip("#"))
+            # Snug the bar around the text (CSS padding: 6pt 12pt).
+            pf = para.paragraph_format
+            pf.space_before = Pt(6)
+            pf.space_after = Pt(6)
+            ind = para._p.get_or_add_pPr().get_or_add_ind()
+            ind.set(qn("w:left"), str(int(12 * 20)))
+            ind.set(qn("w:right"), str(int(12 * 20)))
+        else:
+            # border-top variant
+            pPr = para._p.get_or_add_pPr()
+            pBdr = OxmlElement("w:pBdr")
+            top = OxmlElement("w:top")
+            top.set(qn("w:val"), "single")
+            top.set(qn("w:sz"), str(max(1, round(4 * 8))))  # 4pt
+            top.set(qn("w:space"), "6")
+            top.set(qn("w:color"), sb["color"].lstrip("#").upper())
+            pBdr.append(top)
+            pPr.append(pBdr)
+
+    def _apply_section_bar_runs(self) -> None:
+        """Colour the heading's runs white once its text has been written."""
+        sb = self._section_bar
+        if not sb or not sb["text_on_bar"] or self._paragraph is None:
+            return
+        r, g, b = _hex_to_rgb(sb["text_color"])
+        for run in self._paragraph.runs:
+            run.font.color.rgb = RGBColor(r, g, b)
 
     # ------------------------------------------------------------------
     # Paragraph helpers
@@ -563,6 +689,7 @@ class _DocxBuilder(HTMLParser):
             word_align = self._effective_alignment(inline_align)
             if word_align is not None and self._paragraph is not None:
                 self._paragraph.alignment = word_align
+            self._apply_section_bar_start(tag)
 
         elif tag == "p":
             self._new_para("Normal")
@@ -614,6 +741,11 @@ class _DocxBuilder(HTMLParser):
                     self._paragraph = self.doc.add_paragraph(style="List Number")
             else:
                 self._new_para("List Bullet")
+            # Indent nested list items so depth is visible (the base list styles
+            # only indent one level, matching CSS nested-list indentation).
+            depth = max(len(self._list_stack), 1)
+            if depth > 1 and self._paragraph is not None:
+                self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
 
         elif tag == "pre":
             self._in_pre = True
@@ -638,6 +770,9 @@ class _DocxBuilder(HTMLParser):
             run = self._current_para().add_run()
             run._r.append(OxmlElement("w:br"))
             self._last_was_br = True
+
+        elif tag == "img":
+            self._embed_image(dict(attrs))
 
         elif tag == "hr":
             self._paragraph = self.doc.add_paragraph()
@@ -688,7 +823,14 @@ class _DocxBuilder(HTMLParser):
             self._current_cell_html += f"</{tag}>"
             return
 
-        if tag == "h1" and self._paragraph is not None:
+        if tag in ("h1", "h2", "h3", "h4") and self._paragraph is not None:
+            self._apply_section_bar_runs()
+
+        if (
+            tag == "h1"
+            and self._paragraph is not None
+            and self._section_bar_active_tag is None  # section bar replaces the default rule
+        ):
             color = self._theme.get("h1_border_color")
             pt = self._theme.get("h1_border_pt", 1.5)
             if color:
@@ -703,6 +845,7 @@ class _DocxBuilder(HTMLParser):
                 pPr.append(pBdr)
 
         if tag in ("h1", "h2", "h3", "h4", "p"):
+            self._section_bar_active_tag = None
             self._paragraph = None
 
         elif tag in ("ul", "ol"):
@@ -789,6 +932,58 @@ class _DocxBuilder(HTMLParser):
             self._in_table = False
             self._flush_table()
 
+    def _text_width_emu(self) -> int:
+        section = self.doc.sections[0]
+        return int(section.page_width - section.left_margin - section.right_margin)
+
+    def _embed_image(self, attrs: dict[str, str | None]) -> None:
+        """Embed an <img> as a picture: a mermaid:// reference or a file asset."""
+        if self._in_cell:
+            return
+        src = attrs.get("src") or ""
+        text_width = self._text_width_emu()
+
+        stream: Any = None
+        native_w_emu: int | None = None
+        m = _MERMAID_IMG_RE.fullmatch(src)
+        if m:
+            idx = int(m.group(1))
+            if idx >= len(self._mermaid_images):
+                return
+            png, w_px, _h_px = self._mermaid_images[idx]
+            stream = BytesIO(png)
+            native_w_emu = w_px * _EMU_PER_PX
+        else:
+            path = _resolve_asset(src, self._doc_path, self._repo_root)
+            if path is None:
+                # Unresolved image — fall back to alt text so nothing is silently lost.
+                alt = attrs.get("alt")
+                if alt:
+                    self._write_text(self._current_para(), str(alt))
+                logger.warning("docx: could not resolve image %r — skipped.", src)
+                return
+            stream = str(path)
+            try:
+                from PIL import Image
+
+                with Image.open(path) as im:
+                    native_w_emu = int(im.width * _EMU_PER_PX)
+            except Exception:
+                native_w_emu = None
+
+        width = text_width if native_w_emu is None else min(native_w_emu, text_width)
+
+        para = self.doc.add_paragraph()
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para.paragraph_format.space_before = Pt(6)
+        para.paragraph_format.space_after = Pt(6)
+        run = para.add_run()
+        try:
+            run.add_picture(stream, width=Emu(width))
+        except Exception as exc:
+            logger.warning("docx: failed to embed image %r: %s", src, exc)
+        self._paragraph = None
+
     def handle_data(self, data: str) -> None:
         if self._in_pre:
             self._pre_text += data
@@ -851,7 +1046,7 @@ class _DocxBuilder(HTMLParser):
         col_widths_twips: list[int]
         weights = self._active_table_col_widths or self._table_col_widths
         self._active_table_col_widths = None
-        if weights and len(weights) == max_cols:
+        if weights and len(weights) == max_cols and sum(weights) > 0:
             total = sum(weights)
             col_widths_twips = [round(text_width_twips * w / total) for w in weights]
             # Correct rounding drift so columns exactly fill the text width
@@ -952,10 +1147,11 @@ class _DocxBuilder(HTMLParser):
                     para, cell_html.strip(), self._theme, self._write_text, bold_override=is_header
                 )
 
-                # Apply body_text_align to cell paragraphs — Word table cells
-                # don't inherit document-level alignment the way body text does.
+                # Apply alignment to cell paragraphs — Word table cells don't
+                # inherit document-level/div alignment the way body text does,
+                # so resolve through the same cascade (div > body_text_align).
                 if not is_header:
-                    word_align = self._to_word_alignment(self._body_text_align)
+                    word_align = self._effective_alignment()
                     if word_align is not None:
                         para.alignment = word_align
 
@@ -990,8 +1186,10 @@ class _DocxBuilder(HTMLParser):
                     if header_bg:
                         set_cell_shading(cell, header_bg)
                 else:
-                    # Alternating row shading (even body rows: r_idx 2, 4, 6, …)
-                    if row_alt_bg and r_idx % 2 == 0:
+                    # Alternating row shading. CSS tr:nth-child(even) counts the
+                    # header as child 1, so the shaded body rows are the ones at
+                    # odd 0-based table index (r_idx 1, 3, 5, …).
+                    if row_alt_bg and r_idx % 2 == 1:
                         set_cell_shading(cell, row_alt_bg)
                     # Bottom border
                     _set_cell_bottom_border(
@@ -1054,11 +1252,14 @@ def _add_docx_cover_page(
     product = config.get("product", "")
     label = str(config.get("cover_label", "Report"))
     show_bar = bool(config.get("cover_bar", True))
+    show_divider = bool(config.get("cover_divider", True))
+    show_footer = bool(config.get("cover_footer", True))
     bar_height_str = str(config.get("cover_bar_height", "10mm"))
     footer_text = config.get("cover_footer_text") or (
         f"{author}  ·  Confidential" if author else ""
     )
     meta_label = str(config.get("cover_meta_label", "Prepared by"))
+    meta_author = str(config.get("cover_meta_author", author))
 
     bar_color = (theme.get("color_table_header_bg") or theme.get("color_h1") or "1b4f72").lstrip(
         "#"
@@ -1135,26 +1336,29 @@ def _add_docx_cover_page(
         builder._write_text(sub_para, product)
 
     # 5. Divider line (3pt, uses bar colour)
-    div_para = doc.add_paragraph()
-    div_para.paragraph_format.space_before = Pt(14)
-    div_para.paragraph_format.space_after = Pt(14)
-    pPr = div_para._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bot = OxmlElement("w:bottom")
-    bot.set(qn("w:val"), "single")
-    bot.set(qn("w:sz"), "24")  # 3pt
-    bot.set(qn("w:space"), "0")
-    bot.set(qn("w:color"), bar_color.upper())
-    pBdr.append(bot)
-    pPr.append(pBdr)
+    if show_divider:
+        div_para = doc.add_paragraph()
+        div_para.paragraph_format.space_before = Pt(14)
+        div_para.paragraph_format.space_after = Pt(14)
+        pPr = div_para._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        bot = OxmlElement("w:bottom")
+        bot.set(qn("w:val"), "single")
+        bot.set(qn("w:sz"), "24")  # 3pt
+        bot.set(qn("w:space"), "0")
+        bot.set(qn("w:color"), bar_color.upper())
+        pBdr.append(bot)
+        pPr.append(pBdr)
+    else:
+        doc.add_paragraph().paragraph_format.space_after = Pt(14)
 
     # 6. Author / date metadata
-    if author:
+    if meta_author:
         mp = doc.add_paragraph()
         mp.paragraph_format.space_before = Pt(0)
         mp.paragraph_format.space_after = Pt(4)
         mp.add_run(f"{meta_label}: ").bold = True
-        builder._write_text(mp, author)
+        builder._write_text(mp, meta_author)
     if date_str:
         mp = doc.add_paragraph()
         mp.paragraph_format.space_before = Pt(0)
@@ -1163,7 +1367,7 @@ def _add_docx_cover_page(
         builder._write_text(mp, date_str)
 
     # 7. Footer text (confidentiality notice)
-    if footer_text:
+    if show_footer and footer_text:
         doc.add_paragraph()  # spacer
         fp = doc.add_paragraph()
         fp.paragraph_format.space_before = Pt(0)
@@ -1173,38 +1377,6 @@ def _add_docx_cover_page(
         if col:
             r, g, b = _hex_to_rgb(col)
             run.font.color.rgb = RGBColor(r, g, b)
-
-    doc.add_page_break()
-
-
-def _add_cover_page(doc: Document, config: dict[str, Any], builder: "_DocxBuilder") -> None:
-    """Insert a cover page section followed by a page break.
-
-    All text values may contain ``[[field]]`` markers — rendered via *builder*
-    so the correct field type (form/merge) and bookmark ID counter are used.
-    """
-    title = config.get("title", "")
-    author = config.get("author", "")
-    date = config.get("date", "")
-    product = config.get("product", "")
-
-    title_para = doc.add_paragraph(style="Title")
-    builder._write_text(title_para, title or "«Document Title»")
-
-    if product:
-        sub_para = doc.add_paragraph(style="Subtitle")
-        builder._write_text(sub_para, product)
-
-    if author or date:
-        doc.add_paragraph()  # spacer
-        if author:
-            meta = doc.add_paragraph()
-            meta.add_run("Prepared by: ").bold = True
-            builder._write_text(meta, author)
-        if date:
-            meta = doc.add_paragraph()
-            meta.add_run("Date: ").bold = True
-            builder._write_text(meta, date)
 
     doc.add_page_break()
 
@@ -1291,6 +1463,20 @@ def _extract_title(md_content: str) -> str | None:
 
 def _strip_leading_h1(md_content: str) -> str:
     return re.sub(r"^#\s+.+\n?", "", md_content, count=1, flags=re.MULTILINE)
+
+
+def _strip_form_fields_for_docx(md_content: str) -> str:
+    """Render PDF ``?[...]`` form markers as a plain fill-in line for Word.
+
+    Word output doesn't support the interactive AcroForm fields the PDF builder
+    produces from ``?[...]`` markers, so rather than leaking the literal marker
+    text we substitute an underscore fill-in line. ``?[row]``/``?[/row]`` layout
+    markers are dropped.
+    """
+    from .pdf import _FORM_FIELD_RE
+
+    md_content = re.sub(r"^\?\[/?row\]\s*$", "", md_content, flags=re.MULTILINE)
+    return _FORM_FIELD_RE.sub("________", md_content)
 
 
 def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[str, Any]:
@@ -1472,15 +1658,68 @@ def _add_page_header_bar(
 # ---------------------------------------------------------------------------
 
 
-def _add_footer(doc: Document, config: dict[str, Any]) -> None:
-    """Add footer_center text to the document's default section footer.
+_FOOTER_TOKEN_RE = re.compile(r"(\{pages?\})")
 
-    Newlines in the text become separate paragraphs so each line renders
-    independently. The first paragraph gets a top border to visually separate
-    the footer from body content.
+
+def _add_simple_field(paragraph: Any, instr: str) -> Any:
+    """Append a simple Word field (e.g. ``PAGE``/``NUMPAGES``); return its value run."""
+    run = paragraph.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    run._r.append(begin)
+
+    run2 = paragraph.add_run()
+    instr_el = OxmlElement("w:instrText")
+    instr_el.set(qn("xml:space"), "preserve")
+    instr_el.text = f" {instr} "
+    run2._r.append(instr_el)
+
+    run3 = paragraph.add_run()
+    sep = OxmlElement("w:fldChar")
+    sep.set(qn("w:fldCharType"), "separate")
+    run3._r.append(sep)
+
+    value_run = paragraph.add_run("1")
+
+    run5 = paragraph.add_run()
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    run5._r.append(end)
+    return value_run
+
+
+def _emit_footer_segment(paragraph: Any, text: str) -> list[Any]:
+    """Write *text* into *paragraph*, expanding ``{page}``/``{pages}`` to fields.
+
+    Returns every run created so the caller can apply a consistent footer style.
     """
-    center_text: str | None = config.get("footer_center")
-    if not center_text:
+    runs: list[Any] = []
+    for part in _FOOTER_TOKEN_RE.split(text):
+        if part == "{page}":
+            runs.append(_add_simple_field(paragraph, "PAGE"))
+        elif part == "{pages}":
+            runs.append(_add_simple_field(paragraph, "NUMPAGES"))
+        elif part:
+            for i, line in enumerate(part.split("\n")):
+                if i > 0:
+                    paragraph.add_run().add_break()
+                if line:
+                    runs.append(paragraph.add_run(line))
+    return runs
+
+
+def _add_footer(doc: Document, config: dict[str, Any]) -> None:
+    """Populate the document footer from footer_left/center/right.
+
+    The three slots are laid out with centre and right tab stops so they mirror
+    the PDF ``@bottom-left/center/right`` margin boxes. ``{page}`` and
+    ``{pages}`` tokens become live Word page-number fields (the same tokens work
+    in the PDF footer). A top border separates the footer from body content.
+    """
+    left_text = config.get("footer_left")
+    center_text = config.get("footer_center")
+    right_text = config.get("footer_right")
+    if not any([left_text, center_text, right_text]):
         return
 
     section = doc.sections[0]
@@ -1492,9 +1731,15 @@ def _add_footer(doc: Document, config: dict[str, Any]) -> None:
         p = para._element
         p.getparent().remove(p)
 
-    lines = center_text.split("\n")
+    text_width_emu = int(section.page_width - section.left_margin - section.right_margin)
+
     para = footer.add_paragraph()
-    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    from docx.enum.text import WD_TAB_ALIGNMENT
+
+    tabs = para.paragraph_format.tab_stops
+    tabs.add_tab_stop(Emu(text_width_emu // 2), WD_TAB_ALIGNMENT.CENTER)
+    tabs.add_tab_stop(Emu(text_width_emu), WD_TAB_ALIGNMENT.RIGHT)
 
     pPr = para._element.get_or_add_pPr()
     pBdr = OxmlElement("w:pBdr")
@@ -1506,12 +1751,85 @@ def _add_footer(doc: Document, config: dict[str, Any]) -> None:
     pBdr.append(top)
     pPr.append(pBdr)
 
-    for i, line in enumerate(lines):
-        if i > 0:
-            para.add_run().add_break()
-        run = para.add_run(line)
+    runs: list[Any] = []
+    runs += _emit_footer_segment(para, str(left_text)) if left_text else []
+    para.add_run().add_tab()
+    runs += _emit_footer_segment(para, str(center_text)) if center_text else []
+    para.add_run().add_tab()
+    runs += _emit_footer_segment(para, str(right_text)) if right_text else []
+
+    for run in runs:
         run.font.size = Pt(6)
         run.font.color.rgb = RGBColor(0x73, 0x85, 0x99)
+
+
+def _add_plain_header(
+    doc: Document,
+    config: dict[str, Any],
+    doc_path: Path | None,
+    repo_root: Path | None,
+) -> None:
+    """Add header_text / header_logo to the page header when no header bar is used.
+
+    Mirrors the PDF ``@top-left``/``@top-right`` margin boxes so a document that
+    only sets ``header_text``/``header_logo`` (without ``page_header_bar``) still
+    shows them in Word.
+    """
+    if config.get("page_header_bar"):
+        return  # the coloured bar already renders header text/logo
+    header_text = config.get("header_text")
+    logo_file = config.get("header_logo")
+    if not header_text and not logo_file:
+        return
+
+    text_position = str(config.get("header_text_position", "left")).lower()
+    logo_position = str(config.get("header_logo_position", "right")).lower()
+    logo_path = _resolve_asset(str(logo_file), doc_path, repo_root) if logo_file else None
+
+    section = doc.sections[0]
+    section.header.is_linked_to_previous = False
+    header = section.header
+    for para in list(header.paragraphs):
+        para._p.getparent().remove(para._p)
+
+    text_width_emu = int(section.page_width - section.left_margin - section.right_margin)
+    para = header.add_paragraph()
+    from docx.enum.text import WD_TAB_ALIGNMENT
+
+    tabs = para.paragraph_format.tab_stops
+    tabs.add_tab_stop(Emu(text_width_emu // 2), WD_TAB_ALIGNMENT.CENTER)
+    tabs.add_tab_stop(Emu(text_width_emu), WD_TAB_ALIGNMENT.RIGHT)
+
+    # Place text and logo into left/center/right slots via tab stops.
+    slots: dict[str, list[Any]] = {"left": [], "center": [], "right": []}
+
+    def _slot_text(pos: str) -> None:
+        run = para.add_run(str(header_text))
+        run.font.size = Pt(8)
+        run.font.color.rgb = RGBColor(0x5D, 0x6D, 0x7E)
+
+    def _slot_logo(pos: str) -> None:
+        run = para.add_run()
+        try:
+            run.add_picture(str(logo_path), height=Mm(6))
+        except Exception as exc:
+            logger.warning("docx header logo embed failed: %s", exc)
+
+    # Build an ordered slot plan, then emit with tabs between left/center/right.
+    plan: dict[str, Any] = {}
+    if header_text:
+        plan[text_position if text_position in slots else "left"] = _slot_text
+    if logo_path:
+        plan[logo_position if logo_position in slots else "right"] = _slot_logo
+
+    if "left" in plan:
+        plan["left"]("left")
+    para.add_run().add_tab()
+    if "center" in plan:
+        plan["center"]("center")
+    para.add_run().add_tab()
+    if "right" in plan:
+        plan["right"]("right")
 
 
 # ---------------------------------------------------------------------------
@@ -1569,9 +1887,25 @@ def build(
         body = _strip_leading_h1(body)
 
     body = _inject_page_breaks(body)
+    body = _strip_form_fields_for_docx(body)
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)
+
+    # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF
+    # uses so diagram colours match across formats. Falls back to leaving the
+    # code block if cairosvg is unavailable.
+    mermaid_theme = None
+    try:
+        from .pdf import _resolve_css
+        from ..mermaid import extract_theme_from_css
+
+        css_path = _resolve_css(config, repo_root, doc_path=doc_path)
+        if css_path and css_path.exists():
+            mermaid_theme = extract_theme_from_css(css_path.read_text(encoding="utf-8"))
+    except Exception:
+        mermaid_theme = None
+    html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)
 
     theme = _resolve_docx_theme(doc_path, repo_root)
     doc = Document()
@@ -1588,6 +1922,7 @@ def build(
             props.author = author
 
     _add_page_header_bar(doc, config, doc_path, repo_root)
+    _add_plain_header(doc, config, doc_path, repo_root)
     _add_footer(doc, config)
 
     body_text_align = str(config.get("body_text_align", "")).lower() or None
@@ -1599,19 +1934,32 @@ def build(
     ):
         table_col_widths = [float(v) for v in raw_col_widths]
 
+    section_bar: dict[str, Any] | None = None
+    if config.get("section_bar"):
+        headings_raw = str(config.get("section_bar_headings", "h1,h2"))
+        section_bar = {
+            "color": str(config.get("section_bar_color", "#2563eb")),
+            "text_color": str(config.get("section_bar_text_color", "#ffffff")),
+            "text_on_bar": bool(config.get("section_bar_text_on_bar", True)),
+            "headings": {h.strip().lower() for h in headings_raw.split(",") if h.strip()},
+        }
+
     builder = _DocxBuilder(
         doc,
         theme=theme,
         field_type=field_type,
         body_text_align=body_text_align,
         table_col_widths=table_col_widths,
+        mermaid_images=mermaid_images,
+        doc_path=doc_path,
+        repo_root=repo_root,
+        section_bar=section_bar,
     )
 
     if cover_page:
-        if is_dotx:
-            _add_cover_page(doc, {**config, "title": title}, builder)
-        else:
-            _add_docx_cover_page(doc, {**config, "title": title}, builder, theme)
+        # Both docx and dotx use the richer composable cover; _write_text keeps
+        # [[field]] markers working in dotx output.
+        _add_docx_cover_page(doc, {**config, "title": title}, builder, theme)
     elif not is_dotx:
         doc.add_paragraph(title, style="Title")
 
