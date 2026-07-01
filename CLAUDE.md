@@ -60,6 +60,7 @@ uv run md-doc export /path/to/vault --no-symlinks # copy files instead of symlin
 uv run md-doc export /path/to/vault --dry-run    # show what would be exported
 
 # Other
+uv run md-doc doctor             # Check Python, deps, WeasyPrint system libs, optional extras
 uv run md-doc sync [PATH]        # Push outputs to remote storage
 uv run md-doc register [PATH]    # Generate document registry
 

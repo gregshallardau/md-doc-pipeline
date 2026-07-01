@@ -336,10 +336,20 @@ def _build_document(
                 rel_out = _short_path(out_path, verbose=verbose)
             events.append(("wrote", rel_out))
         except ImportError as exc:
-            events.append(("error", f"builder not available for '{format_name}': {exc}"))
+            events.append(
+                (
+                    "error",
+                    f"builder not available for '{format_name}': {exc}\n"
+                    f"      run `md-doc doctor` to check dependencies",
+                )
+            )
             errored = True
         except Exception as exc:
             msg = f"build failed ({format_name}): {type(exc).__name__}: {exc}"
+            # Missing WeasyPrint system libraries surface as OSError — point the
+            # user at the preflight command instead of a bare stack trace.
+            if isinstance(exc, OSError):
+                msg += "\n      likely a missing system library — run `md-doc doctor`"
             if verbose:
                 import traceback
 
@@ -527,6 +537,104 @@ def _resolve_workspace_root(workspace: str, root: Path, repo_root: Path) -> Path
 @click.version_option(package_name="md-doc-pipeline")
 def main() -> None:
     """Markdown → PDF/DOCX/DOTX document pipeline with cascading config and sync."""
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+_WEASYPRINT_APT = (
+    "libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 "
+    "libgdk-pixbuf2.0-0 libcairo2 libffi-dev shared-mime-info"
+)
+
+
+@main.command()
+def doctor() -> None:
+    """Check that the environment can build documents.
+
+    Verifies the Python version, core dependencies, WeasyPrint's system
+    libraries (via a tiny in-memory render), and reports which optional extras
+    (S3, Azure, Mermaid-in-Word) are installed. Exits non-zero if a required
+    check fails so it can gate CI.
+    """
+    import platform
+
+    ok = True
+
+    def _check(label: str, passed: bool, hint: str = "") -> None:
+        nonlocal ok
+        if passed:
+            click.echo(f"  {_ok('✓')} {label}")
+        else:
+            ok = False
+            click.echo(f"  {_err('✗')} {label}" + (f"\n      {_dim(hint)}" if hint else ""))
+
+    click.echo(_bold("Environment"))
+    py = sys.version_info
+    _check(
+        f"Python {py.major}.{py.minor}.{py.micro} (>= 3.11 required)",
+        py >= (3, 11),
+        f"md-doc needs Python 3.11+; this is {platform.python_version()}.",
+    )
+
+    click.echo("\n" + _bold("Core dependencies"))
+    for module, pip_name in (
+        ("weasyprint", "weasyprint"),
+        ("markdown", "markdown"),
+        ("docx", "python-docx"),
+        ("jinja2", "jinja2"),
+        ("yaml", "pyyaml"),
+        ("click", "click"),
+    ):
+        try:
+            __import__(module)
+            _check(f"import {module}", True)
+        except Exception as exc:  # noqa: BLE001
+            _check(f"import {module}", False, f"pip install {pip_name}  ({exc})")
+
+    click.echo("\n" + _bold("WeasyPrint system libraries"))
+    try:
+        import weasyprint
+
+        weasyprint.HTML(string="<p>ok</p>").write_pdf()
+        _check("render a test PDF", True)
+    except Exception as exc:  # noqa: BLE001 — surfaces missing libpango/libcairo, etc.
+        _check(
+            "render a test PDF",
+            False,
+            f"{type(exc).__name__}: {exc}\n      "
+            f"Install system libs — Debian/Ubuntu: sudo apt-get install {_WEASYPRINT_APT}\n      "
+            "macOS: brew install pango gdk-pixbuf libffi  ·  "
+            "docs: https://doc.courtbouillon.org/weasyprint/stable/first_steps.html",
+        )
+
+    click.echo("\n" + _bold("Optional extras") + _dim(" (not required)"))
+    for module, label, note in (
+        ("boto3", "S3 sync  [s3]", "pip install 'md-doc-pipeline[s3]'"),
+        (
+            "azure.storage.fileshare",
+            "Azure sync  [azure]",
+            "pip install 'md-doc-pipeline[azure]'",
+        ),
+        (
+            "cairosvg",
+            "Mermaid diagrams in Word  [mermaid]",
+            "pip install 'md-doc-pipeline[mermaid]' — without it, diagrams fall back to code blocks in .docx/.dotx",
+        ),
+    ):
+        try:
+            __import__(module)
+            click.echo(f"  {_ok('✓')} {label}")
+        except Exception:  # noqa: BLE001
+            click.echo(f"  {_dim('·')} {label} — {_dim(note)}")
+
+    click.echo("")
+    if ok:
+        click.echo(_ok("✓ All required checks passed."))
+    else:
+        click.echo(_err("✗ Some required checks failed — see hints above."), err=True)
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
