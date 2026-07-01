@@ -180,6 +180,204 @@ def _resolve_output_path(
         return doc_path.with_suffix(ext)
 
 
+_BUILD_DEP_NAMES = (
+    "_meta.yml",
+    "_pdf-theme.css",
+    "_theme.css",
+    "_docx-theme.css",
+    "_merge_fields.yml",
+)
+
+
+def _newest_dep_mtime(doc_path: Path, repo_root: Path, extra: list[Path] | None = None) -> float:
+    """Return the newest mtime among a document's build inputs.
+
+    Inputs are the source ``.md`` plus, at every directory from *repo_root* down
+    to the document, any ``_meta.yml``/theme/``_merge_fields.yml`` file and every
+    file under a ``templates/`` subdir (include fragments). Used to decide
+    whether an existing output is stale. Returns ``inf`` if nothing is found so
+    the caller always rebuilds.
+    """
+    deps: list[Path] = [doc_path]
+    doc_dir = doc_path.parent
+    dirs: list[Path]
+    try:
+        rel = doc_dir.relative_to(repo_root)
+        dirs = [repo_root] + [
+            repo_root / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)
+        ]
+    except ValueError:
+        dirs = [doc_dir]
+    for d in dirs:
+        for name in _BUILD_DEP_NAMES:
+            deps.append(d / name)
+        tdir = d / "templates"
+        if tdir.is_dir():
+            deps.extend(p for p in tdir.rglob("*") if p.is_file())
+    if extra:
+        deps.extend(extra)
+    mtimes = [p.stat().st_mtime for p in deps if p.exists()]
+    return max(mtimes) if mtimes else float("inf")
+
+
+def _build_document(
+    doc_path: Path,
+    *,
+    root: Path,
+    cascade_root: Path,
+    output: Path | None,
+    theme: Path | None,
+    fmt: str,
+    strict: bool,
+    force: bool,
+    verbose: bool,
+) -> dict[str, Any]:
+    """Build one document to all its formats. Pure/worker-safe: returns a result
+    dict (no console I/O) so it can run in a process pool.
+
+    Result keys: ``rel`` (str), ``formats`` (list[str]), ``events``
+    (list of ``(level, text)`` where level is wrote|skip|error|warn),
+    ``built`` (int), ``skipped`` (int), ``errored`` (bool).
+    """
+    events: list[tuple[str, str]] = []
+    built = 0
+    skipped = 0
+    errored = False
+
+    config = load_config(doc_path, repo_root=cascade_root)
+    config = _render_config_strings(config)
+    if theme is not None:
+        config["pdf_theme"] = str(theme.resolve())
+
+    formats = get_output_formats(config) if fmt == "all" else [fmt]
+
+    effective_output = output
+    if effective_output is None:
+        cfg_out = config.get("output_dir")
+        if cfg_out:
+            cfg_out_path = Path(str(cfg_out)).expanduser()
+            effective_output = (
+                (root / cfg_out_path).resolve()
+                if not cfg_out_path.is_absolute()
+                else cfg_out_path.resolve()
+            )
+
+    theme_dep = [theme.resolve()] if theme is not None else None
+    dep_mtime = _newest_dep_mtime(doc_path, cascade_root, extra=theme_dep)
+
+    stale: list[tuple[str, Path]] = []
+    for format_name in formats:
+        ext = (
+            "-form.pdf" if (format_name == "pdf" and config.get("pdf_forms")) else f".{format_name}"
+        )
+        out_path = _resolve_output_path(doc_path, root, effective_output, ext)
+        try:
+            out_path = _apply_filename_override(out_path, config, format_name)
+        except Exception as exc:
+            events.append(("error", f"output_filename render failed: {type(exc).__name__}: {exc}"))
+            errored = True
+            continue
+        if not force and out_path.exists() and out_path.stat().st_mtime >= dep_mtime:
+            events.append(("skip", f"up to date {out_path.name}"))
+            skipped += 1
+        else:
+            stale.append((format_name, out_path))
+
+    if not stale:
+        return {
+            "rel": _rel(doc_path, root),
+            "formats": formats,
+            "events": events,
+            "built": built,
+            "skipped": skipped,
+            "errored": errored,
+        }
+
+    try:
+        rendered_md = render(doc_path, repo_root=cascade_root, strict=strict)
+    except Exception as exc:
+        msg = f"render failed: {type(exc).__name__}: {exc}"
+        if verbose:
+            import traceback
+
+            msg += "\n" + traceback.format_exc()
+        events.append(("error", msg))
+        return {
+            "rel": _rel(doc_path, root),
+            "formats": formats,
+            "events": events,
+            "built": built,
+            "skipped": skipped,
+            "errored": True,
+        }
+
+    for format_name, out_path in stale:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if format_name == "pdf":
+                from .builders.pdf import build as build_pdf  # type: ignore[import]
+
+                build_pdf(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+            elif format_name == "docx":
+                from .builders.docx import build as build_docx  # type: ignore[import]
+
+                build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+            elif format_name == "dotx":
+                from .builders.dotx import build as build_dotx  # type: ignore[import]
+
+                build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+            else:
+                events.append(("warn", f"unknown format '{format_name}' — skipped"))
+                continue
+            built += 1
+            if out_path.is_relative_to(root):
+                rel_out = str(out_path.relative_to(root))
+            else:
+                rel_out = _short_path(out_path, verbose=verbose)
+            events.append(("wrote", rel_out))
+        except ImportError as exc:
+            events.append(("error", f"builder not available for '{format_name}': {exc}"))
+            errored = True
+        except Exception as exc:
+            msg = f"build failed ({format_name}): {type(exc).__name__}: {exc}"
+            if verbose:
+                import traceback
+
+                msg += "\n" + traceback.format_exc()
+            events.append(("error", msg))
+            errored = True
+
+    return {
+        "rel": _rel(doc_path, root),
+        "formats": formats,
+        "events": events,
+        "built": built,
+        "skipped": skipped,
+        "errored": errored,
+    }
+
+
+def _rel(p: Path, root: Path) -> str:
+    try:
+        return str(p.relative_to(root))
+    except ValueError:
+        return str(p)
+
+
+def _print_doc_result(res: dict[str, Any]) -> None:
+    """Render a :func:`_build_document` result to the console."""
+    click.echo(f"  {_info(res['rel'])}  →  {_bold(', '.join(res['formats']))}")
+    for level, text in res["events"]:
+        if level == "wrote":
+            click.echo(f"    {_ok('✓')} wrote {_info(text)}")
+        elif level == "skip":
+            click.echo(f"    {_dim('·')} {_dim(text)}")
+        elif level == "warn":
+            click.echo(f"    {_warn('WARN')} {text}", err=True)
+        else:  # error
+            click.echo(f"    {_err('ERROR')} {text}", err=True)
+
+
 def _render_config_strings(config: dict[str, Any]) -> dict[str, Any]:
     """Render Jinja2 expressions in string config values against the config itself.
 
@@ -382,6 +580,22 @@ def main() -> None:
     "--dry-run", is_flag=True, default=False, help="Print what would be built without building."
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Rebuild every document even if its output is newer than the source, "
+        "config, theme and templates. By default up-to-date outputs are skipped."
+    ),
+)
+@click.option(
+    "--jobs",
+    "-j",
+    default=1,
+    type=click.IntRange(min=1),
+    help="Build this many documents in parallel (process pool). Default: 1 (sequential).",
+)
+@click.option(
     "--verbose", "-v", is_flag=True, default=False, help="Print full tracebacks on errors."
 )
 def build(
@@ -393,6 +607,8 @@ def build(
     strict: bool,
     no_lint: bool,
     dry_run: bool,
+    force: bool,
+    jobs: int,
     verbose: bool,
 ) -> None:
     """Build all Markdown documents under ROOT to PDF and/or DOCX.
@@ -480,127 +696,74 @@ def build(
             sys.exit(1)
 
     errors: list[str] = []
+    skipped = 0
 
-    for doc_path in docs:
-        config = load_config(doc_path, repo_root=cascade_root)
-        config = _render_config_strings(config)
+    # Dry-run: just list what would be built (per-document config/formats).
+    if dry_run:
+        for doc_path in docs:
+            config = _render_config_strings(load_config(doc_path, repo_root=cascade_root))
+            formats = get_output_formats(config) if fmt == "all" else [fmt]
+            click.echo(f"  {_info(_rel(doc_path, root))}  →  {_bold(', '.join(formats))}")
+        click.echo(_dim("Dry run — nothing built."))
+        return
 
-        if theme is not None:
-            config["pdf_theme"] = str(theme.resolve())
+    def _build_one(d: Path) -> dict[str, Any]:
+        # _build_document must be called by reference (module-level, picklable)
+        # in the pool path; keyword args below are all picklable.
+        return _build_document(
+            d,
+            root=root,
+            cascade_root=cascade_root,
+            output=output,
+            theme=theme,
+            fmt=fmt,
+            strict=strict,
+            force=force,
+            verbose=verbose,
+        )
 
-        # Determine formats for this document
-        if fmt == "all":
-            formats = get_output_formats(config)
-        else:
-            formats = [fmt]
+    def _tally(res: dict[str, Any]) -> None:
+        nonlocal skipped
+        skipped += res["skipped"]
+        if res["errored"]:
+            errors.append(res["rel"])
 
-        click.echo(f"  {_info(str(doc_path.relative_to(root)))}  →  {_bold(', '.join(formats))}")
+    if jobs > 1 and len(docs) > 1:
+        from concurrent.futures import ProcessPoolExecutor
 
-        if dry_run:
-            continue
-
-        # Render through Jinja2 — use the actual repo root so template
-        # cascades (templates/ in ancestor dirs) resolve correctly even
-        # when building a sub-tree.
-        try:
-            rendered_md = render(doc_path, repo_root=cascade_root, strict=strict)
-        except Exception as exc:
-            click.echo(f"    {_err('ERROR')} render failed: {type(exc).__name__}: {exc}", err=True)
-            if verbose:
-                import traceback
-
-                traceback.print_exc()
-            errors.append(str(doc_path))
-            continue
-
-        # Resolve effective output dir: CLI --output wins; config output_dir mirrors source tree
-        effective_output = output
-        flat = False
-        if effective_output is None:
-            cfg_out = config.get("output_dir")
-            if cfg_out:
-                cfg_out_path = Path(str(cfg_out)).expanduser()
-                effective_output = (
-                    (root / cfg_out_path).resolve()
-                    if not cfg_out_path.is_absolute()
-                    else cfg_out_path.resolve()
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            futures = [
+                pool.submit(
+                    _build_document,
+                    d,
+                    root=root,
+                    cascade_root=cascade_root,
+                    output=output,
+                    theme=theme,
+                    fmt=fmt,
+                    strict=strict,
+                    force=force,
+                    verbose=verbose,
                 )
-
-        # Build each format
-        for format_name in formats:
-            if format_name == "pdf" and config.get("pdf_forms"):
-                ext = "-form.pdf"
-            else:
-                ext = f".{format_name}"
-            out_path = _resolve_output_path(doc_path, root, effective_output, ext, flat=flat)
-            try:
-                out_path = _apply_filename_override(out_path, config, format_name)
-            except Exception as exc:
-                click.echo(
-                    f"    {_err('ERROR')} output_filename render failed: "
-                    f"{type(exc).__name__}: {exc}",
-                    err=True,
-                )
-                errors.append(str(doc_path))
-                continue
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                if format_name == "pdf":
-                    from .builders.pdf import build as build_pdf  # type: ignore[import]
-
-                    build_pdf(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root
-                    )
-                elif format_name == "docx":
-                    from .builders.docx import build as build_docx  # type: ignore[import]
-
-                    build_docx(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root
-                    )
-                elif format_name == "dotx":
-                    from .builders.dotx import build as build_dotx  # type: ignore[import]
-
-                    build_dotx(
-                        rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root
-                    )
-                else:
-                    click.echo(
-                        f"    {_warn('WARN')} unknown format '{format_name}' — skipped",
-                        err=True,
-                    )
-                    continue
-                if out_path.is_relative_to(root):
-                    rel_out_str = str(out_path.relative_to(root))
-                else:
-                    # Output went outside the build root (e.g. --output ../foo) —
-                    # show a short cwd-relative path with .. parts when needed.
-                    rel_out_str = _short_path(out_path, verbose=verbose)
-                click.echo(f"    {_ok('✓')} wrote {_info(rel_out_str)}")
-            except ImportError as exc:
-                click.echo(
-                    f"    {_err('ERROR')} builder not available for '{format_name}': {exc}",
-                    err=True,
-                )
-                errors.append(str(doc_path))
-            except Exception as exc:
-                click.echo(
-                    f"    {_err('ERROR')} build failed ({format_name}): "
-                    f"{type(exc).__name__}: {exc}",
-                    err=True,
-                )
-                if verbose:
-                    import traceback
-
-                    traceback.print_exc()
-                errors.append(str(doc_path))
+                for d in docs
+            ]
+            for fut in futures:  # submission order → deterministic output
+                res = fut.result()
+                _print_doc_result(res)
+                _tally(res)
+    else:
+        for doc_path in docs:
+            res = _build_one(doc_path)
+            _print_doc_result(res)
+            _tally(res)
 
     if errors:
         click.echo("\n" + _err(f"{len(errors)} error(s)") + " — check output above.", err=True)
         sys.exit(1)
 
     if not dry_run:
-        click.echo(_ok("✓ Build complete."))
+        suffix = f" ({skipped} up to date, skipped)" if skipped else ""
+        click.echo(_ok("✓ Build complete.") + _dim(suffix))
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +877,7 @@ def export(
       md-doc export /mnt/NAS/Obsidian/MyVault --tag cheatsheet
       md-doc export . --format pdf --dry-run
     """
-    from .exporter import find_exportable, stage_files, collect_outputs
+    from .exporter import find_exportable, stage_files
 
     repo_root = _find_repo_root(Path.cwd())
 
@@ -779,11 +942,32 @@ def export(
         click.echo("\n" + _dim(f"Would export to: {dest}"))
         return
 
-    # Stage into a temporary workspace inside the pipeline
-    pipeline_root = Path(__file__).resolve().parent.parent
-    staging_dir = pipeline_root / "workspace" / "obsidian-exports" / "docs"
+    # Stage into a unique per-invocation directory so concurrent exports (e.g. a
+    # local run overlapping a CI job) can't clobber each other's staging area.
+    import shutil
+    import tempfile
 
-    staged = stage_files(exportable, staging_dir, use_symlinks=not no_symlinks, source_dir=source)
+    staging_dir = Path(tempfile.mkdtemp(prefix="md-doc-export-"))
+    try:
+        staged = stage_files(
+            exportable, staging_dir, use_symlinks=not no_symlinks, source_dir=source
+        )
+        _run_export_build(staged, staging_dir, source, dest, fmt, verbose)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+    return
+
+
+def _run_export_build(
+    staged: list,
+    staging_dir: Path,
+    source: Path,
+    dest: Path,
+    fmt: str,
+    verbose: bool,
+) -> None:
+    from .exporter import collect_outputs
+
     click.echo("\n" + _dim(f"Staged {len(staged)} file(s) for build."))
 
     # Build using the same logic as the build command. Track each produced

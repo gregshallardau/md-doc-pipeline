@@ -33,6 +33,10 @@ uv run md-doc build workspace/acme/          # one company
 uv run md-doc build workspace/               # all workspace projects
 uv run md-doc build workspace/acme/ --format dotx  # merge templates only
 uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
+uv run md-doc build workspace/               # incremental: skips docs whose output is newer
+                                             #   than the source, config, theme and templates
+uv run md-doc build workspace/ --force       # rebuild everything, ignoring the freshness check
+uv run md-doc build workspace/ -j 8          # build up to 8 documents in parallel
 
 # Scaffold
 uv run md-doc new folder clients/acme --in workspace/blueshift/  # new folder + _meta.yml

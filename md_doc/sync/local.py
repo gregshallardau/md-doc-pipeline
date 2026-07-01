@@ -11,23 +11,18 @@ _meta.yml config:
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
-def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
-    """
-    Copy *files* to the local destination directory.
+def make_uploader(root: Path, sync_config: dict[str, Any]) -> Callable[[Path], str]:
+    """Return a function that copies one file to the local destination.
 
-    Parameters
-    ----------
-    files:
-        Absolute paths of files to copy.
-    root:
-        Source root (used to compute relative paths for mirroring).
-    sync_config:
-        Must contain ``path`` — the destination directory.
+    Config (``path``) is validated once here so problems surface before the
+    per-file loop rather than being retried. Copies are written atomically
+    (temp file + rename) so an interrupted copy can't leave a half-written file.
     """
     dest_root_str = sync_config.get("path")
     if not dest_root_str:
@@ -36,9 +31,20 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
     dest_root = Path(dest_root_str).expanduser().resolve()
     dest_root.mkdir(parents=True, exist_ok=True)
 
-    for src in files:
+    def _upload(src: Path) -> str:
         rel = src.relative_to(root)
         dest = dest_root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-        print(f"  copied  {rel}  →  {dest}")
+        tmp = dest.with_name(dest.name + ".part")
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)  # atomic within the same filesystem
+        return f"copied  {rel}  →  {dest}"
+
+    return _upload
+
+
+def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
+    """Copy *files* to the local destination directory (compat wrapper)."""
+    upload = make_uploader(root, sync_config)
+    for src in files:
+        print(f"  {upload(src)}")

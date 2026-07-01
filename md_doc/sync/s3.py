@@ -23,21 +23,21 @@ from __future__ import annotations
 
 import os
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
+
+# Guess content type from extension
+_CONTENT_TYPES: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".md": "text/markdown; charset=utf-8",
+}
 
 
-def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
-    """
-    Upload *files* to an S3 bucket.
+def make_uploader(root: Path, sync_config: dict[str, Any]) -> Callable[[Path], str]:
+    """Return a function that uploads one file to S3.
 
-    Parameters
-    ----------
-    files:
-        Absolute paths of files to upload.
-    root:
-        Source root (used to compute relative paths for mirroring).
-    sync_config:
-        Must contain ``bucket``. May contain ``prefix`` and ``region``.
+    boto3 import, credentials/region, and ``bucket`` are resolved once here so
+    configuration errors surface before the per-file loop.
     """
     try:
         import boto3
@@ -60,14 +60,7 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
 
     s3 = boto3.client("s3", **kwargs)
 
-    # Guess content type from extension
-    _CONTENT_TYPES: dict[str, str] = {
-        ".pdf": "application/pdf",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".md": "text/markdown; charset=utf-8",
-    }
-
-    for src in files:
+    def _upload(src: Path) -> str:
         rel = src.relative_to(root)
         rel_posix = str(PurePosixPath(*rel.parts))
         key = f"{prefix}/{rel_posix}" if prefix else rel_posix
@@ -78,4 +71,13 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
             extra["ContentType"] = content_type
 
         s3.upload_file(str(src), bucket, key, ExtraArgs=extra if extra else None)
-        print(f"  uploaded  {rel}  →  s3://{bucket}/{key}")
+        return f"uploaded  {rel}  →  s3://{bucket}/{key}"
+
+    return _upload
+
+
+def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
+    """Upload *files* to an S3 bucket (compat wrapper)."""
+    upload = make_uploader(root, sync_config)
+    for src in files:
+        print(f"  {upload(src)}")
