@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - main
+      - master
     paths:
-      - 'products/**'
+      - 'workspace/**'
 
 jobs:
   build-and-sync:
@@ -22,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install system dependencies (WeasyPrint)
+      - name: Install system dependencies (WeasyPrint + cairosvg)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -30,30 +31,31 @@ jobs:
             libpangoft2-1.0-0 \
             libpangocairo-1.0-0 \
             libgdk-pixbuf2.0-0 \
+            libcairo2 \
             libffi-dev \
             shared-mime-info
 
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install ".[azure]"
+          pip install ".[azure,mermaid]"
 
       - name: Build documents (PDF + DOCX)
-        run: md-doc build products/
+        run: md-doc build workspace/
 
       - name: Update document register
-        run: md-doc register products/
+        run: md-doc register workspace/
 
       - name: Sync to Azure Files
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           AZURE_FILE_SHARE_NAME: ${{ secrets.AZURE_FILE_SHARE_NAME }}
-        run: md-doc sync products/
+        run: md-doc sync workspace/
 
       - name: Commit updated register
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add products/register.json products/register.md 2>/dev/null || true
+          git add workspace/register.json workspace/register.md 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update document register [skip ci]"
           git push

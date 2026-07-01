@@ -58,6 +58,33 @@ def _escape_html(text: str) -> str:
     )
 
 
+_CSS_COLOR_NAME_RE = re.compile(r"^[a-zA-Z]+$")
+
+
+def _safe_css_color(value: Any, default: str) -> str:
+    """Return *value* if it is a safe CSS colour, else *default*.
+
+    Accepts ``#rgb``/``#rrggbb`` hex (normalised) and bare colour keywords
+    (``red``, ``white``). Anything else — notably values containing CSS-control
+    characters like ``;`` or ``}`` — is rejected to prevent style-block injection
+    via author-supplied config.
+    """
+    if value is None:
+        return default
+    from ..theme import validate_hex_color
+
+    s = str(value).strip()
+    try:
+        return validate_hex_color(s)
+    except ValueError:
+        if _CSS_COLOR_NAME_RE.match(s):
+            return s.lower()
+        logging.getLogger(__name__).warning(
+            "Ignoring unsafe colour value %r — using %r.", value, default
+        )
+        return default
+
+
 def _extract_title(md_content: str) -> str | None:
     """Return the first H1 heading from markdown, stripped of inline markup."""
     match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
@@ -202,13 +229,17 @@ def _field_to_html(field_spec: str) -> str:
         for k, v in attrs.items():
             if k == "required":
                 continue
+            # Only emit attributes whose name is a safe HTML identifier; a
+            # crafted key like ``onfocus=alert(1)`` must not become markup.
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", k):
+                continue
             if v is True:
                 extra += f" {k}"
             else:
                 extra += f' {k}="{_escape_html(str(v))}"'
 
         if ftype == "textarea":
-            rows = attrs.get("rows", "4")
+            rows = _escape_html(str(attrs.get("rows", "4")))
             return f'<textarea name="{_escape_html(name)}" rows="{rows}"{req}></textarea>'
         elif ftype == "checkbox":
             label_text = attrs.get("label", "")
@@ -387,6 +418,7 @@ def _build_cover(
     cover_cfg: dict[str, Any],
     logo_uri: str | None,
     bar_logo_uri: str | None = None,
+    primary_color: str | None = None,
 ) -> str:
     """Build a composable cover page from individual element config keys."""
     label = cover_cfg.get("cover_label", "Report")
@@ -456,8 +488,9 @@ def _build_cover(
     </div>"""
 
     if text_on_bar and show_bar and bar_pos in ("top", "both"):
+        wrapper_bg = _safe_css_color(primary_color, "#2563eb")
         body_inner = f"""\
-    <div class="cover-bar-wrapper" style="background: #2563eb; min-height: {bar_top_height};">
+    <div class="cover-bar-wrapper" style="background: {wrapper_bg}; min-height: {bar_top_height};">
 {content_block}
     </div>"""
     else:
@@ -513,6 +546,7 @@ def _build_html(
     footer_left: str | None = None,
     footer_center: str | None = None,
     footer_right: str | None = None,
+    primary_color: str | None = None,
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -525,6 +559,7 @@ def _build_html(
     )
 
     section_bar_style = _build_section_bar_style(full_config or {})
+    table_col_widths_style = _build_table_col_widths_style(full_config or {})
     page_bar_html, page_bar_css = _build_page_header_bar_elements(
         page_header_bar,
         header_text=header_text,
@@ -537,7 +572,7 @@ def _build_html(
 
     cover_html = ""
     if cover_page:
-        cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri)}"
+        cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri, primary_color=primary_color)}"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -548,6 +583,7 @@ def _build_html(
   {header_style}
   {footer_style}
   {section_bar_style}
+  {table_col_widths_style}
   {page_bar_css}
 </head>
 <body>
@@ -570,6 +606,37 @@ _FOOTER_POSITIONS = {
     "center": "@bottom-center",
     "right": "@bottom-right",
 }
+
+
+_PAGE_TOKEN_RE = re.compile(r"(\{pages?\})")
+
+
+def _css_string(text: str) -> str:
+    """Escape *text* for use inside a single-quoted CSS string.
+
+    HTML-escapes first (so ``&``/``<``/``>``/``"`` are safe), then escapes
+    backslash and single-quote — which would otherwise break out of the
+    ``content: '...'`` string — and converts newlines to the CSS ``\\A`` escape.
+    """
+    return _escape_html(text).replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\A ")
+
+
+def _css_content_value(text: str) -> str:
+    """Build a CSS ``content`` value, expanding ``{page}``/``{pages}`` tokens.
+
+    Literal segments become quoted strings; ``{page}``/``{pages}`` become
+    ``counter(page)``/``counter(pages)`` so PDF page numbers work with the same
+    tokens the docx footer understands.
+    """
+    out: list[str] = []
+    for part in _PAGE_TOKEN_RE.split(text):
+        if part == "{page}":
+            out.append("counter(page)")
+        elif part == "{pages}":
+            out.append("counter(pages)")
+        elif part:
+            out.append(f"'{_css_string(part)}'")
+    return " ".join(out) if out else "''"
 
 
 def _build_footer_style(
@@ -599,10 +666,9 @@ def _build_footer_style(
     rules: list[str] = []
     cover_overrides: list[str] = []
     for pos, text in active:
-        css_text = _escape_html(text).replace("\n", "\\A ")
-        if css_text:
+        if text:
             rules.append(
-                f"  {pos} {{ content: '{css_text}'; "
+                f"  {pos} {{ content: {_css_content_value(text)}; "
                 f"white-space: pre; font-size: 6pt; line-height: 1.3; color: #7f8c9a; }}"
             )
         else:
@@ -647,7 +713,7 @@ def _build_header_style(
         if text:
             pos = _HEADER_POSITIONS.get(text_position, "@top-left")
             rules.append(
-                f"  {pos} {{ content: '{_escape_html(text)}'; "
+                f"  {pos} {{ content: '{_css_string(text)}'; "
                 f"font-size: 8pt; color: #5d6d7e; vertical-align: middle; }}"
             )
             cover_overrides.append(f"  {pos} {{ content: none; }}")
@@ -671,11 +737,16 @@ def _build_section_bar_style(config: dict[str, Any]) -> str:
     if not config.get("section_bar"):
         return ""
 
-    color = config.get("section_bar_color", "#2563eb")
-    text_color = config.get("section_bar_text_color", "#ffffff")
+    color = _safe_css_color(config.get("section_bar_color"), "#2563eb")
+    text_color = _safe_css_color(config.get("section_bar_text_color"), "#ffffff")
     text_on_bar = config.get("section_bar_text_on_bar", True)
     headings = config.get("section_bar_headings", "h1,h2")
-    heading_list = [h.strip() for h in headings.split(",")]
+    # Only accept simple tag tokens (h1..h6) — these become CSS selectors.
+    heading_list = [
+        h.strip() for h in str(headings).split(",") if re.fullmatch(r"h[1-6]", h.strip())
+    ]
+    if not heading_list:
+        return ""
 
     lines = ["<style>"]
 
@@ -702,6 +773,31 @@ def _build_section_bar_style(config: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _build_table_col_widths_style(config: dict[str, Any]) -> str:
+    """Generate CSS column widths from the ``table_col_widths`` config key.
+
+    Mirrors the docx builder so the same ``table_col_widths: [30, 70]`` config
+    produces matching column proportions in PDF and Word. Applied to tables
+    whose column index falls within the weight list.
+    """
+    raw = config.get("table_col_widths")
+    if not (isinstance(raw, list) and raw and all(isinstance(v, (int, float)) for v in raw)):
+        return ""
+    weights = [float(v) for v in raw]
+    total = sum(weights)
+    if total <= 0:
+        return ""
+    lines = ["<style>", ".report-body table { table-layout: fixed; width: 100%; }"]
+    for i, w in enumerate(weights, start=1):
+        pct = w / total * 100
+        lines.append(
+            f".report-body table th:nth-child({i}), "
+            f".report-body table td:nth-child({i}) {{ width: {pct:.4f}%; }}"
+        )
+    lines.append("</style>")
+    return "\n".join(lines)
+
+
 def _build_page_header_bar_elements(
     bar_cfg: dict[str, Any] | None,
     header_text: str | None = None,
@@ -718,8 +814,8 @@ def _build_page_header_bar_elements(
     if not bar_cfg or not bar_cfg.get("enabled"):
         return "", ""
 
-    color = bar_cfg.get("color", "#2563eb")
-    text_color = bar_cfg.get("text_color", "#ffffff")
+    color = _safe_css_color(bar_cfg.get("color"), "#2563eb")
+    text_color = _safe_css_color(bar_cfg.get("text_color"), "#ffffff")
     height = bar_cfg.get("height", "12mm")
 
     padding_after = bar_cfg.get("padding", "6mm")
@@ -994,6 +1090,8 @@ def build(
             pass  # fall back to default theme
     html_body = _process_mermaid(html_body, theme=mermaid_theme)
 
+    primary_color = mermaid_theme.get("primary") if mermaid_theme else None
+
     html_body = _keep_heading_with_next(html_body)
     html = _build_html(
         title,
@@ -1014,6 +1112,7 @@ def build(
         footer_left=footer_left,
         footer_center=footer_center,
         footer_right=footer_right,
+        primary_color=primary_color,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

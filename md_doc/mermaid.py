@@ -467,13 +467,14 @@ def parse(source: str) -> Flowchart:
         # Try to parse as edge chain
         has_edge = any(op_re.search(line) for op_re, _, _ in _EDGE_OPERATORS)
         if has_edge:
+            before = set(fc.nodes)
             _parse_edge_line(fc, line)
-            # Track nodes in current subgraph
+            # Assign nodes first introduced on this edge line to the current
+            # subgraph (Mermaid scopes a node to where it's first mentioned).
             if subgraph_stack:
                 for nid in fc.nodes:
-                    if nid not in subgraph_stack[-1].node_ids:
-                        # Only add nodes first seen in this line
-                        pass
+                    if nid not in before and nid not in subgraph_stack[-1].node_ids:
+                        subgraph_stack[-1].node_ids.append(nid)
             continue
 
         # Standalone node definition
@@ -896,11 +897,26 @@ _ER_REL_SIMPLE = re.compile(r"^(\S+)\s+([|o}{]+[-.][-.]?[|o}{]+)\s+(\S+)\s*:\s*(
 def parse_er(source: str) -> ERDiagram:
     """Parse a Mermaid ER diagram."""
     erd = ERDiagram()
+    current_entity: str | None = None
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("%%"):
             continue
         if re.match(r"^erDiagram\b", line, re.IGNORECASE):
+            continue
+
+        # End of an attribute block
+        if line == "}":
+            current_entity = None
+            continue
+
+        # Attribute line inside an entity block ("type name" pairs)
+        if current_entity is not None:
+            attr_m = re.match(r"^(\w+)\s+(\w+)", line)
+            if attr_m:
+                erd.entities[current_entity].attributes.append(
+                    f"{attr_m.group(1)} {attr_m.group(2)}"
+                )
             continue
 
         # Try relationship line
@@ -936,20 +952,14 @@ def parse_er(source: str) -> ERDiagram:
                     erd.entities[name] = EREntity(name=name)
             continue
 
-        # Entity with attributes block (simplified — we just register the name)
+        # Entity block opener: "NAME {"
         ent_m = re.match(r"^(\S+)\s*\{", line)
         if ent_m:
             name = ent_m.group(1)
             if name not in erd.entities:
                 erd.entities[name] = EREntity(name=name)
+            current_entity = name
             continue
-
-        # Attribute line inside entity block
-        attr_m = re.match(r"^\s+(\w+)\s+(\w+)", line)
-        if attr_m and erd.entities:
-            # Add to last entity
-            last_entity = list(erd.entities.values())[-1]
-            last_entity.attributes.append(f"{attr_m.group(1)} {attr_m.group(2)}")
 
     return erd
 
@@ -1509,8 +1519,18 @@ def render_pie_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
 
         large_arc = 1 if sweep > math.pi else 0
 
-        path = f"M {cx},{cy} L {x1:.1f},{y1:.1f} " f"A {r},{r} 0 {large_arc} 1 {x2:.1f},{y2:.1f} Z"
-        parts.append(f'<path d="{path}" fill="{color}" stroke="#ffffff" stroke-width="2"/>')
+        if sweep >= 2 * math.pi - 1e-9:
+            # A single full-circle slice: an arc with coincident endpoints draws
+            # nothing, so emit a circle instead.
+            parts.append(
+                f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}" '
+                f'stroke="#ffffff" stroke-width="2"/>'
+            )
+        else:
+            path = (
+                f"M {cx},{cy} L {x1:.1f},{y1:.1f} " f"A {r},{r} 0 {large_arc} 1 {x2:.1f},{y2:.1f} Z"
+            )
+            parts.append(f'<path d="{path}" fill="{color}" stroke="#ffffff" stroke-width="2"/>')
 
         # Percentage label on slice (if big enough)
         if fraction > 0.05:
@@ -1854,13 +1874,22 @@ def render_donut_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
 
         large_arc = 1 if sweep > math.pi else 0
 
-        path = (
-            f"M {ox1:.1f},{oy1:.1f} "
-            f"A {r_outer},{r_outer} 0 {large_arc} 1 {ox2:.1f},{oy2:.1f} "
-            f"L {ix1:.1f},{iy1:.1f} "
-            f"A {r_inner},{r_inner} 0 {large_arc} 0 {ix2:.1f},{iy2:.1f} Z"
-        )
-        parts.append(f'<path d="{path}" fill="{color}" stroke="#ffffff" stroke-width="2"/>')
+        if sweep >= 2 * math.pi - 1e-9:
+            # A single full-circle slice: draw the ring as an outer disc with a
+            # punched-out white inner disc (a single annular arc draws nothing).
+            parts.append(
+                f'<circle cx="{cx}" cy="{cy}" r="{r_outer}" fill="{color}" '
+                f'stroke="#ffffff" stroke-width="2"/>'
+            )
+            parts.append(f'<circle cx="{cx}" cy="{cy}" r="{r_inner}" fill="#ffffff"/>')
+        else:
+            path = (
+                f"M {ox1:.1f},{oy1:.1f} "
+                f"A {r_outer},{r_outer} 0 {large_arc} 1 {ox2:.1f},{oy2:.1f} "
+                f"L {ix1:.1f},{iy1:.1f} "
+                f"A {r_inner},{r_inner} 0 {large_arc} 0 {ix2:.1f},{iy2:.1f} Z"
+            )
+            parts.append(f'<path d="{path}" fill="{color}" stroke="#ffffff" stroke-width="2"/>')
 
         # Label on ring
         if fraction > 0.06:
@@ -2365,20 +2394,25 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
     cols = min(len(entities), 3)
     rows = math.ceil(len(entities) / cols)
 
-    # Calculate entity heights based on attributes
+    # Calculate entity heights based on attributes. Use a uniform row height
+    # (the tallest entity) so entities in the same row align and the canvas is
+    # tall enough for entities with many attributes.
+    header_h = 28
+    ent_heights: list[float] = [
+        header_h + max(len(ent.attributes) * 18, 18) + 8 for ent in entities
+    ]
+    row_h = max([80.0, *ent_heights])
+
     entity_positions: dict[str, tuple[float, float, float, float]] = {}
     for i, ent in enumerate(entities):
         col = i % cols
         row = i // cols
         x: float = padding + col * (entity_w + entity_gap_x)
-        header_h = 28
-        attr_h = len(ent.attributes) * 18
-        ent_h = header_h + max(attr_h, 18) + 8
-        y: float = padding + row * (max(80, ent_h) + entity_gap_y)
-        entity_positions[ent.name] = (x, y, entity_w, ent_h)
+        y: float = padding + row * (row_h + entity_gap_y)
+        entity_positions[ent.name] = (x, y, entity_w, ent_heights[i])
 
     width = padding * 2 + cols * (entity_w + entity_gap_x) - entity_gap_x
-    height = padding * 2 + rows * (120 + entity_gap_y)
+    height = padding * 2 + rows * row_h + max(rows - 1, 0) * entity_gap_y
 
     parts: list[str] = []
     parts.append(_make_arrow_defs(t, "er-"))
@@ -2656,6 +2690,50 @@ def _detect_diagram_type(source: str) -> str:
     return "flowchart"  # default
 
 
+def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
+    """Render a single Mermaid diagram *source* string to an SVG string.
+
+    Dispatches on the detected diagram type. Used by both the HTML pipeline
+    (PDF) and the docx builder (which rasterizes the SVG for embedding).
+    """
+    diagram_type = _detect_diagram_type(source)
+
+    if diagram_type == "pie":
+        return render_pie_svg(parse_pie(source), theme)
+    elif diagram_type == "donut":
+        return render_donut_svg(parse_pie(source), theme)
+    elif diagram_type == "sequence":
+        return render_sequence_svg(parse_sequence(source), theme)
+    elif diagram_type == "bar":
+        return render_bar_svg(parse_bar(source), theme)
+    elif diagram_type == "gauge":
+        return render_gauge_svg(parse_gauge(source), theme)
+    elif diagram_type == "timeline":
+        return render_timeline_svg(parse_timeline(source), theme)
+    elif diagram_type == "gantt":
+        return render_gantt_svg(parse_gantt(source), theme)
+    elif diagram_type == "mindmap":
+        return render_mindmap_svg(parse_mindmap(source), theme)
+    elif diagram_type == "er":
+        return render_er_svg(parse_er(source), theme)
+    elif diagram_type == "state":
+        return render_state_svg(parse_state(source), theme)
+    else:
+        # flowchart (default for unrecognized types too)
+        return render_svg(parse(source), theme)
+
+
+def _unescape_mermaid_source(source: str) -> str:
+    """Reverse the HTML entity escaping the markdown converter applies."""
+    return (
+        source.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+
+
 def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     """Replace all Mermaid code blocks in HTML with rendered SVGs.
 
@@ -2663,53 +2741,8 @@ def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     """
 
     def _replace(m: re.Match) -> str:
-        source = m.group(1)
-        # Unescape HTML entities that the markdown converter may have added
-        source = (
-            source.replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", '"')
-            .replace("&#39;", "'")
-        )
-
-        diagram_type = _detect_diagram_type(source)
-
-        if diagram_type == "pie":
-            pc = parse_pie(source)
-            svg = render_pie_svg(pc, theme)
-        elif diagram_type == "donut":
-            pc = parse_pie(source)  # same data model, different renderer
-            svg = render_donut_svg(pc, theme)
-        elif diagram_type == "sequence":
-            seq = parse_sequence(source)
-            svg = render_sequence_svg(seq, theme)
-        elif diagram_type == "bar":
-            bc = parse_bar(source)
-            svg = render_bar_svg(bc, theme)
-        elif diagram_type == "gauge":
-            gauge = parse_gauge(source)
-            svg = render_gauge_svg(gauge, theme)
-        elif diagram_type == "timeline":
-            tl = parse_timeline(source)
-            svg = render_timeline_svg(tl, theme)
-        elif diagram_type == "gantt":
-            gantt = parse_gantt(source)
-            svg = render_gantt_svg(gantt, theme)
-        elif diagram_type == "mindmap":
-            root = parse_mindmap(source)
-            svg = render_mindmap_svg(root, theme)
-        elif diagram_type == "er":
-            erd = parse_er(source)
-            svg = render_er_svg(erd, theme)
-        elif diagram_type == "state":
-            state = parse_state(source)
-            svg = render_state_svg(state, theme)
-        else:
-            # flowchart (default for unrecognized types too)
-            fc = parse(source)
-            svg = render_svg(fc, theme)
-
+        source = _unescape_mermaid_source(m.group(1))
+        svg = render_to_svg(source, theme)
         return f'<div class="mermaid-diagram" style="text-align:center;margin:8pt 0 12pt 0;">{svg}</div>'
 
     return _MERMAID_BLOCK_RE.sub(_replace, html)

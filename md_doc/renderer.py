@@ -23,6 +23,7 @@ from jinja2 import (
     Undefined,
     StrictUndefined,
 )
+from jinja2.sandbox import SandboxedEnvironment
 
 from .config import load_config
 
@@ -108,7 +109,7 @@ def _strip_frontmatter(md_content: str) -> tuple[str, str]:
         ``frontmatter_block`` is the raw ``---\\n...\\n---\\n`` block (or empty
         string if none).  ``body`` is the remaining Markdown.
     """
-    pattern = re.compile(r"^(---\s*\n.*?\n---\s*\n)", re.DOTALL)
+    pattern = re.compile(r"^(---\s*\n.*?\n---\s*(?:\n|$))", re.DOTALL)
     match = pattern.match(md_content)
     if match:
         return match.group(1), md_content[match.end() :]
@@ -166,11 +167,14 @@ def render(
     loader = _MarkdownLoader(search_dirs)
 
     undefined_cls = StrictUndefined if strict else Undefined
-    env = Environment(
+    # SandboxedEnvironment blocks access to unsafe attributes/dunders so a
+    # document body authored by a third party can't execute arbitrary code at
+    # build time. Normal templating (vars, filters, includes) is unaffected.
+    env = SandboxedEnvironment(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,
-        trim_blocks=True,    # remove newline after {% %} tags so included
+        trim_blocks=True,  # remove newline after {% %} tags so included
         lstrip_blocks=True,  # fragments join without blank lines between them
         autoescape=False,  # Markdown — no HTML escaping
     )
@@ -217,7 +221,7 @@ def render_string(
     """
     undefined_cls = StrictUndefined if strict else Undefined
     loader = _MarkdownLoader(search_dirs or [])
-    env = Environment(
+    env = SandboxedEnvironment(
         loader=loader,
         undefined=undefined_cls,
         keep_trailing_newline=True,

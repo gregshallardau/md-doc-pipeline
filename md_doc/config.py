@@ -7,14 +7,14 @@ Deeper files override parent values. Document-level frontmatter overrides everyt
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-# Fields that are merged (list union) rather than overridden
-_LIST_MERGE_FIELDS: set[str] = set()
+logger = logging.getLogger(__name__)
 
 
 def _load_yaml_file(path: Path) -> dict[str, Any]:
@@ -25,7 +25,8 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except FileNotFoundError:
         return {}
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        logger.warning("Ignoring malformed YAML in %s: %s", path, exc)
         return {}
 
 
@@ -48,7 +49,7 @@ def _extract_frontmatter(md_path: Path) -> dict[str, Any]:
     except FileNotFoundError:
         return {}
 
-    pattern = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+    pattern = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
     match = pattern.match(text)
     if not match:
         return {}
@@ -56,7 +57,8 @@ def _extract_frontmatter(md_path: Path) -> dict[str, Any]:
     try:
         data = yaml.safe_load(match.group(1))
         return data if isinstance(data, dict) else {}
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        logger.warning("Ignoring malformed frontmatter in %s: %s", md_path, exc)
         return {}
 
 
