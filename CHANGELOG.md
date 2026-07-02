@@ -13,8 +13,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or `md-doc build --format pptx` segments Markdown into slides — first H1 (or
   `title`) → title slide, later H1s → section slides, each H2 → a content slide;
   `<!-- slide -->` forces a break and `<!-- notes: … -->` adds speaker notes.
-  Bullets (with nesting), tables, images, code, and Mermaid diagrams (as PNGs)
-  are supported. New keys: `slide_split`, `slide_size`, `pptx_template`.
+  Bullets (with nesting), tables, images, code, blockquotes, and Mermaid
+  diagrams (as PNGs) are supported. New keys: `slide_split`, `slide_size`,
+  `pptx_template`.
+- **Theming parity** across PDF / docx / pptx: slides apply the full CSS theme
+  palette — heading colours (H1/H2), body colour + font family, strong/em/code
+  colours, blockquote styling, and table header + alternating-row colours —
+  from the same `_pdf-theme.css`/`_theme.css` cascade the other builders use.
+  (Font *sizes* stay slide-appropriate rather than inheriting print pt sizes.)
 - `md-doc doctor` now also checks `python-pptx`.
 
 ### Changed

@@ -116,6 +116,7 @@ class _SlideParser(HTMLParser):
         self._pre_text = ""
         self._pending_heading: str | None = None
         self._heading_text = ""
+        self._in_quote = False
 
         # table state
         self._in_table = False
@@ -163,7 +164,9 @@ class _SlideParser(HTMLParser):
             self._heading_text = ""
         elif tag == "p":
             if not self._in_table:
-                self._start_para("para")
+                self._start_para("quote" if self._in_quote else "para")
+        elif tag == "blockquote":
+            self._in_quote = True
         elif tag in ("ul", "ol"):
             self._list_stack.append(tag)
         elif tag == "li":
@@ -207,6 +210,8 @@ class _SlideParser(HTMLParser):
                 self._list_stack.pop()
         elif tag in ("li", "p"):
             self._para = None
+        elif tag == "blockquote":
+            self._in_quote = False
         elif tag in ("strong", "b"):
             self._bold = False
         elif tag in ("em", "i"):
@@ -304,27 +309,60 @@ def _rgb(hex_str: str | None) -> RGBColor | None:
         return None
 
 
-def _write_para(tf, para: _Para, first: bool, theme: dict, body_font: str | None) -> None:
+# Slide-appropriate default font sizes (theme supplies *print* pt sizes that are
+# too small for slides, so families + colours come from the theme but sizes are
+# medium-specific).
+_BODY_PT = 18.0
+_CODE_PT = 14.0
+_TABLE_HEADER_PT = 14.0
+_TABLE_BODY_PT = 12.0
+
+
+def _write_para(tf, para: _Para, first: bool, theme: dict) -> None:
     p = tf.paragraphs[0] if first else tf.add_paragraph()
     p.level = min(para.level, 4)
+
+    body_font = theme.get("font_body")
     code_font = theme.get("font_code", "Courier New")
+    body_color = _rgb(theme.get("color_body"))
+    strong_color = _rgb(theme.get("color_strong")) or body_color
+    em_color = _rgb(theme.get("color_em")) or body_color
+    code_color = _rgb(theme.get("color_code")) or body_color
+    quote_color = _rgb(theme.get("color_blockquote")) or em_color
+    is_code = para.kind == "code"
+    is_quote = para.kind == "quote"
+
     for run in para.runs:
         r = p.add_run()
         r.text = run.text
+        mono = run.code or is_code
         if run.bold:
             r.font.bold = True
-        if run.italic:
+        if run.italic or is_quote:
             r.font.italic = True
-        if run.code:
+        # family + size (size is slide-appropriate, not the theme's print size)
+        if mono:
             r.font.name = code_font
-        elif body_font:
-            r.font.name = body_font
-    if para.kind == "code":
-        p.font.name = code_font
-        p.font.size = Pt(float(theme.get("font_size_code", 12.0)))
+            r.font.size = Pt(_CODE_PT)
+        else:
+            if body_font:
+                r.font.name = body_font
+            r.font.size = Pt(_BODY_PT)
+        # colour precedence: code > strong > em > quote > body
+        colour = (
+            code_color
+            if mono
+            else (
+                strong_color
+                if run.bold
+                else em_color if run.italic else quote_color if is_quote else body_color
+            )
+        )
+        if colour is not None:
+            r.font.color.rgb = colour
 
 
-def _fill_text_frame(tf, paras: list[_Para], theme: dict, body_font: str | None) -> None:
+def _fill_text_frame(tf, paras: list[_Para], theme: dict) -> None:
     tf.word_wrap = True
     try:
         from pptx.enum.text import MSO_AUTO_SIZE
@@ -334,31 +372,67 @@ def _fill_text_frame(tf, paras: list[_Para], theme: dict, body_font: str | None)
         pass
     first = True
     for para in paras:
-        _write_para(tf, para, first, theme, body_font)
+        _write_para(tf, para, first, theme)
         first = False
 
 
 def _add_table(slide, rows: list[list[str]], left, top, width, theme: dict) -> Emu:
     n_rows = len(rows)
     n_cols = max(len(r) for r in rows)
-    height = Emu(int(Pt(22).emu * n_rows))
+    height = Emu(int(Pt(24).emu * n_rows))
     shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
     table = shape.table
+
     header_bg = _rgb(theme.get("color_table_header_bg"))
     header_fg = _rgb(theme.get("color_table_header_text"))
+    alt_bg = _rgb(theme.get("color_table_row_alt_bg"))
+    body_color = _rgb(theme.get("color_body"))
+    body_font = theme.get("font_body")
+    uppercase = bool(theme.get("uppercase_th"))
+
     for r_idx, row in enumerate(rows):
+        is_header = r_idx == 0
         for c_idx in range(n_cols):
             cell = table.cell(r_idx, c_idx)
-            cell.text = row[c_idx] if c_idx < len(row) else ""
+            text = row[c_idx] if c_idx < len(row) else ""
+            if is_header and uppercase:
+                text = text.upper()
+            cell.text = text
             for p in cell.text_frame.paragraphs:
-                p.font.size = Pt(12)
-                if r_idx == 0 and header_fg:
-                    p.font.color.rgb = header_fg
+                p.font.size = Pt(_TABLE_HEADER_PT if is_header else _TABLE_BODY_PT)
+                if body_font:
+                    p.font.name = body_font
+                if is_header:
                     p.font.bold = True
-            if r_idx == 0 and header_bg:
+                    if header_fg:
+                        p.font.color.rgb = header_fg
+                elif body_color:
+                    p.font.color.rgb = body_color
+            # Row fill: header colour, else alternating shading (CSS nth-child(even)
+            # → the 2nd, 4th … body rows, i.e. odd 0-based table index).
+            fill_col = header_bg if is_header else (alt_bg if r_idx % 2 == 1 else None)
+            if fill_col is not None:
                 cell.fill.solid()
-                cell.fill.fore_color.rgb = header_bg
+                cell.fill.fore_color.rgb = fill_col
     return height
+
+
+def _style_title(shape, theme: dict, level: int) -> None:
+    """Colour + font a slide title from the theme's heading style (color_hN)."""
+    if shape is None or not shape.has_text_frame:
+        return
+    color = _rgb(theme.get(f"color_h{level}")) or _rgb(theme.get("color_h1"))
+    font = theme.get(f"font_h{level}") or theme.get("font_body")
+    para = shape.text_frame.paragraphs[0]
+    if color:
+        para.font.color.rgb = color
+    if font:
+        para.font.name = font
+    for r in para.runs:
+        if color:
+            r.font.color.rgb = color
+        if font:
+            r.font.name = font
 
 
 def _render_slide(
@@ -370,28 +444,23 @@ def _render_slide(
     section_layout,
     content_layout,
 ) -> None:
-    body_font = theme.get("font_body")
-    title_color = _rgb(theme.get("color_h1"))
-
     if s.kind == "title":
         slide = prs.slides.add_slide(title_layout)
         slide.shapes.title.text = s.title or "Presentation"
-        if title_color:
-            slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = title_color
+        _style_title(slide.shapes.title, theme, 1)
         # subtitle placeholder (idx 1) → any body paras (author/date/product)
         if len(slide.placeholders) > 1 and s.paras:
-            _fill_text_frame(slide.placeholders[1].text_frame, s.paras, theme, body_font)
+            _fill_text_frame(slide.placeholders[1].text_frame, s.paras, theme)
         _attach_notes(slide, s)
         return
 
     if s.kind == "section":
         slide = prs.slides.add_slide(section_layout)
         slide.shapes.title.text = s.title or ""
-        if title_color:
-            slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = title_color
+        _style_title(slide.shapes.title, theme, 1)
         # Any content that followed the H1 before the next heading goes in body.
         if s.paras and len(slide.placeholders) > 1:
-            _fill_text_frame(slide.placeholders[1].text_frame, s.paras, theme, body_font)
+            _fill_text_frame(slide.placeholders[1].text_frame, s.paras, theme)
         _attach_notes(slide, s)
         return
 
@@ -399,8 +468,7 @@ def _render_slide(
     slide = prs.slides.add_slide(content_layout)
     if slide.shapes.title is not None:
         slide.shapes.title.text = s.title or ""
-        if title_color:
-            slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = title_color
+        _style_title(slide.shapes.title, theme, 2)  # content titles come from H2
 
     margin = Inches(0.6)
     top = Inches(1.6)
@@ -412,7 +480,7 @@ def _render_slide(
         # Rough height estimate: ~0.3" per paragraph/line.
         est = Emu(int(Inches(0.34).emu * max(len(s.paras), 1)))
         box = slide.shapes.add_textbox(margin, cursor, width, min(est, bottom - cursor))
-        _fill_text_frame(box.text_frame, s.paras, theme, body_font)
+        _fill_text_frame(box.text_frame, s.paras, theme)
         cursor = Emu(cursor + est + Inches(0.1))
 
     for rows in s.tables:

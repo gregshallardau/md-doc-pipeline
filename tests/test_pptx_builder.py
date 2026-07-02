@@ -140,39 +140,70 @@ def test_slide_size_widescreen(repo):
 
 
 def test_picks_up_css_theme_and_yaml(repo):
-    # YAML frontmatter (title/author/product) and the CSS theme cascade
-    # (h1 colour + body font) both flow into the deck.
+    # Full theming parity: YAML frontmatter + the CSS theme cascade (heading
+    # colours, body colour/font, table header + alternating-row colours).
     (repo / "_pdf-theme.css").write_text(
-        ':root { --primary: #CC0066; }\nbody { font-family: "Georgia"; }\nh1 { color: #CC0066; }\n',
+        ":root { --primary: #CC0066; }\n"
+        'body { font-family: "Georgia"; color: #223344; }\n'
+        "h1, h2 { color: #CC0066; }\n"
+        "th { background: #CC0066; color: #FFFFFF; }\n"
+        "tr:nth-child(even) td { background: #EEEEEE; }\n",
         encoding="utf-8",
     )
     body = (
         "---\ntitle: Themed Deck\nauthor: Ada\nproduct: Engine\n---\n\n"
-        "# Themed Deck\n\n## Point\n\n- hello\n"
+        "# Themed Deck\n\n## Point\n\n- hello\n\n"
+        "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"
     )
     prs = _build(repo, body, {})
+    from pptx.dml.color import RGBColor
+
     # YAML → title slide
     assert prs.slides[0].shapes.title.text == "Themed Deck"
     sub = "\n".join(
         ph.text_frame.text for ph in prs.slides[0].placeholders if ph.placeholder_format.idx != 0
     )
     assert "Ada" in sub and "Engine" in sub
-    # CSS → content-slide title colour
-    content = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Point")
-    from pptx.dml.color import RGBColor
 
+    content = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Point")
+    # CSS → content-slide title colour (H2)
     assert content.shapes.title.text_frame.paragraphs[0].font.color.rgb == RGBColor(
         0xCC, 0x00, 0x66
     )
-    # CSS → body font
-    fonts = {
-        r.font.name
+
+    # CSS → body font + body text colour on the bullet run
+    run = next(
+        r
         for sh in content.shapes
         if sh.has_text_frame
         for p in sh.text_frame.paragraphs
         for r in p.runs
-    }
-    assert "Georgia" in fonts
+        if r.text.strip() == "hello"
+    )
+    assert run.font.name == "Georgia"
+    assert run.font.color.rgb == RGBColor(0x22, 0x33, 0x44)
+
+    # CSS → table header fill + alternating row shading. nth-child(even) shades
+    # the first body row (table index 1); the second body row is unshaded.
+    table = next(sh.table for sh in content.shapes if sh.has_table)
+    assert table.cell(0, 0).fill.fore_color.rgb == RGBColor(0xCC, 0x00, 0x66)  # header bg
+    assert table.cell(1, 0).fill.fore_color.rgb == RGBColor(0xEE, 0xEE, 0xEE)  # shaded row
+    assert table.cell(2, 0).fill.type is None  # unshaded row
+
+
+def test_blockquote_renders_italic(repo):
+    body = "---\ntitle: T\n---\n\n## Q\n\n> a wise quote\n"
+    prs = _build(repo, body, {})
+    content = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Q")
+    italics = [
+        r.font.italic
+        for sh in content.shapes
+        if sh.has_text_frame
+        for p in sh.text_frame.paragraphs
+        for r in p.runs
+        if "wise quote" in r.text
+    ]
+    assert italics and all(italics)
 
 
 def test_mermaid_diagram_embeds_as_picture(repo):
