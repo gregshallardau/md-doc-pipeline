@@ -17,7 +17,7 @@ from __future__ import annotations
 import difflib
 from typing import Any, Iterable
 
-_FORMATS = {"pdf", "docx", "dotx"}
+_FORMATS = {"pdf", "docx", "dotx", "pptx"}
 _LR = {"left", "right"}
 _LCR = {"left", "center", "right"}
 
@@ -52,6 +52,8 @@ ENUM_KEYS: dict[str, set[str]] = {
     "page_header_bar_logo_position": _LCR,
     "sync_target": {"azure", "s3", "local"},
     "export_format": _FORMATS,
+    "slide_size": {"16:9", "4:3"},
+    "slide_split": {"h1", "h2", "marker"},
 }
 
 # Every documented key. Unknown keys outside this set trigger a warning.
@@ -75,6 +77,10 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "dotx_field_type",
         "body_text_align",
         "table_col_widths",
+        # slides (pptx)
+        "pptx_template",
+        "slide_size",
+        "slide_split",
         # cover page
         "cover_page",
         "cover_label",

@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-02
+
+### Added
+- **PPTX (PowerPoint) output** via a new `python-pptx` builder. `outputs: [pptx]`
+  or `md-doc build --format pptx` segments Markdown into slides — first H1 (or
+  `title`) → title slide, later H1s → section slides, each H2 → a content slide;
+  `<!-- slide -->` forces a break and `<!-- notes: … -->` adds speaker notes.
+  Bullets (with nesting), tables, images, code, and Mermaid diagrams (as PNGs)
+  are supported. New keys: `slide_split`, `slide_size`, `pptx_template`.
+- `md-doc doctor` now also checks `python-pptx`.
+
+### Changed
+- Shared image/Mermaid helpers extracted to `md_doc/builders/_assets.py` and
+  reused by the docx and pptx builders.
+- Sync and register now include `.pptx` (and `.dotx`) outputs.
+
 ## [0.2.0] — 2026-07-02
 
 Major reliability, parity, and hardening release.
@@ -42,5 +58,6 @@ Major reliability, parity, and hardening release.
   members, frontmatter without a trailing newline, and CSS/HTML injection vectors
   in the PDF builder (colors, footer/header strings, form-field attributes).
 
-[Unreleased]: https://github.com/gregshallardau/md-doc-pipeline/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gregshallardau/md-doc-pipeline/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.3.0
 [0.2.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.2.0

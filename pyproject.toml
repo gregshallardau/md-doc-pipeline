@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "md-doc-pipeline"
-version = "0.2.0"
+version = "0.3.0"
 description = "Markdown → PDF/DOCX document pipeline with cascading config and sync"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,6 +26,7 @@ dependencies = [
     "markdown>=3.5",
     "click>=8.1",
     "markitdown[pdf,docx]>=0.1.0",
+    "python-pptx>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -68,9 +69,11 @@ addopts = "--cov=md_doc --cov-report=term-missing --cov-fail-under=70"
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-# docx/dotx builders are large and not yet fully typed; everything else
-# (including the sync backends) is type-checked and gating in CI.
+# The Office builders lean heavily on the int-based python-docx/python-pptx
+# geometry APIs (Length subclasses), so they're not fully typed yet; everything
+# else (including the sync backends) is type-checked and gating in CI.
 exclude = [
     "md_doc/builders/docx\\.py",
     "md_doc/builders/dotx\\.py",
+    "md_doc/builders/pptx\\.py",
 ]
