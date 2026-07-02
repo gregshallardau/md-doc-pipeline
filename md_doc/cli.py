@@ -17,8 +17,10 @@ Wired via pyproject.toml:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,8 @@ import yaml
 
 from .config import _find_repo_root, get_output_formats, load_config, load_merge_fields
 from .renderer import render
+
+logger = logging.getLogger(__name__)
 
 # ─── Output styling helpers ──────────────────────────────────────────────────
 # Click's colour output auto-disables when stdout is piped, so these are safe
@@ -535,8 +539,33 @@ def _resolve_workspace_root(workspace: str, root: Path, repo_root: Path) -> Path
 
 @click.group()
 @click.version_option(package_name="md-doc-pipeline")
-def main() -> None:
-    """Markdown → PDF/DOCX/DOTX document pipeline with cascading config and sync."""
+@click.option(
+    "--log-level",
+    type=click.Choice(["debug", "info", "warning", "error"], case_sensitive=False),
+    default=None,
+    help="Logging verbosity for md_doc (default: warning).",
+)
+@click.option("--debug", is_flag=True, default=False, help="Shortcut for --log-level debug.")
+@click.option("--quiet", is_flag=True, default=False, help="Shortcut for --log-level error.")
+def main(log_level: str | None, debug: bool, quiet: bool) -> None:
+    """Markdown → PDF/DOCX/DOTX document pipeline with cascading config and sync.
+
+    Global logging can be raised with ``--debug`` (surfaces sync-retry and
+    config/theme warnings and per-document timing) or lowered with ``--quiet``.
+    Place the flag before the subcommand: ``md-doc --debug build workspace/``.
+    """
+    import logging
+
+    name = "debug" if debug else "error" if quiet else (log_level or "warning")
+    level = getattr(logging, name.upper())
+    pkg_logger = logging.getLogger("md_doc")
+    pkg_logger.setLevel(level)
+    if not any(getattr(h, "_md_doc", False) for h in pkg_logger.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler._md_doc = True  # type: ignore[attr-defined]
+        pkg_logger.addHandler(handler)
+    pkg_logger.propagate = False
 
 
 # ---------------------------------------------------------------------------
@@ -830,15 +859,21 @@ def build(
             verbose=verbose,
         )
 
+    built_total = 0
+
     def _tally(res: dict[str, Any]) -> None:
-        nonlocal skipped
+        nonlocal skipped, built_total
         skipped += res["skipped"]
+        built_total += res["built"]
         if res["errored"]:
             errors.append(res["rel"])
+
+    started = time.perf_counter()
 
     if jobs > 1 and len(docs) > 1:
         from concurrent.futures import ProcessPoolExecutor
 
+        logger.info("building %d document(s) with %d workers", len(docs), jobs)
         with ProcessPoolExecutor(max_workers=jobs) as pool:
             futures = [
                 pool.submit(
@@ -860,18 +895,28 @@ def build(
                 _print_doc_result(res)
                 _tally(res)
     else:
+        logger.info("building %d document(s) sequentially", len(docs))
         for doc_path in docs:
+            t0 = time.perf_counter()
             res = _build_one(doc_path)
+            logger.info(
+                "%s → %d built in %.2fs", res["rel"], res["built"], time.perf_counter() - t0
+            )
             _print_doc_result(res)
             _tally(res)
+
+    elapsed = time.perf_counter() - started
 
     if errors:
         click.echo("\n" + _err(f"{len(errors)} error(s)") + " — check output above.", err=True)
         sys.exit(1)
 
     if not dry_run:
-        suffix = f" ({skipped} up to date, skipped)" if skipped else ""
-        click.echo(_ok("✓ Build complete.") + _dim(suffix))
+        parts = [f"{built_total} built"]
+        if skipped:
+            parts.append(f"{skipped} up to date")
+        summary = ", ".join(parts) + f", {elapsed:.1f}s"
+        click.echo(_ok("✓ Build complete.") + _dim(f" ({summary})"))
 
 
 # ---------------------------------------------------------------------------

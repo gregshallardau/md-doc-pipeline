@@ -64,6 +64,10 @@ uv run md-doc doctor             # Check Python, deps, WeasyPrint system libs, o
 uv run md-doc sync [PATH]        # Push outputs to remote storage
 uv run md-doc register [PATH]    # Generate document registry
 
+# Global logging (place BEFORE the subcommand)
+uv run md-doc --debug build workspace/   # verbose: config/theme warnings + per-doc timing
+uv run md-doc --quiet build workspace/   # errors only  (also: --log-level debug|info|warning|error)
+
 # Tests
 uv run pytest                    # All tests
 uv run pytest tests/test_renderer.py -v  # Single file
