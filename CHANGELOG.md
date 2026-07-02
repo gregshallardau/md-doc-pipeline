@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Deck-first slide authoring schema** for `pptx` output. New layout
+  directives extend the existing marker style: `<!-- slide: section -->`
+  (forced divider), `<!-- slide: columns -->` with `<!-- col -->` dividers
+  (2–4 columns of text/bullets/code/tables/images), `<!-- slide: stat -->`
+  (big-number tiles from bullets — the bold text is the number),
+  `<!-- slide: quote -->` (centred pull-quote with `— Name` attribution),
+  `<!-- slide: image -->` (pictures/Mermaid fill the body, text becomes the
+  caption), and `<!-- slide: center -->` (vertically centred statement).
+  `background=#hex` on any directive gives the slide a solid fill, and dark
+  fills flip the text to white automatically. A directive starts a new slide
+  and the next heading titles it; unknown layout names degrade to the default
+  content layout with a warning. Overlong slides now **shrink text to fit**
+  instead of spilling off the canvas. New guide: `docs/slides-guide.md`;
+  worked example: `examples/blueshift/decks/quarterly-review.md`.
+
 ### Fixed
 - **Word content-fidelity gaps found by the full parity review.**
   - *Loose lists* (blank lines between items) no longer lose their bullets in

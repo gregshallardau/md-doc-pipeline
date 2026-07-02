@@ -1,0 +1,3 @@
+# Slide decks — deck-first authoring (see docs/slides-guide.md)
+outputs: [pptx]
+slide_size: "16:9"

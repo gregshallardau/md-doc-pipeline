@@ -187,6 +187,22 @@ Segmentation: the first `# H1` (or `title`) → title slide, later `# H1`s → s
 each `## H2` → content slide. `<!-- slide -->` forces a break; `<!-- notes: … -->` adds speaker
 notes. Mermaid diagrams embed as PNGs (needs the `[mermaid]` extra / `cairosvg`).
 
+**Deck-first layout directives** (full guide: `docs/slides-guide.md`, worked example:
+`examples/blueshift/decks/quarterly-review.md`). A directive starts a new slide; the next
+heading titles that slide instead of splitting to another. Overlong slides shrink text to fit.
+
+```markdown
+<!-- slide: section background=#1b4f72 -->   forced section divider (solid fill)
+<!-- slide: columns -->                       2–4 column body; <!-- col --> divides
+<!-- slide: stat -->                          big-number tiles: - **47%** YoY growth
+<!-- slide: quote -->                         centred pull-quote; — Name = attribution
+<!-- slide: image -->                         picture(s)/Mermaid fill the body, text = caption
+<!-- slide: center -->                        vertically centred statement
+```
+
+`background=#hex` works on any directive; dark fills flip text to white automatically.
+Unknown layout names degrade to the default content layout with a warning.
+
 **Per-section alignment in Markdown (docx/dotx):**
 
 Wrap sections in an HTML `<div style="text-align: ...">` block to override alignment for that block:
