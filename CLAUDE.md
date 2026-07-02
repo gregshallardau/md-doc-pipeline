@@ -202,6 +202,8 @@ heading titles that slide instead of splitting to another. Overlong slides shrin
 
 `background=#hex` works on any directive; dark fills flip text to white automatically.
 Unknown layout names degrade to the default content layout with a warning.
+`docs/llm-deck-prompt.md` holds a ready-made LLM prompt that converts raw content
+into a valid deck file in this schema.
 
 **Per-section alignment in Markdown (docx/dotx):**
 

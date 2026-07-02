@@ -5,6 +5,10 @@ through it, but decks read best when they're **written as decks** — short
 bullets, one idea per slide, and the layout directives below. A complete
 worked example lives at `examples/blueshift/decks/quarterly-review.md`.
 
+> **Authoring with an LLM?** `docs/llm-deck-prompt.md` contains a ready-made
+> prompt: give any LLM that prompt plus your raw content and it produces a
+> valid deck file in this schema.
+
 ## Setup
 
 ```yaml
