@@ -12,6 +12,7 @@ from md_doc.config import load_config
 from md_doc.renderer import render
 from md_doc.builders.pdf import build as build_pdf
 from md_doc.builders.docx import build as build_docx  # docx / dotx
+from md_doc.builders.pptx import build as build_pptx  # slide deck
 
 doc = Path("workspace/acme/proposal.md")
 
@@ -23,6 +24,10 @@ build_docx(rendered_md, config, Path("out/proposal.docx"), doc_path=doc)
 # For a Word template, pass output_format="dotx":
 build_docx(rendered_md, config, Path("out/proposal.dotx"), doc_path=doc,
            output_format="dotx")
+
+# Slide deck (see docs/slides-guide.md for the deck-first authoring schema):
+deck = Path("workspace/acme/decks/review.md")
+build_pptx(render(deck), load_config(deck), Path("out/review.pptx"), doc_path=deck)
 ```
 
 `doc_path` lets the builders resolve the theme / asset / template cascade

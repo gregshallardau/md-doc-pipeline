@@ -12,6 +12,10 @@ blueshift/
 │   ├── company-header.md                # Company-wide letterhead (default)
 │   └── legal-footer.md                  # Company-wide legal footer
 │
+├── decks/                              # PPTX slide decks (deck-first schema)
+│   ├── _meta.yml                        # outputs: [pptx], slide_size: 16:9
+│   └── quarterly-review.md              # every slide layout in one deck
+│
 ├── products/
 │   ├── _meta.yml                        # Products division: document_type, status
 │   ├── templates/
@@ -69,9 +73,30 @@ Pulse documents automatically pick up `products/pulse/_pdf-theme.css` (amber/ora
 palette) without any `pdf_theme` config key. All other documents fall through to
 the repo-root default (blue palette), auto-generated on first build.
 
+### Deck-first PPTX authoring (`decks/`)
+
+`decks/quarterly-review.md` is a PowerPoint deck written with the slide schema
+(full guide: [`docs/slides-guide.md`](../../docs/slides-guide.md)). `decks/_meta.yml`
+sets `outputs: [pptx]`, so the folder builds to slides. The deck exercises every
+layout in one file:
+
+- a **title slide** from frontmatter (`title` / `product` / `date`);
+- branded **section dividers** (`<!-- slide: section background=#1b4f72 -->`);
+- a **stat** slide of big-number tiles;
+- a two-column **columns** slide split by `<!-- col -->`;
+- an **image** slide filled by a Mermaid pipeline diagram;
+- a data **table** on a normal content slide;
+- a **quote** slide with attribution;
+- a centred **closer** (`<!-- slide: center -->`).
+
+It also inherits the navy `_theme.css` palette (heading colours + fonts), so the
+slides match the PDFs and Word docs. To generate a deck from raw content with an
+LLM, see [`docs/llm-deck-prompt.md`](../../docs/llm-deck-prompt.md).
+
 ## Building
 
 ```bash
 cd examples/blueshift
-md-doc build . --output build/
+md-doc build . --output build/          # all formats (PDFs, Word, and the deck)
+md-doc build decks/ --format pptx       # just the slide deck
 ```
