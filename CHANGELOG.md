@@ -6,6 +6,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Word content-fidelity gaps found by the full parity review.**
+  - *Loose lists* (blank lines between items) no longer lose their bullets in
+    docx — the first paragraph of a list item reuses the bullet paragraph, and
+    later paragraphs render as indented continuations.
+  - *Footnotes and internal/TOC links* now work in Word: `#anchor` hyperlinks
+    become real bookmark jumps (headings, footnote definitions and references
+    are bookmarked) with no literal `(#fn:1)` suffix, and footnote markers
+    render superscript.
+  - *`<sup>`/`<sub>`/`<del>`* render as superscript/subscript/strikethrough
+    runs in docx instead of plain text.
+  - *Markdown column alignment* (`:--:` / `--:`) is honoured in docx table
+    cells, and hyperlinks inside cells are clickable instead of losing their
+    URL.
+  - *Tables and code blocks stay on one page* in Word (`cantSplit` rows,
+    `keepLines` code paragraphs), matching the PDF theme's
+    `page-break-inside: avoid`.
+- **Config keys that only one format honoured.**
+  - `--theme` / `pdf_theme` now restyles Word and PowerPoint typography too
+    (previously only the PDF and Word's page geometry), so one override drives
+    all formats.
+  - `body_text_align` now applies to the PDF (previously Word-only).
+  - `cover_text_align` and `cover_footer_line: false` now work in the PDF
+    (the cover classes previously had no CSS behind them); `center` is now a
+    supported cover alignment in both formats.
+  - `page_header_bar_logo` now beats `header_logo` inside the page header bar
+    in both formats (PDF previously preferred `header_logo`, Word the
+    opposite).
+  - `cover_background` is documented as PDF-only (Word has no per-page fill).
+
+### Changed
+- **DOCX cover page now mirrors the PDF cover.** The Word cover previously used
+  the built-in serif *Title*/*Subtitle* styles (nothing like the PDF), a
+  full-width divider, colon'd metadata, and an inline footer. It now renders an
+  explicit large bold title in the theme's `$primary` colour and body font, an
+  accent uppercase "REPORT" label, a short accent divider rule, colon-free
+  metadata (`Prepared by {author}` / `Date {date}` with a bold body-coloured
+  label + muted value), and a confidentiality footer anchored to the bottom of
+  the page — matching the PDF's `_build_cover` layout.
+- **PDF↔DOCX page-break & structural parity.** The docx builder now injects the
+  same page breaks as the PDF builder (APPENDIX-section H2s and explicit
+  `<!-- pagebreak -->`), sets *keep-with-next* on headings so they don't strand
+  at a page bottom, and reads the paper **size and margins from the theme's
+  `@page`** rule (A4/Letter/Legal/A3, incl. landscape) instead of hardcoding A4 —
+  so both formats share the same text width and break at the same points.
+  Definition lists (`term`/`:`)
+  now render in docx too (bold term + indented definition). Note: exact
+  page-for-page identity isn't guaranteed (WeasyPrint and Word are different
+  layout engines), but declared breaks and structure now line up.
+
 ## [0.3.0] — 2026-07-02
 
 ### Added

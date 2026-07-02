@@ -570,7 +570,7 @@ def build(
     html = markdown.Markdown(extensions=_MD_EXTENSIONS).convert(body)
 
     # Theme (colours + fonts from the CSS cascade) + mermaid diagram theme.
-    theme = resolve_docx_theme(doc_path, repo_root) if (doc_path and repo_root) else {}
+    theme = resolve_docx_theme(doc_path, repo_root, config) if (doc_path and repo_root) else {}
     theme = theme or {}
     mermaid_theme = None
     try:
