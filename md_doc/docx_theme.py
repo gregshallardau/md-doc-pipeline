@@ -473,6 +473,17 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if col:
             theme["color_em"] = col
 
+    # Forced page breaks before headings — mirrors the PDF theme's
+    # `.report-body h1 { page-break-before: always; }` so Word starts the same
+    # sections on a fresh page.
+    for level in range(1, 5):
+        tag = f"h{level}"
+        for sel in (tag, f".report-body {tag}", f"body {tag}"):
+            props = blocks.get(sel, {})
+            pb = (props.get("page-break-before") or props.get("break-before") or "").lower()
+            if pb.strip() in ("always", "page"):
+                theme[f"page_break_before_{tag}"] = True
+
     # h1 border-bottom
     h1_props = blocks.get("h1", {})
     if "border-bottom" in h1_props:

@@ -324,6 +324,12 @@ def _expand_form_fields(md_content: str, is_form: bool) -> str:
 _BLOCK_TAG = r"(?:p|pre|ul|ol|table|blockquote|div|dl)"
 _BLOCK_RE = re.compile(rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL)
 
+# Forced page-break markers must never be pulled into a keep-together
+# container: a forced break inside break-inside:avoid makes WeasyPrint push
+# the whole container to a fresh page (stranding the heading alone) and can
+# emit an entirely blank page.
+_BREAK_DIV_MARKERS = ("md-doc-page-break", "appendix-template-break")
+
 
 def _keep_heading_with_next(html_body: str) -> str:
     """Wrap each heading + up to two following block elements in a keep-together div.
@@ -343,6 +349,17 @@ def _keep_heading_with_next(html_body: str) -> str:
             heading = parts[i]
             tail = parts[i + 1] if i + 1 < len(parts) else ""
             blocks = _BLOCK_RE.findall(tail)
+            # Stop collecting at the first forced page-break div.
+            cut = next(
+                (
+                    idx
+                    for idx, blk in enumerate(blocks)
+                    if any(marker in blk for marker in _BREAK_DIV_MARKERS)
+                ),
+                None,
+            )
+            if cut is not None:
+                blocks = blocks[:cut]
             if len(blocks) >= 2:
                 rest = tail[
                     tail.index(blocks[0])

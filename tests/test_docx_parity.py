@@ -206,9 +206,15 @@ def test_cover_matches_pdf_design(tmp_repo):
     assert "Date March 2026" in meta
     assert not any(t.startswith("Prepared by:") for t in meta)
 
-    # Footer is anchored to the page bottom via a text frame.
+    # Footer is a text frame anchored ~14mm from the physical page bottom
+    # (matching the PDF's .cover-footer { bottom: 14mm }).
     xml = _part(out, "word/document.xml")
-    assert "w:framePr" in xml and 'w:vAnchor="page"' in xml and 'w:yAlign="bottom"' in xml
+    assert "w:framePr" in xml and 'w:vAnchor="page"' in xml and 'w:y="' in xml
+    # The cover bar floats at the physical page top (full-bleed, like the
+    # PDF's @page cover { margin: 0 }).
+    assert "w:tblpPr" in xml and 'w:tblpYSpec="top"' in xml
+    # Headers/footers are suppressed on the cover via "different first page".
+    assert "<w:titlePg/>" in xml
 
 
 def test_docx_page_size_matches_theme(tmp_repo):
@@ -222,3 +228,83 @@ def test_docx_page_size_matches_theme(tmp_repo):
     section = d.sections[0]
     assert round(section.page_width / 36000, 1) == 215.9  # EMU → mm
     assert round(section.page_height / 36000, 1) == 279.4
+
+
+def test_h1_page_break_before_from_theme(tmp_repo):
+    # The PDF theme forces every report-body H1 onto a new page; the docx
+    # builder mirrors that — but never on the first content element (a forced
+    # break at the top of a page collapses in CSS).
+    (tmp_repo / "_pdf-theme.css").write_text(
+        "@page { size: A4; margin: 25mm 20mm 22mm 25mm; }\n"
+        "body { font-family: Arial; }\n"
+        ".report-body h1 { page-break-before: always; break-before: page; }\n",
+        encoding="utf-8",
+    )
+    out = _build(tmp_repo, "# First\n\ntext\n\n# Second\n\nmore\n", {})
+    d = Document(str(out))
+    first = next(p for p in d.paragraphs if p.text == "First")
+    second = next(p for p in d.paragraphs if p.text == "Second")
+    assert first.paragraph_format.page_break_before is not True
+    assert second.paragraph_format.page_break_before is True
+
+
+def test_theme_default_footers_render_in_word(tmp_repo):
+    # With no footer_* config, the PDF still renders the theme's @bottom-*
+    # margin boxes (org name / running date / page numbers). The docx footer
+    # must show the same defaults.
+    (tmp_repo / "_pdf-theme.css").write_text(
+        "@page { size: A4; margin: 25mm 20mm 22mm 25mm;\n"
+        '  @bottom-left { content: "Org Name"; font-size: 7.5pt; color: #7f8c9a; }\n'
+        "  @bottom-center { content: string(research-date); }\n"
+        '  @bottom-right { content: "Page " counter(page) " of " counter(pages); }\n'
+        "}\n"
+        "body { font-family: Arial; }\n",
+        encoding="utf-8",
+    )
+    md = "---\ntitle: T\n---\n\n## S\n\nbody\n"
+    doc_path = tmp_repo / "doc.md"
+    doc_path.write_text(md, encoding="utf-8")
+    out = tmp_repo / "out.docx"
+    from md_doc.builders.docx import build
+
+    build(
+        md,
+        {"title": "T", "cover_page": False, "date": "1 May 2026"},
+        out,
+        doc_path=doc_path,
+        repo_root=tmp_repo,
+    )
+    footer = _part(out, "word/footer1.xml")
+    assert "Org Name" in footer
+    assert "1 May 2026" in footer  # string(research-date) → document date
+    assert "PAGE" in footer and "NUMPAGES" in footer
+    # An explicitly configured slot still wins over the CSS default.
+    build(
+        md,
+        {"title": "T", "cover_page": False, "date": "1 May 2026", "footer_left": "Custom"},
+        out,
+        doc_path=doc_path,
+        repo_root=tmp_repo,
+    )
+    footer = _part(out, "word/footer1.xml")
+    assert "Custom" in footer and "Org Name" not in footer
+
+
+def test_no_cover_keeps_h1_in_body(tmp_repo):
+    # cover_page: false leaves the leading H1 in the body as a Heading 1 —
+    # exactly what the PDF does — rather than a serif "Title" paragraph.
+    d = Document(str(_build(tmp_repo, "# My Doc\n\nbody\n", {})))
+    h1 = next(p for p in d.paragraphs if p.text == "My Doc")
+    assert h1.style.name == "Heading 1"
+
+
+def test_keep_with_next_excludes_page_break_divs():
+    # A forced page-break div must never be swallowed into the PDF's
+    # keep-together wrapper — that strands the heading on its own page and can
+    # emit an entirely blank page.
+    from md_doc.builders.pdf import _keep_heading_with_next
+
+    html = "<h2>Rollout</h2>\n<p>intro</p>\n" '<div class="md-doc-page-break"></div>\n<p>after</p>'
+    result = _keep_heading_with_next(html)
+    keep = result.split('<div class="keep-with-next">')[1].split("</div>")[0]
+    assert "md-doc-page-break" not in keep
