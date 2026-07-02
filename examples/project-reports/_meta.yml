@@ -1,5 +1,6 @@
 author: Acme Corp
 outputs: [pdf, docx]
+cover_page: true   # reports want a branded cover (global default is false)
 include_md_in_share: false
 sync_target: local
 sync_config:

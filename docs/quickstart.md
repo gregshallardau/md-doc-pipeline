@@ -211,6 +211,75 @@ Features:
 
 **Example:** `md-doc build workspace/acme/ --format pdf` (with `pdf_forms: true` in frontmatter)
 
+### 5. **PPTX** — Slide Decks
+
+Best for: Quarterly reviews, pitches, and any content you'd present rather than print.
+
+Write decks *as decks* — short bullets, one idea per slide — and reach for layout
+directives where the content earns them. Headings segment into slides (H1 → section,
+H2 → content); a directive like `<!-- slide: stat -->` starts a slide with a specific
+layout, and the next heading titles it.
+
+```yaml
+---
+title: Nova Analytics — Q2 Review
+product: Nova Analytics
+date: July 2026
+outputs: [pptx]
+slide_size: "16:9"
+---
+
+# Nova Analytics — Q2 Review
+
+## Agenda
+
+- Highlights
+- Growth numbers
+
+<!-- slide: stat -->
+
+## Q2 Highlights
+
+- **47%** revenue growth YoY
+- **12.4k** active workspaces
+
+<!-- slide: columns -->
+
+## Wins vs. Watch-outs
+
+**Shipped**
+
+- Streaming ingestion
+
+<!-- col -->
+
+**Needs attention**
+
+- Onboarding time
+
+<!-- slide: quote -->
+
+> Nova cut our reporting from two days to twenty minutes.
+
+— VP Data, Stormfront Inc.
+
+<!-- slide: center background=#1b4f72 -->
+
+**Next quarter: self-serve onboarding.**
+```
+
+Layout directives: `section` (divider), `columns` (with `<!-- col -->`), `stat`
+(big-number tiles from bullets), `quote` (pull-quote with `— Name` attribution),
+`image` (pictures/Mermaid fill the slide), `center` (centred statement). Add
+`background=#hex` to any of them — dark fills flip the text to white. Slides pick up
+the same CSS theme (heading colours + fonts) as your PDFs/Word docs, tables and
+Mermaid diagrams render natively, and `<!-- notes: … -->` adds speaker notes.
+
+**Example:** `md-doc build examples/blueshift/decks/ --format pptx`
+
+**Learn more:** the [Slides guide](slides-guide.md) documents every layout; the
+[LLM deck prompt](llm-deck-prompt.md) turns raw content into a valid deck with any LLM.
+
 ---
 
 ## Cascading Configuration

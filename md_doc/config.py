@@ -64,17 +64,31 @@ def _extract_frontmatter(md_path: Path) -> dict[str, Any]:
 
 def _find_repo_root(start: Path) -> Path:
     """
-    Walk up from *start* looking for a .git directory or pyproject.toml.
-    Falls back to the filesystem root if neither is found.
+    Walk up from *start* looking for a project-root marker.
+
+    A ``.git`` directory or ``pyproject.toml`` is the strongest signal and wins
+    immediately.  Failing that, the **topmost** ancestor containing a
+    ``_meta.yml`` marks the ceiling of the config cascade — this lets md-doc
+    projects that don't live in a VCS repo (just a tree of ``_meta.yml`` files)
+    resolve the same root whether you build the whole directory *or a single
+    file inside it*.  Without this, a single-file build in a non-git project
+    would fall back to the document's own directory and silently drop every
+    parent ``_meta.yml`` (author, theme, outputs …) from the cascade.
+
+    Falls back to *start* itself if no marker is found anywhere.
     """
     current = start.resolve()
+    topmost_meta: Path | None = None
     while True:
         if (current / ".git").exists() or (current / "pyproject.toml").exists():
             return current
+        if (current / "_meta.yml").exists():
+            topmost_meta = current  # keep climbing — we want the *highest* one
         parent = current.parent
         if parent == current:
-            # Reached filesystem root without finding a marker
-            return start.resolve()
+            # Reached filesystem root without a VCS marker; use the highest
+            # _meta.yml if we saw one, else the starting point.
+            return topmost_meta or start.resolve()
         current = parent
 
 

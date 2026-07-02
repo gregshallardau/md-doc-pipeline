@@ -112,6 +112,36 @@ class TestBuildPreflightLint:
         # but via the per-doc render error path, not the pre-flight gate.
         assert "Lint errors" not in result.output
 
+    def test_single_file_build_ignores_sibling_lint_errors(self, tmp_repo):
+        """Building one file lints only that file — a broken sibling can't block it."""
+        pytest.importorskip("weasyprint")
+
+        write_meta(tmp_repo, "title: Doc\noutputs: [pdf]\n")
+        clean = write_doc(tmp_repo, "proposal.md", frontmatter="title: Clean", body="# Hi\n")
+        # Sibling with a genuine lint error that would abort a directory build.
+        write_doc(tmp_repo, "draft.md", frontmatter="title: WIP\noutputs: [pdf, banana]")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["build", str(clean)])
+
+        assert result.exit_code == 0, f"expected success, got: {result.output}"
+        assert "Lint errors" not in result.output
+        assert "Build complete" in result.output
+        assert (tmp_repo / "proposal.pdf").exists()
+
+    def test_single_file_build_still_aborts_on_own_lint_error(self, tmp_repo):
+        """A single-file build still aborts when *that* file has a lint error."""
+        write_meta(tmp_repo, "title: Doc\n")
+        bad = write_doc(
+            tmp_repo, "bad.md", frontmatter="title: Bad", body='{% include "missing.md" %}\n'
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["build", str(bad)])
+
+        assert result.exit_code == 1, f"expected abort, got: {result.output}"
+        assert "Lint errors" in result.output
+
 
 # ── md-doc build with strict filename override ─────────────────────────────
 

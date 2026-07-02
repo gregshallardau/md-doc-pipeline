@@ -1,8 +1,8 @@
 # md-doc-pipeline
 
-A Markdown → PDF / DOCX / DOTX document pipeline with cascading config, Jinja2 template composition, merge field support, and pluggable cloud sync.
+A Markdown → PDF / DOCX / DOTX / PPTX document pipeline with cascading config, Jinja2 template composition, merge field support, and pluggable cloud sync.
 
-Built for document-heavy workflows — proposals, project reports, compliance documents, contracts — where content lives in Markdown, is assembled from reusable fragments, and is published to multiple formats.
+Built for document-heavy workflows — proposals, project reports, compliance documents, contracts, and slide decks — where content lives in Markdown, is assembled from reusable fragments, and is published to multiple formats.
 
 ---
 
@@ -14,7 +14,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **PDF output** — WeasyPrint builder with branded cover page, headers, footers, and pagination
 - **DOCX output** — python-docx builder for copy-to-email Word documents
 - **DOTX output** — Word merge template builder; your other application fills the fields
-- **PPTX output** — python-pptx slide builder; Markdown headings segment into slides, with speaker notes, tables, images, and Mermaid diagrams
+- **PPTX output** — python-pptx slide builder with a deck-first authoring schema: headings segment into slides, plus layout directives for section dividers, multi-column bodies, big-number stat tiles, pull-quotes, image showcases, per-slide backgrounds, and speaker notes ([slides guide](docs/slides-guide.md))
 - **Cascading PDF themes** — `_theme.css` at any folder level; deepest wins. Run `md-doc theme init` to generate a full theme or `md-doc theme override` for a minimal colour override
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
@@ -104,9 +104,10 @@ This generates `proposal.pdf` — a branded, professional document with cover pa
 | **PDF** | Reports, proposals, final documents | Branded cover pages, custom themes, professional formatting |
 | **DOCX** | Documents to email or edit in Word | Editable format, preserves formatting, good for drafts |
 | **DOTX** | Fillable templates, mail merge | `[[field_name]]` becomes Word Text Form Field (default) or MERGEFIELD |
+| **PPTX** | Slide decks, quarterly reviews, pitches | Deck-first schema: section/columns/stat/quote/image/center layouts, per-slide backgrounds, speaker notes ([guide](docs/slides-guide.md)) |
 | **PDF Forms** | Interactive surveys, intake forms, applications | `<input>`, `<select>`, `<textarea>` become fillable form fields |
 
-See the [Output Types Guide](docs/quickstart.md#output-types) for detailed examples of each format.
+See the [Output Types Guide](docs/quickstart.md#output-types) for detailed examples of each format, and the [Slides Guide](docs/slides-guide.md) for authoring decks.
 
 ### 3. Common commands
 
@@ -155,11 +156,11 @@ status: draft                     # draft | final | superseded
 author: Acme Corp
 date: 1 May 2026
 
-outputs: [pdf, dotx]              # pdf | docx | dotx — default: [pdf]
+outputs: [pdf, dotx]              # pdf | docx | dotx | pptx — default: [pdf]
 output_pdf: Alpha-Report.pdf      # override output filename
 output_dotx: Alpha-Template.dotx
 output_dir: /path/to/output/      # route built files here (cascades from _meta.yml; CLI --output overrides)
-cover_page: true                  # default true — set false to omit cover
+cover_page: false                 # default false — set true to add a branded cover
 cover_label: Report               # text above cover title (default: "Report")
 
 header_logo: assets/logo.png      # logo in page header (resolved doc dir → repo root)
@@ -308,8 +309,8 @@ h2            { color: #e67e22; }
 Controlled per document or folder:
 
 ```yaml
-cover_page: true   # default — branded cover with title, author, date
-cover_page: false  # body only, no cover
+cover_page: true   # branded cover with title, author, date
+cover_page: false  # default — body only, no cover
 ```
 
 ---
@@ -401,6 +402,8 @@ md-doc register [ROOT] [OPTIONS]
 - [Quickstart](docs/quickstart.md) — install, output types, config, Jinja2, forms
 - [Config reference](docs/config-reference.md) — every `_meta.yml` / frontmatter key
 - [Authoring guide](docs/authoring-guide.md) — Markdown authoring conventions
+- [Slides guide](docs/slides-guide.md) — deck-first PPTX authoring: layouts, backgrounds, columns, stats, quotes
+- [LLM deck prompt](docs/llm-deck-prompt.md) — turn raw content into a valid deck file with any LLM
 - [PDF forms guide](docs/pdf-forms-guide.md) — interactive fillable PDFs
 - [Troubleshooting](docs/troubleshooting.md) — system libs, Mermaid-in-Word, sync
 - [Python API](docs/python-api.md) — using the pipeline as a library
@@ -418,6 +421,9 @@ blueshift/
 ├── templates/
 │   ├── company-header.md
 │   └── legal-footer.md
+├── decks/
+│   ├── _meta.yml                # outputs: [pptx], slide_size: 16:9
+│   └── quarterly-review.md      # deck-first example — every slide layout
 ├── products/
 │   ├── _meta.yml                # document_type, status
 │   ├── pulse/
@@ -439,6 +445,11 @@ A Pulse document resolves:
 - Config: `blueshift/_meta.yml` → `products/_meta.yml` → `products/pulse/_meta.yml` → frontmatter
 - Theme: `products/pulse/_theme.css` (amber) → imports `blueshift/_theme.css` (navy base)
 - Templates: `products/pulse/templates/` → `products/templates/` → `blueshift/templates/`
+
+The [`decks/quarterly-review.md`](examples/blueshift/decks/quarterly-review.md) deck shows the PPTX
+schema end to end — title slide, branded section dividers, stat tiles, two-column comparison, a
+Mermaid pipeline diagram, a data table, a pull-quote, and a centred closer. Build it with
+`md-doc build examples/blueshift/decks/ --format pptx`.
 
 ---
 

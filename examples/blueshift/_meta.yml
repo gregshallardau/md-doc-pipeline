@@ -2,6 +2,7 @@
 # All documents inherit these defaults unless overridden by nested _meta.yml
 author: Blueshift Labs
 outputs: [pdf]
+cover_page: true   # these formal docs want a branded cover (global default is false)
 include_md_in_share: false
 sync_target: local
 sync_config:

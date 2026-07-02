@@ -161,7 +161,7 @@ class TestBodyAlignAndCoverCss:
     def test_cover_align_and_footer_line_css_present(self, tmp_repo):
         # cover_text_align / cover_footer_line previously emitted classes with
         # no CSS behind them — the support rules must ship with the cover.
-        html = self._built_html(tmp_repo, {"cover_text_align": "right"})
+        html = self._built_html(tmp_repo, {"cover_page": True, "cover_text_align": "right"})
         assert ".cover-align-right { text-align: right; }" in html
         assert ".cover-footer-no-line { border-top: none !important" in html
         assert 'class="cover cover-align-right"' in html
@@ -183,3 +183,12 @@ class TestBodyAlignAndCoverCss:
         )
         assert "bar.png" in html
         assert "generic.png" not in html
+
+    def test_cover_page_defaults_to_false(self, tmp_repo):
+        # Absent cover_page ⇒ no cover; the leading H1 stays in the body.
+        no_cfg = self._built_html(tmp_repo, {})
+        assert '<div class="cover' not in no_cfg
+        assert "<!-- COVER PAGE -->" not in no_cfg
+        # Opt in explicitly to get one.
+        with_cover = self._built_html(tmp_repo, {"cover_page": True})
+        assert '<div class="cover' in with_cover

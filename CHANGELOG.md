@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **`cover_page` now defaults to `false`.** Previously a cover page was added
+  unless you set `cover_page: false`; now the document starts with your content
+  unless you opt in with `cover_page: true` (in the document's frontmatter or a
+  parent `_meta.yml`). **Migration:** add `cover_page: true` at the folder or
+  document level wherever you want the branded cover — the example projects do
+  this at their `_meta.yml` root. Applies to PDF and DOCX/DOTX; `pptx` is
+  unaffected.
+
+### Fixed
+- **Single-file builds no longer abort on an unrelated file's lint error.**
+  Building one document (e.g. the Neovim plugin's *build this file*) ran the
+  lint pre-flight over the document's whole parent directory, so a lint error
+  in a *sibling* (a WIP draft, a broken template) aborted the build and the
+  file you asked for never built — while a whole-directory "workspace" build of
+  a clean subtree worked. A single-file build now lints only that file; its own
+  lint errors still abort as before.
+- **Single-file builds in non-git projects now resolve the full config
+  cascade.** `_find_repo_root` recognised only `.git` / `pyproject.toml`; in a
+  project rooted by `_meta.yml` alone, building a single file (e.g. from the
+  Neovim plugin's *build this file*) fell back to the document's own directory
+  and silently dropped every parent `_meta.yml` — so `author`/theme/`outputs`
+  went missing and `_pdf-theme.css` was written next to the doc instead of at
+  the project root. It now falls back to the **topmost `_meta.yml`**, matching
+  what a whole-directory build resolves.
+
 ### Added
 - **Deck-first slide authoring schema** for `pptx` output. New layout
   directives extend the existing marker style: `<!-- slide: section -->`
