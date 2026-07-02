@@ -10,8 +10,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **PDF↔DOCX page-break & structural parity.** The docx builder now injects the
   same page breaks as the PDF builder (APPENDIX-section H2s and explicit
   `<!-- pagebreak -->`), sets *keep-with-next* on headings so they don't strand
-  at a page bottom, and — with page geometry already matched (A4, 25/20/25/22mm
-  margins) — breaks at the same points as the PDF. Definition lists (`term`/`:`)
+  at a page bottom, and reads the paper **size and margins from the theme's
+  `@page`** rule (A4/Letter/Legal/A3, incl. landscape) instead of hardcoding A4 —
+  so both formats share the same text width and break at the same points.
+  Definition lists (`term`/`:`)
   now render in docx too (bold term + indented definition). Note: exact
   page-for-page identity isn't guaranteed (WeasyPrint and Word are different
   layout engines), but declared breaks and structure now line up.

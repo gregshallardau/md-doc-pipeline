@@ -1195,15 +1195,98 @@ class _DocxBuilder(HTMLParser):
 # ---------------------------------------------------------------------------
 
 
-def _setup_page(doc: Document) -> None:
-    """Set A4 page size and margins matching the default PDF layout."""
+# Named page sizes in mm, portrait (w, h) — matches WeasyPrint/CSS @page sizes.
+_PAGE_SIZES_MM = {
+    "a3": (297.0, 420.0),
+    "a4": (210.0, 297.0),
+    "a5": (148.0, 210.0),
+    "letter": (215.9, 279.4),
+    "legal": (215.9, 355.6),
+}
+# Default geometry (A4 + PDF theme margins), used when no @page is found.
+_DEFAULT_GEOMETRY = {
+    "w": 210.0,
+    "h": 297.0,
+    "top": 25.0,
+    "right": 20.0,
+    "bottom": 22.0,
+    "left": 25.0,
+}
+
+
+def _length_to_mm(token: str) -> float | None:
+    """Convert a CSS length (mm/cm/in/pt/px) to mm."""
+    m = re.match(r"^([\d.]+)\s*(mm|cm|in|pt|px)?$", token.strip())
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(2) or "mm"
+    return {
+        "mm": val,
+        "cm": val * 10,
+        "in": val * 25.4,
+        "pt": val * 25.4 / 72,
+        "px": val * 25.4 / 96,
+    }[unit]
+
+
+def _page_geometry(css_text: str | None) -> dict[str, float]:
+    """Parse the ``@page { size; margin }`` from theme CSS into mm geometry.
+
+    Mirrors the PDF's page so docx uses the same paper size and margins (and
+    therefore the same text width → consistent pagination). Falls back to A4 +
+    the standard margins when absent.
+    """
+    geom = dict(_DEFAULT_GEOMETRY)
+    if not css_text:
+        return geom
+    block = re.search(r"@page\s*\{([^}]*)\}", css_text, re.IGNORECASE)
+    if not block:
+        return geom
+    body = block.group(1)
+
+    size_m = re.search(r"size:\s*([^;]+);", body, re.IGNORECASE)
+    if size_m:
+        tokens = size_m.group(1).lower().split()
+        named = next((t for t in tokens if t in _PAGE_SIZES_MM), None)
+        if named:
+            w, h = _PAGE_SIZES_MM[named]
+            if "landscape" in tokens:
+                w, h = h, w
+            geom["w"], geom["h"] = w, h
+        else:
+            lengths = [_length_to_mm(t) for t in tokens]
+            lengths = [x for x in lengths if x is not None]
+            if len(lengths) >= 2:
+                geom["w"], geom["h"] = lengths[0], lengths[1]
+
+    margin_m = re.search(r"margin:\s*([^;]+);", body, re.IGNORECASE)
+    if margin_m:
+        vals = [_length_to_mm(t) for t in margin_m.group(1).split()]
+        vals = [v for v in vals if v is not None]
+        if len(vals) == 1:
+            geom["top"] = geom["right"] = geom["bottom"] = geom["left"] = vals[0]
+        elif len(vals) == 2:
+            geom["top"] = geom["bottom"] = vals[0]
+            geom["right"] = geom["left"] = vals[1]
+        elif len(vals) == 3:
+            geom["top"], geom["right"], geom["bottom"] = vals[:3]
+            geom["left"] = vals[1]
+        elif len(vals) >= 4:
+            geom["top"], geom["right"], geom["bottom"], geom["left"] = vals[:4]
+    return geom
+
+
+def _setup_page(doc: Document, geometry: dict[str, float] | None = None) -> None:
+    """Set page size and margins to match the PDF layout (from theme @page)."""
+    g = geometry or _DEFAULT_GEOMETRY
     section = doc.sections[0]
-    section.page_width = Mm(210)
-    section.page_height = Mm(297)
-    section.left_margin = Mm(25)
-    section.right_margin = Mm(20)
-    section.top_margin = Mm(25)
-    section.bottom_margin = Mm(22)
+    section.page_width = Mm(g["w"])
+    section.page_height = Mm(g["h"])
+    section.top_margin = Mm(g["top"])
+    section.right_margin = Mm(g["right"])
+    section.bottom_margin = Mm(g["bottom"])
+    section.left_margin = Mm(g["left"])
 
 
 # ---------------------------------------------------------------------------
@@ -1852,20 +1935,24 @@ def build(
     # uses so diagram colours match across formats. Falls back to leaving the
     # code block if cairosvg is unavailable.
     mermaid_theme = None
+    css_text: str | None = None
     try:
         from .pdf import _resolve_css
         from ..mermaid import extract_theme_from_css
 
         css_path = _resolve_css(config, repo_root, doc_path=doc_path)
         if css_path and css_path.exists():
-            mermaid_theme = extract_theme_from_css(css_path.read_text(encoding="utf-8"))
+            css_text = css_path.read_text(encoding="utf-8")
+            mermaid_theme = extract_theme_from_css(css_text)
     except Exception:
         mermaid_theme = None
     html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)
 
     theme = _resolve_docx_theme(doc_path, repo_root)
     doc = Document()
-    _setup_page(doc)
+    # Match the PDF's paper size + margins (parsed from the theme's @page) so
+    # both formats share the same text width and break at the same points.
+    _setup_page(doc, _page_geometry(css_text))
 
     props = doc.core_properties
     if is_dotx:

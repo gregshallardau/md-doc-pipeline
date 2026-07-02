@@ -152,3 +152,28 @@ def test_definition_list_renders(tmp_repo):
     assert term.runs[0].bold is True
     dd = next(p for p in d.paragraphs if p.text == "Definition of A")
     assert dd.paragraph_format.left_indent is not None
+
+
+def test_page_geometry_parser():
+    from md_doc.builders.docx import _page_geometry
+
+    a4 = _page_geometry("@page { size: A4; margin: 25mm 20mm 22mm 25mm; }")
+    assert (a4["w"], a4["h"]) == (210.0, 297.0)
+    assert (a4["top"], a4["right"], a4["bottom"], a4["left"]) == (25.0, 20.0, 22.0, 25.0)
+    letter = _page_geometry("@page { size: Letter; margin: 1in; }")
+    assert (round(letter["w"], 1), round(letter["h"], 1)) == (215.9, 279.4)
+    assert round(letter["top"], 1) == 25.4
+    assert _page_geometry(None)["w"] == 210.0  # default A4
+
+
+def test_docx_page_size_matches_theme(tmp_repo):
+    # A Letter-sized PDF theme must produce a Letter-sized docx (not hardcoded A4)
+    # so the two formats share text width and pagination.
+    (tmp_repo / "_pdf-theme.css").write_text(
+        "@page { size: Letter; margin: 25mm 20mm 22mm 25mm; }\nbody { font-family: Arial; }\n",
+        encoding="utf-8",
+    )
+    d = Document(str(_build(tmp_repo, "## S\n\nbody\n", {})))
+    section = d.sections[0]
+    assert round(section.page_width / 36000, 1) == 215.9  # EMU → mm
+    assert round(section.page_height / 36000, 1) == 279.4
