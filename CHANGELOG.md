@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Single-file builds in non-git projects now resolve the full config
+  cascade.** `_find_repo_root` recognised only `.git` / `pyproject.toml`; in a
+  project rooted by `_meta.yml` alone, building a single file (e.g. from the
+  Neovim plugin's *build this file*) fell back to the document's own directory
+  and silently dropped every parent `_meta.yml` — so `author`/theme/`outputs`
+  went missing and `_pdf-theme.css` was written next to the doc instead of at
+  the project root. It now falls back to the **topmost `_meta.yml`**, matching
+  what a whole-directory build resolves.
+
 ### Added
 - **Deck-first slide authoring schema** for `pptx` output. New layout
   directives extend the existing marker style: `<!-- slide: section -->`

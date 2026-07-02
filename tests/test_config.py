@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from md_doc.config import load_config, get_output_formats, should_sync_md, load_merge_fields
+from md_doc.config import (
+    _find_repo_root,
+    load_config,
+    get_output_formats,
+    should_sync_md,
+    load_merge_fields,
+)
 
 
 @pytest.fixture()
@@ -25,6 +31,45 @@ def write_md(path: Path, frontmatter: str = "", body: str = "# Hello") -> None:
     else:
         content = body
     path.write_text(content)
+
+
+class TestFindRepoRoot:
+    def test_git_marker_wins(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        assert _find_repo_root(deep) == tmp_path.resolve()
+
+    def test_pyproject_marker(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[project]\n")
+        deep = tmp_path / "a"
+        deep.mkdir()
+        assert _find_repo_root(deep) == tmp_path.resolve()
+
+    def test_meta_only_project_uses_topmost_meta(self, tmp_path):
+        # No .git / pyproject: the highest _meta.yml is the cascade ceiling, so a
+        # single-file build resolves the same root as a directory build (and
+        # doesn't collapse to the document's own folder).
+        root = tmp_path / "proposals"
+        leaf = root / "clients" / "acme"
+        leaf.mkdir(parents=True)
+        (root / "_meta.yml").write_text("author: Acme\n")
+        (leaf / "_meta.yml").write_text("client: Acme\n")
+        assert _find_repo_root(leaf) == root.resolve()
+
+    def test_no_markers_falls_back_to_start(self, tmp_path):
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        assert _find_repo_root(deep) == deep.resolve()
+
+    def test_git_above_meta_still_wins(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        proj = tmp_path / "proposals"
+        leaf = proj / "acme"
+        leaf.mkdir(parents=True)
+        (proj / "_meta.yml").write_text("author: Acme\n")
+        # A VCS marker is the strongest signal even when a _meta.yml sits lower.
+        assert _find_repo_root(leaf) == tmp_path.resolve()
 
 
 class TestCascadingInheritance:
