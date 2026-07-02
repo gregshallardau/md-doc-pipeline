@@ -42,6 +42,7 @@ from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
 
 from ..docx_theme import (
+    _apply_font_name,
     _hex_to_rgb,
     apply_theme_to_doc,
     patch_docx_theme_fonts,
@@ -1308,7 +1309,6 @@ def _add_docx_cover_page(
     title = config.get("title", "")
     author = config.get("author", "")
     date_str = config.get("date", "")
-    product = config.get("product", "")
     label = str(config.get("cover_label", "Report"))
     show_bar = bool(config.get("cover_bar", True))
     show_divider = bool(config.get("cover_divider", True))
@@ -1320,10 +1320,22 @@ def _add_docx_cover_page(
     meta_label = str(config.get("cover_meta_label", "Prepared by"))
     meta_author = str(config.get("cover_meta_author", author))
 
-    bar_color = (theme.get("color_table_header_bg") or theme.get("color_h1") or "1b4f72").lstrip(
+    # Match the PDF cover: bar + title use $primary (color_h1); label + divider
+    # use the accent (color_h2); meta value is muted grey with a body-coloured
+    # bold label.
+    primary = (theme.get("color_h1") or theme.get("color_table_header_bg") or "1b4f72").lstrip("#")
+    bar_color = primary
+    title_color = primary
+    accent = (theme.get("color_h2") or theme.get("color_h1") or "2e86c1").lstrip("#")
+    label_color = accent
+    divider_color = accent
+    meta_label_color = (theme.get("color_body") or theme.get("color_strong") or "212529").lstrip(
         "#"
     )
-    label_color = (theme.get("color_h2") or theme.get("color_h1") or "2e86c1").lstrip("#")
+    meta_value_color = (theme.get("color_em") or "5d6d7e").lstrip("#")
+    font_body = theme.get("font_body")
+    text_align = str(config.get("cover_text_align", "left")).lower()
+    para_align = WD_ALIGN_PARAGRAPH.RIGHT if text_align == "right" else WD_ALIGN_PARAGRAPH.LEFT
     bar_mm = float(re.sub(r"[^\d.]", "", bar_height_str) or "10")
 
     # 1. Coloured top bar — full page width, bleeds into margins
@@ -1373,69 +1385,133 @@ def _add_docx_cover_page(
         cell.paragraphs[0].paragraph_format.space_before = Pt(0)
         cell.paragraphs[0].paragraph_format.space_after = Pt(0)
 
-    # 2. Cover label (e.g. "REPORT")
+    # 2. Cover label (e.g. "REPORT") — small uppercase accent, tracked out.
+    #    A large space-before drops the title block to roughly a third down the
+    #    page, mirroring the PDF cover's 50mm top padding.
     if label:
         lp = doc.add_paragraph()
-        lp.paragraph_format.space_before = Pt(30)
+        lp.alignment = para_align
+        lp.paragraph_format.space_before = Pt(80)
         lp.paragraph_format.space_after = Pt(0)
         run = lp.add_run(label.upper())
         run.bold = True
         run.font.size = Pt(8.5)
+        if font_body:
+            _apply_font_name(run.font, font_body)
         r, g, b = _hex_to_rgb(label_color)
         run.font.color.rgb = RGBColor(r, g, b)
+        # Letter-spacing 2.5pt (val is in twentieths of a point).
+        rPr = run._r.get_or_add_rPr()
+        spacing = OxmlElement("w:spacing")
+        spacing.set(qn("w:val"), "50")
+        rPr.append(spacing)
 
-    # 3. Title
-    title_para = doc.add_paragraph(style="Title")
-    title_para.paragraph_format.space_before = Pt(10)
-    builder._write_text(title_para, title or "Document")
+    # 3. Title — large bold run in $primary using the body font (NOT the
+    #    built-in serif "Title" style, which looks nothing like the PDF).
+    title_para = doc.add_paragraph()
+    title_para.alignment = para_align
+    title_para.paragraph_format.space_before = Pt(10) if label else Pt(80)
+    title_para.paragraph_format.space_after = Pt(12)
+    trun = title_para.add_run(title or "Document")
+    trun.bold = True
+    trun.font.size = Pt(24)
+    if font_body:
+        _apply_font_name(trun.font, font_body)
+    r, g, b = _hex_to_rgb(title_color)
+    trun.font.color.rgb = RGBColor(r, g, b)
 
-    # 4. Product subtitle
-    if product:
-        sub_para = doc.add_paragraph(style="Subtitle")
-        builder._write_text(sub_para, product)
-
-    # 5. Divider line (3pt, uses bar colour)
+    # 4. Short divider rule (40mm, 3pt, accent) — a 1-cell table so the border
+    #    is a short rule under the title rather than a full-width line.
     if show_divider:
-        div_para = doc.add_paragraph()
-        div_para.paragraph_format.space_before = Pt(14)
-        div_para.paragraph_format.space_after = Pt(14)
-        pPr = div_para._p.get_or_add_pPr()
-        pBdr = OxmlElement("w:pBdr")
+        div_tbl = doc.add_table(rows=1, cols=1)
+        _clear_table_borders(div_tbl)
+        div_tbl.columns[0].width = Mm(40)
+        div_cell = div_tbl.rows[0].cells[0]
+        div_cell.width = Mm(40)
+        div_cell.paragraphs[0].paragraph_format.space_before = Pt(0)
+        div_cell.paragraphs[0].paragraph_format.space_after = Pt(0)
+        tcPr = div_cell._tc.get_or_add_tcPr()
+        tcBorders = OxmlElement("w:tcBorders")
+        for side in ("top", "left", "right"):
+            b = OxmlElement(f"w:{side}")
+            b.set(qn("w:val"), "none")
+            tcBorders.append(b)
         bot = OxmlElement("w:bottom")
         bot.set(qn("w:val"), "single")
         bot.set(qn("w:sz"), "24")  # 3pt
         bot.set(qn("w:space"), "0")
-        bot.set(qn("w:color"), bar_color.upper())
-        pBdr.append(bot)
-        pPr.append(pBdr)
-    else:
-        doc.add_paragraph().paragraph_format.space_after = Pt(14)
+        bot.set(qn("w:color"), divider_color.upper())
+        tcBorders.append(bot)
+        tcPr.append(tcBorders)
+        tr = div_tbl.rows[0]._tr
+        trPr = tr.get_or_add_trPr()
+        trHeight = OxmlElement("w:trHeight")
+        trHeight.set(qn("w:val"), "40")  # ~2pt, keep the rule tight to the title
+        trHeight.set(qn("w:hRule"), "exact")
+        trPr.append(trHeight)
+        # Space below the divider before the metadata.
+        doc.add_paragraph().paragraph_format.space_after = Pt(10)
 
-    # 6. Author / date metadata
+    # 5. Author / date metadata — bold body-coloured label + muted value, no
+    #    colons (matches the PDF's "<strong>Prepared by</strong> {author}").
+    def _meta_line(bold_label: str, value: str) -> None:
+        mp = doc.add_paragraph()
+        mp.alignment = para_align
+        mp.paragraph_format.space_before = Pt(0)
+        mp.paragraph_format.space_after = Pt(4)
+        lbl = mp.add_run(f"{bold_label} ")
+        lbl.bold = True
+        lbl.font.size = Pt(10.5)
+        if font_body:
+            _apply_font_name(lbl.font, font_body)
+        lr, lg, lb = _hex_to_rgb(meta_label_color)
+        lbl.font.color.rgb = RGBColor(lr, lg, lb)
+        val = mp.add_run(value)
+        val.font.size = Pt(10.5)
+        if font_body:
+            _apply_font_name(val.font, font_body)
+        vr, vg, vb = _hex_to_rgb(meta_value_color)
+        val.font.color.rgb = RGBColor(vr, vg, vb)
+
     if meta_author:
-        mp = doc.add_paragraph()
-        mp.paragraph_format.space_before = Pt(0)
-        mp.paragraph_format.space_after = Pt(4)
-        mp.add_run(f"{meta_label}: ").bold = True
-        builder._write_text(mp, meta_author)
+        _meta_line(meta_label, meta_author)
     if date_str:
-        mp = doc.add_paragraph()
-        mp.paragraph_format.space_before = Pt(0)
-        mp.paragraph_format.space_after = Pt(4)
-        mp.add_run("Date: ").bold = True
-        builder._write_text(mp, date_str)
+        _meta_line("Date", date_str)
 
-    # 7. Footer text (confidentiality notice)
+    # 6. Footer (confidentiality notice) — anchored to the bottom of the page
+    #    with a thin top rule, matching the PDF's absolutely-positioned footer.
     if show_footer and footer_text:
-        doc.add_paragraph()  # spacer
+        section = doc.sections[0]
+        text_twips = round((section.page_width - section.left_margin - section.right_margin) / 635)
         fp = doc.add_paragraph()
-        fp.paragraph_format.space_before = Pt(0)
+        fp.alignment = para_align
+        pPr = fp._p.get_or_add_pPr()
+        # Float the footer to the page bottom via a text frame.
+        framePr = OxmlElement("w:framePr")
+        framePr.set(qn("w:w"), str(text_twips))
+        framePr.set(qn("w:h"), "0")
+        framePr.set(qn("w:hRule"), "auto")
+        framePr.set(qn("w:wrap"), "around")
+        framePr.set(qn("w:hAnchor"), "margin")
+        framePr.set(qn("w:vAnchor"), "page")
+        framePr.set(qn("w:yAlign"), "bottom")
+        pPr.append(framePr)
+        # Thin top rule above the footer text (PDF: 1pt #d5d8dc, 4mm padding).
+        pBdr = OxmlElement("w:pBdr")
+        top = OxmlElement("w:top")
+        top.set(qn("w:val"), "single")
+        top.set(qn("w:sz"), "8")  # 1pt
+        top.set(qn("w:space"), "8")  # ~4pt padding above text
+        top.set(qn("w:color"), "D5D8DC")
+        pBdr.append(top)
+        pPr.append(pBdr)
         run = fp.add_run(footer_text)
         run.font.size = Pt(8)
-        col = theme.get("color_em") or theme.get("color_h3")
-        if col:
-            r, g, b = _hex_to_rgb(col)
-            run.font.color.rgb = RGBColor(r, g, b)
+        if font_body:
+            _apply_font_name(run.font, font_body)
+        col = config.get("cover_footer_color") or meta_value_color
+        r, g, b = _hex_to_rgb(str(col))
+        run.font.color.rgb = RGBColor(r, g, b)
 
     doc.add_page_break()
 

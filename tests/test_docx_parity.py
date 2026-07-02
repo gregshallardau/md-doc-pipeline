@@ -166,6 +166,51 @@ def test_page_geometry_parser():
     assert _page_geometry(None)["w"] == 210.0  # default A4
 
 
+def test_cover_matches_pdf_design(tmp_repo):
+    # The cover title must be an explicit large bold coloured run (mirroring the
+    # PDF's .cover-title) — NOT the built-in serif "Title" style — and the
+    # metadata must be colon-free ("Prepared by {author}", not "Prepared by:").
+    (tmp_repo / "_pdf-theme.css").write_text(
+        "@page { size: A4; margin: 25mm 20mm 22mm 25mm; }\n"
+        "body { font-family: Arial; }\n"
+        "h1 { color: #1b4f72; }\n"
+        "h2 { color: #2e86c1; }\n",
+        encoding="utf-8",
+    )
+    md = "---\ntitle: My Report\n---\n\n# My Report\n\nBody.\n"
+    doc_path = tmp_repo / "doc.md"
+    doc_path.write_text(md, encoding="utf-8")
+    out = tmp_repo / "cover.docx"
+    from md_doc.builders.docx import build
+
+    build(
+        md,
+        {"title": "My Report", "author": "Ada Lovelace", "date": "March 2026"},
+        out,
+        output_format="docx",
+        doc_path=doc_path,
+        repo_root=tmp_repo,
+    )
+    d = Document(str(out))
+    from docx.shared import Pt, RGBColor
+
+    title = next(p for p in d.paragraphs if p.text == "My Report" and p.style.name != "Title")
+    trun = title.runs[0]
+    assert trun.bold is True
+    assert trun.font.size == Pt(24)
+    assert trun.font.color.rgb == RGBColor(0x1B, 0x4F, 0x72)  # $primary (color_h1)
+
+    # Metadata carries the author/date with NO colon after the label.
+    meta = [p.text for p in d.paragraphs]
+    assert "Prepared by Ada Lovelace" in meta
+    assert "Date March 2026" in meta
+    assert not any(t.startswith("Prepared by:") for t in meta)
+
+    # Footer is anchored to the page bottom via a text frame.
+    xml = _part(out, "word/document.xml")
+    assert "w:framePr" in xml and 'w:vAnchor="page"' in xml and 'w:yAlign="bottom"' in xml
+
+
 def test_docx_page_size_matches_theme(tmp_repo):
     # A Letter-sized PDF theme must produce a Letter-sized docx (not hardcoded A4)
     # so the two formats share text width and pagination.

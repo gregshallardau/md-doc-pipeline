@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **DOCX cover page now mirrors the PDF cover.** The Word cover previously used
+  the built-in serif *Title*/*Subtitle* styles (nothing like the PDF), a
+  full-width divider, colon'd metadata, and an inline footer. It now renders an
+  explicit large bold title in the theme's `$primary` colour and body font, an
+  accent uppercase "REPORT" label, a short accent divider rule, colon-free
+  metadata (`Prepared by {author}` / `Date {date}` with a bold body-coloured
+  label + muted value), and a confidentiality footer anchored to the bottom of
+  the page — matching the PDF's `_build_cover` layout.
 - **PDF↔DOCX page-break & structural parity.** The docx builder now injects the
   same page breaks as the PDF builder (APPENDIX-section H2s and explicit
   `<!-- pagebreak -->`), sets *keep-with-next* on headings so they don't strand
