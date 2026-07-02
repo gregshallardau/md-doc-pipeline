@@ -49,7 +49,7 @@ from ..docx_theme import (
     set_cell_shading,
     set_para_shading,
 )
-from .pdf import _inject_page_breaks
+from .pdf import _inject_appendix_breaks, _inject_page_breaks
 from ._assets import (
     _EMU_PER_PX,
     _MERMAID_IMG_RE,
@@ -639,8 +639,13 @@ class _DocxBuilder(HTMLParser):
             self._new_para(f"Heading {int(tag[1])}")
             inline_align = self._parse_text_align(attrs)
             word_align = self._effective_alignment(inline_align)
-            if word_align is not None and self._paragraph is not None:
-                self._paragraph.alignment = word_align
+            if self._paragraph is not None:
+                if word_align is not None:
+                    self._paragraph.alignment = word_align
+                # Keep the heading on the same page as the content that follows
+                # (mirrors the PDF builder's keep-heading-with-next behaviour so
+                # headings don't strand at a page bottom in one format only).
+                self._paragraph.paragraph_format.keep_with_next = True
             self._apply_section_bar_start(tag)
 
         elif tag == "p":
@@ -669,10 +674,11 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
-            class_attr = dict(attrs).get("class") or ""
-            if "md-doc-page-break" in class_attr.split():
-                # Emit a real Word page break.  The marker div has no content
-                # so nothing else needs to be rendered for it.
+            classes = (dict(attrs).get("class") or "").split()
+            # Both the explicit <!-- pagebreak --> marker and the APPENDIX
+            # auto-break marker (shared with the PDF builder) emit a real Word
+            # page break so the two formats break at the same points.
+            if "md-doc-page-break" in classes or "appendix-template-break" in classes:
                 self.doc.add_page_break()
 
         elif tag == "a":
@@ -698,6 +704,17 @@ class _DocxBuilder(HTMLParser):
             depth = max(len(self._list_stack), 1)
             if depth > 1 and self._paragraph is not None:
                 self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
+
+        elif tag == "dt":
+            # Definition-list term — a bold Normal paragraph.
+            self._new_para("Normal")
+            self._bold = True
+
+        elif tag == "dd":
+            # Definition-list description — indented Normal paragraph.
+            self._new_para("Normal")
+            if self._paragraph is not None:
+                self._paragraph.paragraph_format.left_indent = Pt(18)
 
         elif tag == "pre":
             self._in_pre = True
@@ -808,6 +825,13 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = None
 
         elif tag == "li":
+            self._paragraph = None
+
+        elif tag == "dt":
+            self._bold = False
+            self._paragraph = None
+
+        elif tag == "dd":
             self._paragraph = None
 
         elif tag == "pre":
@@ -1815,6 +1839,9 @@ def build(
     elif not is_dotx:
         body = _strip_leading_h1(body)
 
+    # Inject the same page breaks the PDF builder uses so both formats break at
+    # identical points: APPENDIX section H2s and explicit <!-- pagebreak -->.
+    body = _inject_appendix_breaks(body)
     body = _inject_page_breaks(body)
     body = _strip_form_fields_for_docx(body)
 
