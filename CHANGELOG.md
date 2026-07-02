@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Word content-fidelity gaps found by the full parity review.**
+  - *Loose lists* (blank lines between items) no longer lose their bullets in
+    docx — the first paragraph of a list item reuses the bullet paragraph, and
+    later paragraphs render as indented continuations.
+  - *Footnotes and internal/TOC links* now work in Word: `#anchor` hyperlinks
+    become real bookmark jumps (headings, footnote definitions and references
+    are bookmarked) with no literal `(#fn:1)` suffix, and footnote markers
+    render superscript.
+  - *`<sup>`/`<sub>`/`<del>`* render as superscript/subscript/strikethrough
+    runs in docx instead of plain text.
+  - *Markdown column alignment* (`:--:` / `--:`) is honoured in docx table
+    cells, and hyperlinks inside cells are clickable instead of losing their
+    URL.
+  - *Tables and code blocks stay on one page* in Word (`cantSplit` rows,
+    `keepLines` code paragraphs), matching the PDF theme's
+    `page-break-inside: avoid`.
+- **Config keys that only one format honoured.**
+  - `--theme` / `pdf_theme` now restyles Word and PowerPoint typography too
+    (previously only the PDF and Word's page geometry), so one override drives
+    all formats.
+  - `body_text_align` now applies to the PDF (previously Word-only).
+  - `cover_text_align` and `cover_footer_line: false` now work in the PDF
+    (the cover classes previously had no CSS behind them); `center` is now a
+    supported cover alignment in both formats.
+  - `page_header_bar_logo` now beats `header_logo` inside the page header bar
+    in both formats (PDF previously preferred `header_logo`, Word the
+    opposite).
+  - `cover_background` is documented as PDF-only (Word has no per-page fill).
+
 ### Changed
 - **DOCX cover page now mirrors the PDF cover.** The Word cover previously used
   the built-in serif *Title*/*Subtitle* styles (nothing like the PDF), a

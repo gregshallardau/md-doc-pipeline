@@ -94,33 +94,54 @@ _MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
 # ---------------------------------------------------------------------------
 
 
-def _insert_hyperlink(paragraph: Any, text: str, url: str) -> None:
+def _bookmark_name(anchor: str) -> str:
+    """Sanitize an HTML anchor into a valid Word bookmark name.
+
+    Word bookmark names must start with a letter and contain only letters,
+    digits and underscores (footnote anchors like ``fn:1`` are invalid as-is).
+    Applied to both bookmark definitions and references so they stay in sync.
+    """
+    name = re.sub(r"[^0-9A-Za-z_]", "_", anchor)
+    if not name or not name[0].isalpha():
+        name = "a_" + name
+    return name[:40]
+
+
+def _insert_hyperlink(paragraph: Any, text: str, url: str, *, superscript: bool = False) -> None:
     """Append a clickable hyperlink to *paragraph*.
 
-    Display text is ``text (url)`` when text differs from url, or just ``url``
-    when they're the same (e.g. bare URL links). This keeps the URL visible
-    in printed output.
+    External links display as ``text (url)`` when text differs from url, or
+    just ``url`` when they're the same — keeping the URL visible in printed
+    output (the PDF does this with an ``::after`` rule). Internal ``#anchor``
+    links become bookmark jumps with no URL suffix, matching the PDF, which
+    suppresses the suffix for fragment links.
     """
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
     display = text.strip()
     url_clean = url.strip()
-    if display and display != url_clean:
-        display = f"{display} ({url_clean})"
-    else:
-        display = url_clean
-
-    part = paragraph.part
-    r_id = part.relate_to(url_clean, RT.HYPERLINK, is_external=True)
 
     hyperlink = OxmlElement("w:hyperlink")
-    hyperlink.set(qn("r:id"), r_id)
+    if url_clean.startswith("#"):
+        display = display or url_clean
+        hyperlink.set(qn("w:anchor"), _bookmark_name(url_clean[1:]))
+    else:
+        if display and display != url_clean:
+            display = f"{display} ({url_clean})"
+        else:
+            display = url_clean
+        r_id = paragraph.part.relate_to(url_clean, RT.HYPERLINK, is_external=True)
+        hyperlink.set(qn("r:id"), r_id)
 
     run = OxmlElement("w:r")
     rPr = OxmlElement("w:rPr")
     rStyle = OxmlElement("w:rStyle")
     rStyle.set(qn("w:val"), "Hyperlink")
     rPr.append(rStyle)
+    if superscript:
+        vert = OxmlElement("w:vertAlign")
+        vert.set(qn("w:val"), "superscript")
+        rPr.append(vert)
     run.append(rPr)
 
     t = OxmlElement("w:t")
@@ -290,10 +311,10 @@ def _render_cell_html(
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
-    Handles inline tags: strong/b (bold), em/i (italic), code (monospace).
-    Text (including ``[[field]]`` markers) is written via *write_text*, which
-    is the builder's ``_write_text`` method — ensuring field conversion and
-    bookmark tracking work identically to body text.
+    Handles inline tags: strong/b (bold), em/i (italic), code (monospace),
+    a (hyperlink), br. Text (including ``[[field]]`` markers) is written via
+    *write_text*, which is the builder's ``_write_text`` method — ensuring
+    field conversion and bookmark tracking work identically to body text.
     """
     from html.parser import HTMLParser as _HP
 
@@ -303,6 +324,8 @@ def _render_cell_html(
             self._bold = bold_override
             self._italic = False
             self._code = False
+            self._href: str | None = None
+            self._link_text = ""
 
         def handle_starttag(self, tag: str, attrs: list) -> None:
             tag = tag.lower()
@@ -312,6 +335,9 @@ def _render_cell_html(
                 self._italic = True
             elif tag == "code":
                 self._code = True
+            elif tag == "a":
+                self._href = dict(attrs).get("href") or ""
+                self._link_text = ""
             elif tag == "br":
                 br_run = paragraph.add_run()
                 br_run._r.append(OxmlElement("w:br"))
@@ -324,9 +350,20 @@ def _render_cell_html(
                 self._italic = False
             elif tag == "code":
                 self._code = False
+            elif tag == "a":
+                if self._link_text:
+                    if self._href:
+                        _insert_hyperlink(paragraph, self._link_text, self._href)
+                    else:
+                        write_text(paragraph, self._link_text)
+                self._href = None
+                self._link_text = ""
 
         def handle_data(self, data: str) -> None:
             if not data:
+                return
+            if self._href is not None:
+                self._link_text += data
                 return
             write_text(paragraph, data, bold=self._bold, italic=self._italic, code=self._code)
 
@@ -385,16 +422,26 @@ class _DocxBuilder(HTMLParser):
         self._in_pre = False
         self._in_code = False
         self._in_blockquote = False
+        self._sup = False
+        self._sub = False
+        self._strike = False
         self._list_stack: list[str] = []
         self._list_counters: list[int] = []
+        # Loose-list handling: markdown wraps list-item text in <p> when items
+        # are separated by blank lines.  The first <p> inside an <li> must
+        # reuse the bullet/number paragraph the <li> created — replacing it
+        # would leave an empty bullet followed by unbulleted body text.
+        self._li_depth = 0
+        self._li_fresh = False
 
         # Table state — cells store raw inner HTML to preserve inline markup
         self._in_table = False
         self._in_cell = False  # True while cursor is inside a <th> or <td>
         self._in_th = False
-        self._table_rows: list[list[tuple[bool, str]]] = []
-        self._current_row: list[tuple[bool, str]] = []
+        self._table_rows: list[list[tuple[bool, str, str | None]]] = []
+        self._current_row: list[tuple[bool, str, str | None]] = []
         self._current_cell_html = ""
+        self._current_cell_align: str | None = None  # per-cell text-align from markdown :--:
         # Set by <!-- col-widths: 30, 70 --> comments; consumed by the next table
         self._next_table_col_widths: list[float] | None = None
         self._active_table_col_widths: list[float] | None = None
@@ -430,6 +477,22 @@ class _DocxBuilder(HTMLParser):
     def mark_content_start(self) -> None:
         """Record the current body length as the start of report content."""
         self._body_baseline = len(self.doc.element.body)
+
+    def _add_bookmark(self, paragraph: Any, anchor: str) -> None:
+        """Insert a Word bookmark named after *anchor* into *paragraph*.
+
+        Targets for internal ``#anchor`` hyperlinks (headings, footnote
+        definitions, footnote references).
+        """
+        name = _bookmark_name(anchor)
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), str(self._bookmark_id))
+        start.set(qn("w:name"), name)
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), str(self._bookmark_id))
+        self._bookmark_id += 1
+        paragraph._p.append(start)
+        paragraph._p.append(end)
 
     # ------------------------------------------------------------------
     # Alignment helpers
@@ -524,6 +587,45 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = self.doc.add_paragraph()
         return self._paragraph
 
+    def _style_inline_run(
+        self,
+        run: Any,
+        *,
+        bold: bool = False,
+        italic: bool = False,
+        code: bool = False,
+        sup: bool = False,
+        sub: bool = False,
+        strike: bool = False,
+    ) -> None:
+        """Apply inline formatting + theme colours to a text run."""
+        if bold:
+            run.bold = True
+            col = self._theme.get("color_strong")
+            if col:
+                r, g, b = _hex_to_rgb(col)
+                run.font.color.rgb = RGBColor(r, g, b)
+        if italic:
+            run.italic = True
+            if not bold:
+                col = self._theme.get("color_em")
+                if col:
+                    r, g, b = _hex_to_rgb(col)
+                    run.font.color.rgb = RGBColor(r, g, b)
+        if code:
+            run.font.name = self._theme.get("font_code", "Courier New")
+            run.font.size = Pt(self._theme.get("font_size_code", 9.0))
+            col = self._theme.get("color_code")
+            if col:
+                r, g, b = _hex_to_rgb(col)
+                run.font.color.rgb = RGBColor(r, g, b)
+        if sup:
+            run.font.superscript = True
+        if sub:
+            run.font.subscript = True
+        if strike:
+            run.font.strike = True
+
     def _write_text(
         self,
         paragraph: Any,
@@ -532,12 +634,17 @@ class _DocxBuilder(HTMLParser):
         bold: bool = False,
         italic: bool = False,
         code: bool = False,
+        sup: bool = False,
+        sub: bool = False,
+        strike: bool = False,
     ) -> None:
         """Write *text* to *paragraph*, handling ``[[field]]`` markers when
         field_type is set, and converting bare ``\\n`` to Word line breaks.
         """
         if not text:
             return
+
+        fmt = dict(bold=bold, italic=italic, code=code, sup=sup, sub=sub, strike=strike)
 
         if self._field_type:
             # Field-aware path: split on [[field]] markers
@@ -552,27 +659,7 @@ class _DocxBuilder(HTMLParser):
                                 br_run = paragraph.add_run()
                                 br_run._r.append(OxmlElement("w:br"))
                             if line:
-                                run = paragraph.add_run(line)
-                                if bold:
-                                    run.bold = True
-                                    col = self._theme.get("color_strong")
-                                    if col:
-                                        r, g, b = _hex_to_rgb(col)
-                                        run.font.color.rgb = RGBColor(r, g, b)
-                                if italic:
-                                    run.italic = True
-                                    if not bold:
-                                        col = self._theme.get("color_em")
-                                        if col:
-                                            r, g, b = _hex_to_rgb(col)
-                                            run.font.color.rgb = RGBColor(r, g, b)
-                                if code:
-                                    run.font.name = self._theme.get("font_code", "Courier New")
-                                    run.font.size = Pt(self._theme.get("font_size_code", 9.0))
-                                    col = self._theme.get("color_code")
-                                    if col:
-                                        r, g, b = _hex_to_rgb(col)
-                                        run.font.color.rgb = RGBColor(r, g, b)
+                                self._style_inline_run(paragraph.add_run(line), **fmt)
                 else:
                     # Field marker
                     if self._field_type == "merge":
@@ -590,27 +677,7 @@ class _DocxBuilder(HTMLParser):
                     br_run = paragraph.add_run()
                     br_run._r.append(OxmlElement("w:br"))
                 if line:
-                    run = paragraph.add_run(line)
-                    if bold:
-                        run.bold = True
-                        col = self._theme.get("color_strong")
-                        if col:
-                            r, g, b = _hex_to_rgb(col)
-                            run.font.color.rgb = RGBColor(r, g, b)
-                    if italic:
-                        run.italic = True
-                        if not bold:
-                            col = self._theme.get("color_em")
-                            if col:
-                                r, g, b = _hex_to_rgb(col)
-                                run.font.color.rgb = RGBColor(r, g, b)
-                    if code:
-                        run.font.name = self._theme.get("font_code", "Courier New")
-                        run.font.size = Pt(self._theme.get("font_size_code", 9.0))
-                        col = self._theme.get("color_code")
-                        if col:
-                            r, g, b = _hex_to_rgb(col)
-                            run.font.color.rgb = RGBColor(r, g, b)
+                    self._style_inline_run(paragraph.add_run(line), **fmt)
 
     def _add_text(self, text: str) -> None:
         if not text:
@@ -623,12 +690,19 @@ class _DocxBuilder(HTMLParser):
             return
         if self._paragraph is None and not text.strip():
             return
+        # HTML formatting whitespace between <li> and its <p> (loose lists)
+        # must not become a line break at the start of the bullet paragraph.
+        if self._li_fresh and not text.strip() and not self._current_para().runs:
+            return
         self._write_text(
             self._current_para(),
             text,
             bold=self._bold,
             italic=self._italic,
             code=self._in_code,
+            sup=self._sup,
+            sub=self._sub,
+            strike=self._strike,
         )
 
     # ------------------------------------------------------------------
@@ -666,10 +740,26 @@ class _DocxBuilder(HTMLParser):
                     len(self.doc.element.body) - self._body_baseline > 1
                 ):
                     self._paragraph.paragraph_format.page_break_before = True
+                # Headings carry id attrs (toc extension) — bookmark them so
+                # [TOC] and internal #links can jump to them like in the PDF.
+                heading_id = dict(attrs).get("id")
+                if heading_id:
+                    self._add_bookmark(self._paragraph, heading_id)
             self._apply_section_bar_start(tag)
 
         elif tag == "p":
-            self._new_para("Normal")
+            if self._li_depth and self._li_fresh and self._paragraph is not None:
+                # Loose list (<li><p>…</p></li>): keep the bullet/number
+                # paragraph the <li> just created.
+                self._li_fresh = False
+            elif self._li_depth and not self._in_blockquote:
+                # Later paragraphs of the same list item — indented
+                # continuation text under the bullet.
+                self._new_para("Normal")
+                depth = max(len(self._list_stack), 1)
+                self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
+            else:
+                self._new_para("Normal")
             inline_align = self._parse_text_align(attrs)
             word_align = self._effective_alignment(inline_align)
             if word_align is not None and self._paragraph is not None:
@@ -719,11 +809,18 @@ class _DocxBuilder(HTMLParser):
                     self._paragraph = self.doc.add_paragraph(style="List Number")
             else:
                 self._new_para("List Bullet")
+            self._li_depth += 1
+            self._li_fresh = True
             # Indent nested list items so depth is visible (the base list styles
             # only indent one level, matching CSS nested-list indentation).
             depth = max(len(self._list_stack), 1)
             if depth > 1 and self._paragraph is not None:
                 self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
+            # Footnote definitions carry id="fn:N" — bookmark them so the
+            # in-text reference links can jump here.
+            li_id = dict(attrs).get("id")
+            if li_id and self._paragraph is not None:
+                self._add_bookmark(self._paragraph, li_id)
 
         elif tag == "dt":
             # Definition-list term — a bold Normal paragraph.
@@ -754,6 +851,20 @@ class _DocxBuilder(HTMLParser):
 
         elif tag in ("em", "i"):
             self._italic = True
+
+        elif tag == "sup":
+            self._sup = True
+            # Footnote references carry id="fnref:N" — bookmark them so the
+            # ↩ back-reference in the footnote list can jump back.
+            sup_id = dict(attrs).get("id")
+            if sup_id and self._paragraph is not None:
+                self._add_bookmark(self._paragraph, sup_id)
+
+        elif tag == "sub":
+            self._sub = True
+
+        elif tag in ("del", "s", "strike"):
+            self._strike = True
 
         elif tag == "br":
             run = self._current_para().add_run()
@@ -801,6 +912,9 @@ class _DocxBuilder(HTMLParser):
             self._in_th = tag == "th"
             self._in_cell = True
             self._current_cell_html = ""
+            # Markdown column alignment (:--:, --:) arrives as an inline
+            # style="text-align: …" on the cell — capture it for _flush_table.
+            self._current_cell_align = self._parse_text_align(attrs)
 
     def handle_endtag(self, tag: str) -> None:
         if self._tag_stack and self._tag_stack[-1] == tag:
@@ -845,6 +959,8 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = None
 
         elif tag == "li":
+            self._li_depth = max(0, self._li_depth - 1)
+            self._li_fresh = False
             self._paragraph = None
 
         elif tag == "dt":
@@ -880,6 +996,9 @@ class _DocxBuilder(HTMLParser):
                 ind.set(qn("w:left"), str(int(10 * 20)))  # 10pt indent
             para.paragraph_format.space_before = Pt(6)
             para.paragraph_format.space_after = Pt(10)
+            # Keep the whole code block on one page (mirrors the PDF theme's
+            # `pre { page-break-inside: avoid }`).
+            para.paragraph_format.keep_together = True
             run = para.add_run(self._pre_text.strip())
             run.font.name = pre_font
             run.font.size = Pt(pre_size)
@@ -903,7 +1022,12 @@ class _DocxBuilder(HTMLParser):
         elif tag == "a":
             if self._link_text_buf and self._paragraph is not None:
                 if self._current_href:
-                    _insert_hyperlink(self._current_para(), self._link_text_buf, self._current_href)
+                    _insert_hyperlink(
+                        self._current_para(),
+                        self._link_text_buf,
+                        self._current_href,
+                        superscript=self._sup,
+                    )
                 else:
                     self._write_text(self._current_para(), self._link_text_buf)
             self._current_href = None
@@ -915,9 +1039,20 @@ class _DocxBuilder(HTMLParser):
         elif tag in ("em", "i"):
             self._italic = False
 
+        elif tag == "sup":
+            self._sup = False
+
+        elif tag == "sub":
+            self._sub = False
+
+        elif tag in ("del", "s", "strike"):
+            self._strike = False
+
         elif tag in ("th", "td"):
             if self._in_table:
-                self._current_row.append((self._in_th, self._current_cell_html))
+                self._current_row.append(
+                    (self._in_th, self._current_cell_html, self._current_cell_align)
+                )
             self._in_cell = False
 
         elif tag == "tr":
@@ -1119,7 +1254,12 @@ class _DocxBuilder(HTMLParser):
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
             n_row_cells = len(row_cells)
-            for c_idx, (is_header, cell_html) in enumerate(row_cells):
+            # Keep each row on one page (mirrors the PDF theme's
+            # `tr { page-break-inside: avoid }`).
+            trPr = table.rows[r_idx]._tr.get_or_add_trPr()
+            if trPr.find(qn("w:cantSplit")) is None:
+                trPr.append(OxmlElement("w:cantSplit"))
+            for c_idx, (is_header, cell_html, cell_align) in enumerate(row_cells):
                 if c_idx >= max_cols:
                     break
                 cell = table.cell(r_idx, c_idx)
@@ -1143,13 +1283,15 @@ class _DocxBuilder(HTMLParser):
                     para, cell_html.strip(), self._theme, self._write_text, bold_override=is_header
                 )
 
-                # Apply alignment to cell paragraphs — Word table cells don't
-                # inherit document-level/div alignment the way body text does,
-                # so resolve through the same cascade (div > body_text_align).
-                if not is_header:
-                    word_align = self._effective_alignment()
-                    if word_align is not None:
-                        para.alignment = word_align
+                # Apply alignment — the cell's own text-align (markdown column
+                # alignment, :--:/--:) wins; body cells otherwise resolve
+                # through the div > body_text_align cascade (Word table cells
+                # don't inherit document-level alignment the way body text does).
+                word_align = self._effective_alignment(cell_align)
+                if cell_align is None and is_header:
+                    word_align = None  # headers keep Word's default unless explicit
+                if word_align is not None:
+                    para.alignment = word_align
 
                 # Apply body font explicitly (Word table cells don't always inherit Normal)
                 if font_body:
@@ -1535,7 +1677,10 @@ def _add_docx_cover_page(
     meta_value_color = (theme.get("color_em") or "5d6d7e").lstrip("#")
     font_body = theme.get("font_body")
     text_align = str(config.get("cover_text_align", "left")).lower()
-    para_align = WD_ALIGN_PARAGRAPH.RIGHT if text_align == "right" else WD_ALIGN_PARAGRAPH.LEFT
+    para_align = {
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+    }.get(text_align, WD_ALIGN_PARAGRAPH.LEFT)
 
     section = doc.sections[0]
     page_w_mm = section.page_width / 36000
@@ -1688,6 +1833,9 @@ def _add_docx_cover_page(
         gap_mm = max(0.0, avail_mm - 40.0)
         if para_align == WD_ALIGN_PARAGRAPH.RIGHT:
             dp.paragraph_format.left_indent = Mm(base_indent_l_mm + gap_mm)
+        elif para_align == WD_ALIGN_PARAGRAPH.CENTER:
+            dp.paragraph_format.left_indent = Mm(base_indent_l_mm + gap_mm / 2)
+            dp.paragraph_format.right_indent = Mm(base_indent_r_mm + gap_mm / 2)
         else:
             dp.paragraph_format.right_indent = Mm(base_indent_r_mm + gap_mm)
         pPr = dp._p.get_or_add_pPr()
@@ -1891,10 +2039,14 @@ def _strip_form_fields_for_docx(md_content: str) -> str:
     return _FORM_FIELD_RE.sub("________", md_content)
 
 
-def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[str, Any]:
+def _resolve_docx_theme(
+    doc_path: Path | None,
+    repo_root: Path | None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if doc_path is None or repo_root is None:
         return {}
-    result = resolve_docx_theme(doc_path, repo_root)
+    result = resolve_docx_theme(doc_path, repo_root, config)
     return result if result is not None else {}
 
 
@@ -2456,7 +2608,7 @@ def build(
         mermaid_theme = None
     html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)
 
-    theme = _resolve_docx_theme(doc_path, repo_root)
+    theme = _resolve_docx_theme(doc_path, repo_root, config)
     doc = Document()
     # Match the PDF's paper size + margins (parsed from the theme's @page) so
     # both formats share the same text width and break at the same points.

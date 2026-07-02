@@ -166,6 +166,99 @@ def test_page_geometry_parser():
     assert _page_geometry(None)["w"] == 210.0  # default A4
 
 
+# ── Parity-review fixes: content fidelity in Word ───────────────────────────
+
+
+def test_loose_list_keeps_bullets(tmp_repo):
+    # Blank lines between items wrap the text in <li><p>…</p></li>; the first
+    # <p> must reuse the bullet paragraph, not replace it with a Normal one.
+    d = Document(str(_build(tmp_repo, "- alpha\n\n- beta\n", {})))
+    bullets = [p for p in d.paragraphs if p.style.name == "List Bullet"]
+    assert [p.text for p in bullets] == ["alpha", "beta"]
+    # No stray empty bullets, no unbulleted copies of the item text.
+    assert not any(p.text in ("alpha", "beta") for p in d.paragraphs if p.style.name == "Normal")
+
+
+def test_loose_list_continuation_paragraph_is_indented(tmp_repo):
+    d = Document(str(_build(tmp_repo, "- alpha\n\n    second para\n", {})))
+    bullet = next(p for p in d.paragraphs if p.style.name == "List Bullet")
+    assert bullet.text == "alpha"
+    cont = next(p for p in d.paragraphs if p.text == "second para")
+    assert cont.style.name == "Normal"
+    assert cont.paragraph_format.left_indent is not None
+
+
+def test_internal_links_are_bookmark_jumps(tmp_repo):
+    # TOC/anchor links must become w:anchor jumps with NO "(#target)" suffix
+    # (the PDF suppresses the URL suffix for fragment links).
+    out = _build(tmp_repo, "## My Target\n\nSee [the target](#my-target).\n", {})
+    xml = _part(out, "word/document.xml")
+    assert 'w:anchor="my_target"' in xml  # sanitized bookmark name
+    assert 'w:name="my_target"' in xml  # heading bookmark exists
+    assert "(#my-target)" not in xml
+
+
+def test_footnotes_render_superscript_with_working_links(tmp_repo):
+    out = _build(tmp_repo, "Fact.[^1]\n\n[^1]: The footnote text.\n", {})
+    xml = _part(out, "word/document.xml")
+    # Reference is a superscript bookmark jump, not literal "1 (#fn:1)".
+    assert "(#fn" not in xml and "(#fnref" not in xml
+    assert 'w:val="superscript"' in xml
+    assert 'w:anchor="fn_1"' in xml
+
+
+def test_sup_sub_strike_runs(tmp_repo):
+    out = _build(tmp_repo, "x<sup>2</sup> and H<sub>2</sub>O and <del>gone</del>\n", {})
+    d = Document(str(out))
+    runs = [r for p in d.paragraphs for r in p.runs]
+    assert any(r.text == "2" and r.font.superscript for r in runs)
+    assert any(r.text == "2" and r.font.subscript for r in runs)
+    assert any(r.text == "gone" and r.font.strike for r in runs)
+
+
+def test_markdown_column_alignment_in_cells(tmp_repo):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    body = "| L | C | R |\n|:--|:--:|--:|\n| a | b | c |\n"
+    d = Document(str(_build(tmp_repo, body, {})))
+    table = d.tables[0]
+    assert table.cell(1, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert table.cell(1, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
+
+def test_hyperlink_inside_table_cell(tmp_repo):
+    body = "| Link |\n|------|\n| [docs](https://example.com/d) |\n"
+    out = _build(tmp_repo, body, {})
+    xml = _part(out, "word/document.xml")
+    assert "<w:hyperlink" in xml and "docs" in xml
+    rels = _part(out, "word/_rels/document.xml.rels")
+    assert "https://example.com/d" in rels
+
+
+def test_table_rows_cant_split_and_code_keeps_lines(tmp_repo):
+    body = "| A |\n|---|\n| 1 |\n\n```\ncode line\n```\n"
+    out = _build(tmp_repo, body, {})
+    xml = _part(out, "word/document.xml")
+    assert "<w:cantSplit/>" in xml
+    d = Document(str(out))
+    code = next(p for p in d.paragraphs if p.text == "code line")
+    assert code.paragraph_format.keep_together is True
+
+
+def test_pdf_theme_override_applies_to_docx(tmp_repo):
+    # A --theme/pdf_theme override must restyle Word typography too, not just
+    # the PDF, so a single override drives all formats.
+    (tmp_repo / "_pdf-theme.css").write_text("h1 { color: #111111; }\n", encoding="utf-8")
+    override = tmp_repo / "brand.css"
+    override.write_text("h1 { color: #ff00aa; }\n", encoding="utf-8")
+    out = _build(tmp_repo, "# Head\n\ntext\n", {"pdf_theme": "brand.css"})
+    d = Document(str(out))
+    from docx.shared import RGBColor
+
+    h1_style = d.styles["Heading 1"]
+    assert h1_style.font.color.rgb == RGBColor(0xFF, 0x00, 0xAA)
+
+
 def test_cover_matches_pdf_design(tmp_repo):
     # The cover title must be an explicit large bold coloured run (mirroring the
     # PDF's .cover-title) — NOT the built-in serif "Title" style — and the

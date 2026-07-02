@@ -663,14 +663,24 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_docx_theme(doc_path: Path, repo_root: Path) -> "dict[str, Any] | None":
+def resolve_docx_theme(
+    doc_path: Path,
+    repo_root: Path,
+    config: "dict[str, Any] | None" = None,
+) -> "dict[str, Any] | None":
     """Find and parse the nearest Word CSS theme for *doc_path*.
 
-    Walks from ``doc_path.parent`` up to (and including) ``repo_root``.  At
-    each directory level it looks for:
+    When *config* carries a ``pdf_theme`` override (the ``--theme`` CLI flag or
+    the ``pdf_theme`` key), that file wins outright — the same precedence the
+    PDF builder's ``_resolve_css`` applies — so a single theme override drives
+    every output format consistently.
+
+    Otherwise walks from ``doc_path.parent`` up to (and including)
+    ``repo_root``.  At each directory level it looks for:
 
     1. ``_docx-theme.css`` — Word-specific overrides (takes priority)
-    2. ``_pdf-theme.css``  — fallback shared theme
+    2. ``_theme.css``      — shared base theme
+    3. ``_pdf-theme.css``  — fallback shared theme
 
     Returns the parsed theme dict from the first file found, or ``None`` if no
     theme file exists anywhere in the hierarchy.
@@ -681,7 +691,22 @@ def resolve_docx_theme(doc_path: Path, repo_root: Path) -> "dict[str, Any] | Non
         Path to the source ``.md`` file being built.
     repo_root:
         Top of the search hierarchy (typically the workspace or repo root).
+    config:
+        Resolved document config; only ``pdf_theme`` is consulted.
     """
+    theme_val = (config or {}).get("pdf_theme")
+    if theme_val:
+        p = Path(theme_val)
+        # Mirror pdf._resolve_css security constraints on user-provided paths.
+        if ".." in p.parts:
+            _log.warning("Ignoring pdf_theme path %r — '..' components are not allowed.", theme_val)
+        elif p.is_absolute() and p.exists():
+            return parse_css_for_word(p)
+        elif repo_root and (repo_root / p).exists():
+            resolved = (repo_root / p).resolve()
+            if resolved.is_relative_to(repo_root.resolve()):
+                return parse_css_for_word(resolved)
+
     try:
         start = doc_path.resolve().parent
         stop = repo_root.resolve()

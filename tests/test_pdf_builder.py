@@ -125,3 +125,61 @@ class TestPdfFormsFlag:
 
         _, kwargs = mock_html_inst.write_pdf.call_args
         assert "pdf_forms" not in kwargs
+
+
+class TestBodyAlignAndCoverCss:
+    """Parity-review fixes: config keys that were Word-only or broken in PDF."""
+
+    def _built_html(self, tmp_repo, config):
+        (tmp_repo / "_pdf-theme.css").write_text("body {}")
+        doc = tmp_repo / "report.md"
+        doc.write_text("# My Report\n\nBody text.\n")
+        with patch("md_doc.builders.pdf.weasyprint") as mock_wp:
+            mock_wp.HTML.return_value = MagicMock()
+            build_pdf(
+                doc.read_text(),
+                config,
+                tmp_repo / "report.pdf",
+                repo_root=tmp_repo,
+                doc_path=doc,
+            )
+            _, kwargs = mock_wp.HTML.call_args
+        return kwargs["string"]
+
+    def test_body_text_align_injected(self, tmp_repo):
+        html = self._built_html(tmp_repo, {"body_text_align": "justify"})
+        assert ".report-body { text-align: justify; }" in html
+
+    def test_body_text_align_absent_by_default(self, tmp_repo):
+        html = self._built_html(tmp_repo, {})
+        assert "text-align: justify" not in html
+
+    def test_body_text_align_rejects_unsafe_values(self, tmp_repo):
+        html = self._built_html(tmp_repo, {"body_text_align": "evil;}</style>"})
+        assert "evil" not in html
+
+    def test_cover_align_and_footer_line_css_present(self, tmp_repo):
+        # cover_text_align / cover_footer_line previously emitted classes with
+        # no CSS behind them — the support rules must ship with the cover.
+        html = self._built_html(tmp_repo, {"cover_text_align": "right"})
+        assert ".cover-align-right { text-align: right; }" in html
+        assert ".cover-footer-no-line { border-top: none !important" in html
+        assert 'class="cover cover-align-right"' in html
+
+    def test_page_header_bar_logo_beats_header_logo(self, tmp_repo):
+        # Same precedence as the docx builder: the more-specific
+        # page_header_bar_logo wins inside the bar.
+        from PIL import Image
+
+        Image.new("RGB", (10, 10), "red").save(tmp_repo / "generic.png")
+        Image.new("RGB", (10, 10), "blue").save(tmp_repo / "bar.png")
+        html = self._built_html(
+            tmp_repo,
+            {
+                "page_header_bar": True,
+                "header_logo": "generic.png",
+                "page_header_bar_logo": "bar.png",
+            },
+        )
+        assert "bar.png" in html
+        assert "generic.png" not in html

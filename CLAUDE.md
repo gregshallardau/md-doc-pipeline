@@ -215,8 +215,8 @@ Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an opti
 ```yaml
 cover_page: true              # default true — set false to omit cover
 cover_label: Report           # text above the title on cover page (default: "Report")
-cover_text_align: left        # left | right (default: left) — alignment of cover content
-cover_background: white       # cover page background colour (default: "white")
+cover_text_align: left        # left | center | right (default: left) — alignment of cover content
+cover_background: white       # cover page background colour (default: "white"; PDF only — Word has no per-page fill)
 cover_divider: true           # show horizontal rule under title (default: true)
 cover_meta_label: "Prepared by"  # label before the author name (default: "Prepared by")
 cover_meta_author: "Custom Name" # override author on cover only (default: author value)
