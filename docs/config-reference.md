@@ -44,7 +44,7 @@ outputs: [pdf]
 cover_page: true
 ```
 
-> **What it does:** When `true` (default), a full-bleed cover page is generated as page 1 of the PDF. The first `# H1` heading in your Markdown becomes the cover title and is removed from the body. Set to `false` to skip the cover entirely — the document starts directly with your content.
+> **What it does:** When `true`, a full-bleed cover page is generated as page 1 of the PDF. The first `# H1` heading in your Markdown becomes the cover title and is removed from the body. The default is `false` — the document starts directly with your content; add `cover_page: true` (in the document's frontmatter or a parent `_meta.yml`) to opt into a cover.
 
 ### Cover label
 

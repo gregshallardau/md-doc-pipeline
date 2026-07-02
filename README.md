@@ -160,7 +160,7 @@ outputs: [pdf, dotx]              # pdf | docx | dotx | pptx — default: [pdf]
 output_pdf: Alpha-Report.pdf      # override output filename
 output_dotx: Alpha-Template.dotx
 output_dir: /path/to/output/      # route built files here (cascades from _meta.yml; CLI --output overrides)
-cover_page: true                  # default true — set false to omit cover
+cover_page: false                 # default false — set true to add a branded cover
 cover_label: Report               # text above cover title (default: "Report")
 
 header_logo: assets/logo.png      # logo in page header (resolved doc dir → repo root)
@@ -309,8 +309,8 @@ h2            { color: #e67e22; }
 Controlled per document or folder:
 
 ```yaml
-cover_page: true   # default — branded cover with title, author, date
-cover_page: false  # body only, no cover
+cover_page: true   # branded cover with title, author, date
+cover_page: false  # default — body only, no cover
 ```
 
 ---

@@ -2564,7 +2564,7 @@ def build(
     is_dotx = output_format == "dotx"
 
     field_type: str | None = None
-    cover_page = bool(config.get("cover_page", True))
+    cover_page = bool(config.get("cover_page", False))
 
     if is_dotx:
         ft = str(config.get("dotx_field_type", "form")).lower()

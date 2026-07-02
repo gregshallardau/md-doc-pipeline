@@ -68,7 +68,7 @@ cover_page: true
 
 - **`outputs`** — `pdf`, `docx`, or `dotx`. Multiple: `[pdf, dotx]`
 - **`output_dir`** — directory to write built outputs into. Cascades from parent `_meta.yml`; override at any folder or document level. CLI `--output` always wins. Supports `~`. Example: `output_dir: /mnt/NAS/Letters/`
-- **`cover_page`** — `true` adds a branded cover; `false` starts with the body. Default is `true`
+- **`cover_page`** — `true` adds a branded cover; `false` starts with the body. Default is `false` — add `cover_page: true` where you want a cover
 - **`cover_label`** — text above the title on the cover page. Default: `"Report"`. Set to `"Concept"`, `"Proposal"`, etc.
 - **`cover_text_align`** — `left` or `right`. Default: `"left"`
 - **`cover_background`** — cover page background colour. Default: `"white"`

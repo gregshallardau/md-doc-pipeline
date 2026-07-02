@@ -1814,7 +1814,7 @@ def theme_init(directory: Path, force: bool) -> None:
     page_size = click.prompt(
         "Page size", default="A4", type=click.Choice(["A4", "Letter"], case_sensitive=False)
     )
-    cover_page = click.confirm("Include cover page by default?", default=True)
+    cover_page = click.confirm("Include cover page by default?", default=False)
 
     css = generate_base_theme(
         org_name=org_name,

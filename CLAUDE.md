@@ -99,7 +99,7 @@ Field type is controlled by `dotx_field_type` in `_meta.yml`:
 ### Cover page config
 
 ```yaml
-cover_page: true   # default — applies to pdf and dotx; set false to omit
+cover_page: false  # default — applies to pdf and dotx; set true to add a cover
 ```
 
 ### Core pipeline (per document)
@@ -231,7 +231,7 @@ Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an opti
 
 **Cover page:**
 ```yaml
-cover_page: true              # default true — set false to omit cover
+cover_page: false             # default false — set true to add a branded cover
 cover_label: Report           # text above the title on cover page (default: "Report")
 cover_text_align: left        # left | center | right (default: left) — alignment of cover content
 cover_background: white       # cover page background colour (default: "white"; PDF only — Word has no per-page fill)

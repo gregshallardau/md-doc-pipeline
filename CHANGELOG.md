@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **`cover_page` now defaults to `false`.** Previously a cover page was added
+  unless you set `cover_page: false`; now the document starts with your content
+  unless you opt in with `cover_page: true` (in the document's frontmatter or a
+  parent `_meta.yml`). **Migration:** add `cover_page: true` at the folder or
+  document level wherever you want the branded cover — the example projects do
+  this at their `_meta.yml` root. Applies to PDF and DOCX/DOTX; `pptx` is
+  unaffected.
+
 ### Fixed
 - **Single-file builds no longer abort on an unrelated file's lint error.**
   Building one document (e.g. the Neovim plugin's *build this file*) ran the

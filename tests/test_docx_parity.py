@@ -278,7 +278,7 @@ def test_cover_matches_pdf_design(tmp_repo):
 
     build(
         md,
-        {"title": "My Report", "author": "Ada Lovelace", "date": "March 2026"},
+        {"title": "My Report", "author": "Ada Lovelace", "date": "March 2026", "cover_page": True},
         out,
         output_format="docx",
         doc_path=doc_path,
