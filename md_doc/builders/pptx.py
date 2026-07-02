@@ -116,6 +116,7 @@ class _Slide:
     kind: str = "content"  # title | section | content
     layout: str | None = None  # directive layout: columns|quote|stat|image|center|None
     background: str | None = None  # solid slide fill (hex)
+    from_directive: bool = False  # created by <!-- slide: … --> (title adoption)
     paras: list[_Para] = field(default_factory=list)
     images: list[tuple[int, int]] = field(default_factory=list)  # (mermaid idx, col)
     files: list[tuple[Path, int]] = field(default_factory=list)  # (image file, col)
@@ -203,8 +204,15 @@ class _SlideParser(HTMLParser):
         kind: str,
         layout: str | None = None,
         background: str | None = None,
+        from_directive: bool = False,
     ) -> None:
-        self._cur = _Slide(title=title, kind=kind, layout=layout, background=background)
+        self._cur = _Slide(
+            title=title,
+            kind=kind,
+            layout=layout,
+            background=background,
+            from_directive=from_directive,
+        )
         self.slides.append(self._cur)
         self._para = None
         self._cur_col = 0
@@ -342,7 +350,7 @@ class _SlideParser(HTMLParser):
         if dm:
             layout, background = _parse_directive_args(dm.group(1))
             kind = "section" if layout == "section" else "content"
-            self._new_slide(None, kind, layout=layout, background=background)
+            self._new_slide(None, kind, layout=layout, background=background, from_directive=True)
             return
         m = _NOTES_RE.match(f"<!--{data}-->")
         if m:
@@ -357,7 +365,12 @@ class _SlideParser(HTMLParser):
         names that slide rather than splitting to another.
         """
         cur = self._cur
-        if cur is not None and cur.layout and cur.title is None and not cur.has_content():
+        if (
+            cur is not None
+            and (cur.layout or cur.from_directive)
+            and cur.title is None
+            and not cur.has_content()
+        ):
             cur.title = text
             return True
         return False

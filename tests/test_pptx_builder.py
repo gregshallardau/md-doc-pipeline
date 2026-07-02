@@ -322,3 +322,19 @@ def test_image_layout_centres_picture(repo):
     prs = _build(repo, body, {})
     slide = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Shot")
     assert _pics(slide) == 1
+
+
+def test_background_only_directive_on_content_slide(repo):
+    # <!-- slide: background=#hex --> with no layout name must still take the
+    # next heading as its title and keep the fill (regression: the heading
+    # used to split to a new slide, orphaning the background).
+    from pptx.dml.color import RGBColor
+
+    body = "---\ntitle: T\n---\n\n<!-- slide: background=#1b4f72 -->\n\n## Dark\n\n- x\n"
+    prs = _build(repo, body, {})
+    assert len(prs.slides._sldIdLst) == 2
+    slide = prs.slides[1]
+    assert slide.shapes.title.text == "Dark"
+    assert slide.background.fill.fore_color.rgb == RGBColor(0x1B, 0x4F, 0x72)
+    title_para = slide.shapes.title.text_frame.paragraphs[0]
+    assert title_para.font.color.rgb == RGBColor(0xFF, 0xFF, 0xFF)
