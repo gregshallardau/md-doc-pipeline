@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **Single-file builds no longer abort on an unrelated file's lint error.**
+  Building one document (e.g. the Neovim plugin's *build this file*) ran the
+  lint pre-flight over the document's whole parent directory, so a lint error
+  in a *sibling* (a WIP draft, a broken template) aborted the build and the
+  file you asked for never built — while a whole-directory "workspace" build of
+  a clean subtree worked. A single-file build now lints only that file; its own
+  lint errors still abort as before.
 - **Single-file builds in non-git projects now resolve the full config
   cascade.** `_find_repo_root` recognised only `.git` / `pyproject.toml`; in a
   project rooted by `_meta.yml` alone, building a single file (e.g. from the

@@ -807,11 +807,18 @@ def build(
 
     # Pre-flight lint — abort on errors so users see all issues in one pass
     # rather than having the build halt-and-resume on the first broken doc.
-    # Warnings are printed but don't abort.
+    # Warnings are printed but don't abort.  Scope the lint to what we're
+    # actually building: a single-file build lints only that file, so an
+    # unrelated sibling's lint error can't block the file you asked for.
     if not no_lint:
-        from .linter import lint_directory as _lint_dir
+        if single_file is not None:
+            from .linter import lint_file as _lint_file
 
-        lint_results = _lint_dir(root, repo_root=cascade_root)
+            lint_results = {single_file: _lint_file(single_file, repo_root=cascade_root)}
+        else:
+            from .linter import lint_directory as _lint_dir
+
+            lint_results = _lint_dir(root, repo_root=cascade_root)
         lint_errors: list[str] = []
         lint_warnings: list[str] = []
         for path, issues in sorted(lint_results.items()):
