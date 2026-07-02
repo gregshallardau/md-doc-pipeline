@@ -63,13 +63,14 @@ target-version = ["py311"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=md_doc --cov-report=term-missing --cov-fail-under=70"
 
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+# docx/dotx builders are large and not yet fully typed; everything else
+# (including the sync backends) is type-checked and gating in CI.
 exclude = [
-    "md_doc/sync/azure_files\\.py",
-    "md_doc/sync/s3\\.py",
     "md_doc/builders/docx\\.py",
     "md_doc/builders/dotx\\.py",
 ]

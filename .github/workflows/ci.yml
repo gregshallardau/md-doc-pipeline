@@ -23,6 +23,13 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      - name: Install system libraries (WeasyPrint + cairosvg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 \
+            libgdk-pixbuf2.0-0 libcairo2 libffi-dev shared-mime-info
+
       - name: Install dependencies
         run: uv sync --group dev
 
@@ -32,8 +39,8 @@ jobs:
       - name: Lint — black
         run: uv run black --check .
 
-      - name: Type check — mypy (informational)
-        run: uv run mypy md_doc/ || true
+      - name: Type check — mypy
+        run: uv run mypy md_doc/
 
-      - name: Test — pytest
-        run: uv run pytest tests/ -v --tb=short
+      - name: Test — pytest (with coverage gate)
+        run: uv run pytest tests/ --tb=short
