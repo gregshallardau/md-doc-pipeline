@@ -25,9 +25,9 @@ import yaml
 from jinja2 import Environment, TemplateSyntaxError, meta
 
 from .config import _find_repo_root, load_config, load_merge_fields
+from .config_schema import validate_config
 from .renderer import _build_search_dirs, _MarkdownLoader, _strip_frontmatter
 
-_VALID_FORMATS: frozenset[str] = frozenset({"pdf", "docx", "dotx"})
 _FIELD_RE = re.compile(r"\[\[(\w+)\]\]")
 _PIPE_LINE_RE = re.compile(r"^\s*\|")
 _SEP_ROW_RE = re.compile(r"^\s*\|[\s\-:|]*-[\s\-:|]*\|\s*$")
@@ -192,22 +192,11 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
             return issues
 
     # ------------------------------------------------------------------
-    # 2. outputs: format values
+    # 2. Config schema: unknown keys (warning) + wrong-typed/enum values (error)
     # ------------------------------------------------------------------
     config = load_config(doc_path, repo_root=repo_root)
-    doc_outputs = frontmatter.get("outputs")
-    if doc_outputs is not None:
-        if isinstance(doc_outputs, str):
-            doc_outputs = [doc_outputs]
-        for fmt in doc_outputs:
-            if fmt not in _VALID_FORMATS:
-                issues.append(
-                    LintIssue(
-                        path=doc_path,
-                        message=f"Unknown output format '{fmt}'",
-                        severity="error",
-                    )
-                )
+    for severity, message in validate_config(frontmatter):
+        issues.append(LintIssue(path=doc_path, message=message, severity=severity))
 
     # ------------------------------------------------------------------
     # 3. Jinja2 body syntax + undeclared variable scan
@@ -509,6 +498,11 @@ def lint_meta_file(meta_path: Path) -> list[LintIssue]:
                 "error",
             )
         )
+        return issues
+
+    # Schema: unknown keys (warning) + wrong-typed/enum values (error)
+    for severity, message in validate_config(docs[0]):
+        issues.append(LintIssue(meta_path, message, severity))
 
     return issues
 

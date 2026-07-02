@@ -33,6 +33,10 @@ uv run md-doc build workspace/acme/          # one company
 uv run md-doc build workspace/               # all workspace projects
 uv run md-doc build workspace/acme/ --format dotx  # merge templates only
 uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
+uv run md-doc build workspace/               # incremental: skips docs whose output is newer
+                                             #   than the source, config, theme and templates
+uv run md-doc build workspace/ --force       # rebuild everything, ignoring the freshness check
+uv run md-doc build workspace/ -j 8          # build up to 8 documents in parallel
 
 # Scaffold
 uv run md-doc new folder clients/acme --in workspace/blueshift/  # new folder + _meta.yml
@@ -56,8 +60,13 @@ uv run md-doc export /path/to/vault --no-symlinks # copy files instead of symlin
 uv run md-doc export /path/to/vault --dry-run    # show what would be exported
 
 # Other
+uv run md-doc doctor             # Check Python, deps, WeasyPrint system libs, optional extras
 uv run md-doc sync [PATH]        # Push outputs to remote storage
 uv run md-doc register [PATH]    # Generate document registry
+
+# Global logging (place BEFORE the subcommand)
+uv run md-doc --debug build workspace/   # verbose: config/theme warnings + per-doc timing
+uv run md-doc --quiet build workspace/   # errors only  (also: --log-level debug|info|warning|error)
 
 # Tests
 uv run pytest                    # All tests

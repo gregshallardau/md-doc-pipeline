@@ -20,22 +20,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 
-def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
-    """
-    Upload *files* to an Azure File Share.
+def make_uploader(root: Path, sync_config: dict[str, Any]) -> Callable[[Path], str]:
+    """Return a function that uploads one file to the Azure File Share.
 
-    Parameters
-    ----------
-    files:
-        Absolute paths of files to upload.
-    root:
-        Source root (used to compute relative paths for mirroring).
-    sync_config:
-        Must contain ``share_name``. May contain ``directory`` and
-        ``connection_string``.
+    The SDK import, ``share_name``, and connection string are resolved once here
+    so configuration/credential errors surface before the per-file loop.
     """
     try:
         from azure.storage.fileshare import ShareServiceClient
@@ -44,6 +36,8 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
             "azure-storage-file-share is required for the Azure backend. "
             "Install with: pip install 'md-doc-pipeline[azure]'"
         ) from exc
+
+    from azure.core.exceptions import ResourceExistsError
 
     share_name: str = sync_config.get("share_name", "")
     if not share_name:
@@ -63,8 +57,6 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
     service_client = ShareServiceClient.from_connection_string(connection_string)
     share_client = service_client.get_share_client(share_name)
 
-    from azure.core.exceptions import ResourceExistsError
-
     def _ensure_directory(dir_path: str) -> None:
         """Create the directory (and parents) inside the share if not present."""
         parts = [p for p in dir_path.split("/") if p]
@@ -77,9 +69,8 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
             except ResourceExistsError:
                 pass  # Already exists — any other error propagates so failures surface
 
-    for src in files:
+    def _upload(src: Path) -> str:
         rel = src.relative_to(root)
-        # Build full remote path
         remote_rel = (
             str(PurePosixPath(base_directory) / PurePosixPath(*rel.parts))
             if base_directory
@@ -96,5 +87,13 @@ def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
 
         with open(src, "rb") as fh:
             file_client.upload_file(fh)
+        return f"uploaded  {rel}  →  {share_name}/{remote_rel}"
 
-        print(f"  uploaded  {rel}  →  azure://{share_name}/{remote_rel}")
+    return _upload
+
+
+def sync(files: list[Path], root: Path, sync_config: dict[str, Any]) -> None:
+    """Upload *files* to an Azure File Share (compat wrapper)."""
+    upload = make_uploader(root, sync_config)
+    for src in files:
+        print(f"  {upload(src)}")

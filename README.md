@@ -350,12 +350,20 @@ The `.dotx` file is ready to open in Word — tab through the Text Form Fields a
 md-doc lint [ROOT]
   ROOT                  Directory to lint (default: current directory)
 
+md-doc doctor
+  Check Python, dependencies, WeasyPrint system libs, and optional extras
+
 md-doc build [ROOT] [OPTIONS]
   ROOT                  Directory to build (default: current directory)
   -o, --output DIR      Mirror source tree under DIR instead of alongside source
   -f, --format          pdf | docx | dotx | all  (default: from outputs config)
+  -j, --jobs N          Build N documents in parallel (default: 1)
+  --force               Rebuild even if outputs are newer than their inputs
   --strict              Fail on undefined Jinja2 variables
   --dry-run             Show what would be built without building
+
+Global (place before the subcommand):
+  --debug / --quiet / --log-level LEVEL   Logging verbosity
 
 md-doc new folder NAME [--in DIR]
   NAME                  Relative path for the new folder (e.g. clients/acme)
@@ -384,6 +392,17 @@ md-doc register [ROOT] [OPTIONS]
   -o, --output FILE     Output path for register.json
   --no-md               Skip writing register.md
 ```
+
+---
+
+## Documentation
+
+- [Quickstart](docs/quickstart.md) — install, output types, config, Jinja2, forms
+- [Config reference](docs/config-reference.md) — every `_meta.yml` / frontmatter key
+- [Authoring guide](docs/authoring-guide.md) — Markdown authoring conventions
+- [PDF forms guide](docs/pdf-forms-guide.md) — interactive fillable PDFs
+- [Troubleshooting](docs/troubleshooting.md) — system libs, Mermaid-in-Word, sync
+- [Python API](docs/python-api.md) — using the pipeline as a library
 
 ---
 

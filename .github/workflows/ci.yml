@@ -23,6 +23,13 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      - name: Install system libraries (WeasyPrint + cairosvg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 \
+            libgdk-pixbuf2.0-0 libcairo2 libffi-dev shared-mime-info
+
       - name: Install dependencies
         run: uv sync --group dev
 
@@ -32,8 +39,44 @@ jobs:
       - name: Lint — black
         run: uv run black --check .
 
-      - name: Type check — mypy (informational)
-        run: uv run mypy md_doc/ || true
+      - name: Type check — mypy
+        run: uv run mypy md_doc/
 
-      - name: Test — pytest
-        run: uv run pytest tests/ -v --tb=short
+      - name: Test — pytest (with coverage gate)
+        run: uv run pytest tests/ --tb=short
+
+  package:
+    name: Build & install smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Install the wheel into a clean venv and run the CLI
+        run: |
+          python3.12 -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --upgrade pip
+          /tmp/smoke/bin/pip install dist/*.whl
+          /tmp/smoke/bin/md-doc --version
+          # doctor may warn about optional extras / system libs; that's fine here.
+          /tmp/smoke/bin/md-doc doctor || true
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: pip-audit
+        # Non-blocking for now — advisories in transitive deps shouldn't red the
+        # build. Drop the `|| true` to make it gating once the baseline is clean.
+        run: uvx pip-audit || true
