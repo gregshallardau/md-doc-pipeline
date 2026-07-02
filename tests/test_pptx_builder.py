@@ -211,3 +211,114 @@ def test_mermaid_diagram_embeds_as_picture(repo):
     body = '---\ntitle: T\n---\n\n## Chart\n\n```mermaid\npie\n"A" : 60\n"B" : 40\n```\n'
     prs = _build(repo, body, {})
     assert any(_pics(s) for s in prs.slides)
+
+
+# ── Deck-first layout directives ─────────────────────────────────────────────
+
+
+def _boxes(slide):
+    return [
+        sh
+        for sh in slide.shapes
+        if sh.has_text_frame and sh != slide.shapes.title and sh.text_frame.text.strip()
+    ]
+
+
+def test_directive_slide_adopts_next_heading(repo):
+    body = "---\ntitle: T\n---\n\n<!-- slide: stat -->\n\n## Numbers\n\n- **9** lives\n"
+    prs = _build(repo, body, {})
+    # title slide + ONE stat slide (the H2 titles the directive slide, no split)
+    assert len(prs.slides._sldIdLst) == 2
+    assert prs.slides[1].shapes.title.text == "Numbers"
+
+
+def test_columns_layout_routes_content(repo):
+    body = (
+        "---\ntitle: T\n---\n\n<!-- slide: columns -->\n\n## Two Up\n\n"
+        "Left text\n\n<!-- col -->\n\nRight text\n"
+    )
+    prs = _build(repo, body, {})
+    slide = prs.slides[1]
+    boxes = _boxes(slide)
+    assert len(boxes) == 2
+    by_x = sorted(boxes, key=lambda sh: sh.left)
+    assert "Left text" in by_x[0].text_frame.text
+    assert "Right text" in by_x[1].text_frame.text
+    assert by_x[0].left < by_x[1].left
+
+
+def test_stat_layout_renders_tiles(repo):
+    body = (
+        "---\ntitle: T\n---\n\n<!-- slide: stat -->\n\n## KPIs\n\n"
+        "- **47%** growth\n- **12k** users\n- **3.2s** builds\n"
+    )
+    prs = _build(repo, body, {})
+    boxes = _boxes(prs.slides[1])
+    assert len(boxes) == 3
+    from pptx.util import Pt
+
+    values = [
+        r for sh in boxes for p in sh.text_frame.paragraphs for r in p.runs if r.font.size == Pt(44)
+    ]
+    assert {r.text for r in values} == {"47%", "12k", "3.2s"}
+    assert all(r.font.bold for r in values)
+
+
+def test_quote_layout_with_attribution(repo):
+    body = (
+        "---\ntitle: T\n---\n\n<!-- slide: quote -->\n\n" "> Less is more.\n\n— Mies van der Rohe\n"
+    )
+    prs = _build(repo, body, {})
+    box = _boxes(prs.slides[1])[0]
+    from pptx.util import Pt
+
+    runs = [r for p in box.text_frame.paragraphs for r in p.runs]
+    quote = next(r for r in runs if "Less is more" in r.text)
+    assert quote.font.size == Pt(28) and quote.font.italic
+    attr = next(r for r in runs if "Mies" in r.text)
+    assert attr.font.size == Pt(15)
+
+
+def test_center_layout_anchors_middle(repo):
+    from pptx.enum.text import MSO_ANCHOR
+
+    body = "---\ntitle: T\n---\n\n<!-- slide: center -->\n\nBig statement.\n"
+    prs = _build(repo, body, {})
+    box = _boxes(prs.slides[1])[0]
+    assert box.text_frame.vertical_anchor == MSO_ANCHOR.MIDDLE
+
+
+def test_background_fill_and_dark_text_flip(repo):
+    from pptx.dml.color import RGBColor
+
+    body = "---\ntitle: T\n---\n\n<!-- slide: section background=#1b4f72 -->\n\n# Part One\n"
+    prs = _build(repo, body, {})
+    slide = prs.slides[1]
+    assert slide.background.fill.fore_color.rgb == RGBColor(0x1B, 0x4F, 0x72)
+    title_para = slide.shapes.title.text_frame.paragraphs[0]
+    assert title_para.font.color.rgb == RGBColor(0xFF, 0xFF, 0xFF)  # dark bg → white
+
+
+def test_unknown_layout_degrades_to_content(repo):
+    body = "---\ntitle: T\n---\n\n<!-- slide: sparkle -->\n\n## Still Works\n\ntext\n"
+    prs = _build(repo, body, {})
+    assert any(s.shapes.title and s.shapes.title.text == "Still Works" for s in prs.slides)
+
+
+def test_overlong_slide_shrinks_text(repo):
+    long_para = ("Lorem ipsum dolor sit amet, consectetur adipiscing elit. " * 8).strip()
+    body = "---\ntitle: T\n---\n\n## Wall\n\n" + "\n\n".join([long_para] * 8) + "\n"
+    prs = _build(repo, body, {})
+    from pptx.util import Pt
+
+    wall = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Wall")
+    sizes = {r.font.size for sh in _boxes(wall) for p in sh.text_frame.paragraphs for r in p.runs}
+    assert sizes and all(sz < Pt(18) for sz in sizes)  # shrunk below the default
+
+
+def test_image_layout_centres_picture(repo):
+    _png(repo / "shot.png")
+    body = "---\ntitle: T\n---\n\n<!-- slide: image -->\n\n## Shot\n\n![s](shot.png)\n"
+    prs = _build(repo, body, {})
+    slide = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Shot")
+    assert _pics(slide) == 1

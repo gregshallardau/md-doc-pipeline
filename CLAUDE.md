@@ -111,7 +111,10 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
 3. **Building** (`builders/`):
    - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Theme cascade: at each directory level (doc dir → ancestors → repo root) looks for `_pdf-theme.css` first, then `_theme.css` (shared base). Auto-generates `_theme.css` at repo root if nothing found anywhere. Extracts first H1 as cover page title when `cover_page: true`. Key call: `weasyprint.HTML(...).write_pdf(path)`.
    - PDF forms — Add `pdf_forms: true` to any document's frontmatter or parent `_meta.yml` to produce interactive fillable PDFs. The standard `pdf.py` builder passes `pdf_forms=True` to WeasyPrint 68.x, which natively supports AcroForm fields. HTML `<input>`, `<select>`, `<textarea>` elements become real interactive fields. Output file gets a `-form` suffix: `onboarding.md` → `onboarding-form.pdf`. See `workspace/CLAUDE.md` for authoring guidance.
-   - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use. Word theme cascade: at each directory level looks for `_docx-theme.css` first, then `_theme.css` (shared base), then `_pdf-theme.css` (legacy fallback). CSS `@import` in any of these files is resolved by `docx_theme.parse_css_for_word`.
+   - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use. Word theme cascade: at each directory level looks for `_docx-theme.css` first, then `_theme.css` (shared base), then `_pdf-theme.css` (legacy fallback). CSS `@import` in any of these files is resolved by `docx_theme.parse_css_for_word`. **PDF↔DOCX visual parity:**
+     - *Page breaks* — the docx builder injects the *same* page breaks the PDF builder does (APPENDIX-section H2s via `_inject_appendix_breaks`, explicit `<!-- pagebreak -->` via `_inject_page_breaks`), honours the theme's `.report-body h1 { page-break-before: always }` rule (each H1 starts a new page in both formats; never the first content element), sets *keep-with-next* on headings, and uses matching paper/margin geometry parsed from the theme's `@page` — so both formats break at the same declared points. (Exact page-for-page identity isn't guaranteed: WeasyPrint and Word are different layout engines.)
+     - *Cover page* — mirrors the PDF cover element for element: the top bar/stripe are floating tables at the physical page edges (the PDF cover uses `@page cover { margin: 0 }`), the bottom bar is an in-flow full-bleed band exactly where the PDF lays it out, label/title/divider/meta use the PDF's sizes and colours (divider is `$primary`), `cover_logo`/`cover_bar_logo`/`cover_bar_position`/`cover_stripe`/`cover_footer_line` are honoured, author/date fall back to the same defaults as the PDF, and the cover footer is a text frame ~14mm from the page bottom. With `cover_page: false` the leading H1 stays in the body as a Heading 1 (same as the PDF).
+     - *Headers & footers* — headers/footers are suppressed on the cover via Word's *different first page* (the PDF does this with `@page cover`); with no `footer_*` config the theme's default `@page @bottom-*` boxes (org name, running date, `Page N of M`) are parsed from the CSS and rendered as the Word footer with live PAGE/NUMPAGES fields; `page_header_bar` renders full-bleed at the physical page top with 8pt regular text and multi-logo slots, and drops the footer rule exactly like the PDF.
    - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word fields (Text Form Fields by default, MERGEFIELDs if `dotx_field_type: merge`). Patches the saved file's ZIP content type from `.docx` → `.dotx`. Applies Word CSS theme via the same cascade as `docx.py`.
    - `pptx.py` — Markdown → HTML → python-pptx presentation. Unlike the flowing builders, it **segments** the document into slides: the first H1 (or `title`) → title slide, later H1s → section slides, each H2 → a content slide; `<!-- slide -->` forces a break and `<!-- notes: … -->` attaches speaker notes. `slide_split` (`h2` default | `h1` | `marker`) selects the strategy. Reuses the shared image/Mermaid helpers in `builders/_assets.py` (`_resolve_asset`, `_render_mermaid_to_images`, `_svg_to_png` — extracted so docx and pptx share them). Theme colours/fonts come from the same CSS cascade (`resolve_docx_theme`); an optional `_pptx-template.pptx`/`.potx` (via `pptx_template`) is used as the base for brand master slides.
 
@@ -184,6 +187,24 @@ Segmentation: the first `# H1` (or `title`) → title slide, later `# H1`s → s
 each `## H2` → content slide. `<!-- slide -->` forces a break; `<!-- notes: … -->` adds speaker
 notes. Mermaid diagrams embed as PNGs (needs the `[mermaid]` extra / `cairosvg`).
 
+**Deck-first layout directives** (full guide: `docs/slides-guide.md`, worked example:
+`examples/blueshift/decks/quarterly-review.md`). A directive starts a new slide; the next
+heading titles that slide instead of splitting to another. Overlong slides shrink text to fit.
+
+```markdown
+<!-- slide: section background=#1b4f72 -->   forced section divider (solid fill)
+<!-- slide: columns -->                       2–4 column body; <!-- col --> divides
+<!-- slide: stat -->                          big-number tiles: - **47%** YoY growth
+<!-- slide: quote -->                         centred pull-quote; — Name = attribution
+<!-- slide: image -->                         picture(s)/Mermaid fill the body, text = caption
+<!-- slide: center -->                        vertically centred statement
+```
+
+`background=#hex` works on any directive; dark fills flip text to white automatically.
+Unknown layout names degrade to the default content layout with a warning.
+`docs/llm-deck-prompt.md` holds a ready-made LLM prompt that converts raw content
+into a valid deck file in this schema.
+
 **Per-section alignment in Markdown (docx/dotx):**
 
 Wrap sections in an HTML `<div style="text-align: ...">` block to override alignment for that block:
@@ -212,8 +233,8 @@ Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an opti
 ```yaml
 cover_page: true              # default true — set false to omit cover
 cover_label: Report           # text above the title on cover page (default: "Report")
-cover_text_align: left        # left | right (default: left) — alignment of cover content
-cover_background: white       # cover page background colour (default: "white")
+cover_text_align: left        # left | center | right (default: left) — alignment of cover content
+cover_background: white       # cover page background colour (default: "white"; PDF only — Word has no per-page fill)
 cover_divider: true           # show horizontal rule under title (default: true)
 cover_meta_label: "Prepared by"  # label before the author name (default: "Prepared by")
 cover_meta_author: "Custom Name" # override author on cover only (default: author value)

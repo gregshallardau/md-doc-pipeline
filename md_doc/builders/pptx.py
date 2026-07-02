@@ -11,9 +11,22 @@ builders, this one *segments* the document into slides:
 The ``slide_split`` config key selects the strategy: ``h2`` (default) splits on
 H2, ``h1`` only on H1, ``marker`` only on ``<!-- slide -->``.
 
-Content within a slide (lists, paragraphs, tables, images, Mermaid diagrams,
-code blocks) is laid out top-to-bottom in the body area. A ``<!-- notes: … -->``
-comment attaches speaker notes to the current slide.
+Deck-first layout directives (see ``docs/slides-guide.md``)::
+
+    <!-- slide: section -->      forced section divider
+    <!-- slide: columns -->      multi-column body; <!-- col --> divides columns
+    <!-- slide: quote -->        large centred quote + attribution
+    <!-- slide: stat -->         big-number stat tiles (one per bullet)
+    <!-- slide: image -->        image showcase (picture fills the body)
+    <!-- slide: center -->       vertically centred content
+    <!-- slide: ... background=#1b4f72 -->   solid slide background (any layout;
+                                 dark fills flip the text to white automatically)
+
+A directive starts a new slide; the next heading becomes that slide's title
+instead of starting another. Content within a slide (lists, paragraphs,
+tables, images, Mermaid diagrams, code blocks) is laid out top-to-bottom in
+the body area, shrinking text to fit when a slide overflows. A
+``<!-- notes: … -->`` comment attaches speaker notes to the current slide.
 
 Public API
 ----------
@@ -52,6 +65,26 @@ _MD_EXTENSIONS = [
 
 _SLIDE_BREAK_RE = re.compile(r"<!--\s*slide\s*-->", re.IGNORECASE)
 _NOTES_RE = re.compile(r"<!--\s*notes:\s*(.*?)\s*-->", re.IGNORECASE | re.DOTALL)
+# <!-- slide: layout key=value … --> directive (comment body, after stripping)
+_DIRECTIVE_RE = re.compile(r"^slide\s*:\s*(.*)$", re.IGNORECASE | re.DOTALL)
+_DIRECTIVE_ARG_RE = re.compile(r'(\w[\w-]*)\s*=\s*("([^"]*)"|\'([^\']*)\'|\S+)')
+# Pad slide/col comments with blank lines so markdown always treats them as
+# block-level (a directive glued to a paragraph would otherwise end up inline).
+_BLOCK_COMMENT_RE = re.compile(r"<!--\s*(?:slide\b[^>]*?|col)\s*-->", re.IGNORECASE)
+
+_LAYOUT_ALIASES = {
+    "two-column": "columns",
+    "twocol": "columns",
+    "cols": "columns",
+    "columns": "columns",
+    "section": "section",
+    "quote": "quote",
+    "stat": "stat",
+    "stats": "stat",
+    "image": "image",
+    "center": "center",
+    "centre": "center",
+}
 
 _SLIDE_SIZES = {"16:9": (Inches(13.333), Inches(7.5)), "4:3": (Inches(10), Inches(7.5))}
 
@@ -74,20 +107,56 @@ class _Para:
     runs: list[_Run] = field(default_factory=list)
     level: int = 0
     kind: str = "para"  # para | bullet | number | code
+    col: int = 0  # column index on a `columns` layout
 
 
 @dataclass
 class _Slide:
     title: str | None = None
     kind: str = "content"  # title | section | content
+    layout: str | None = None  # directive layout: columns|quote|stat|image|center|None
+    background: str | None = None  # solid slide fill (hex)
     paras: list[_Para] = field(default_factory=list)
-    images: list[int] = field(default_factory=list)  # mermaid image indices
-    files: list[Path] = field(default_factory=list)  # resolved image files
-    tables: list[list[list[str]]] = field(default_factory=list)
+    images: list[tuple[int, int]] = field(default_factory=list)  # (mermaid idx, col)
+    files: list[tuple[Path, int]] = field(default_factory=list)  # (image file, col)
+    tables: list[tuple[list[list[str]], int]] = field(default_factory=list)  # (rows, col)
     notes: list[str] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (self.paras or self.images or self.files or self.tables or self.title)
+
+    def has_content(self) -> bool:
+        return bool(self.paras or self.images or self.files or self.tables)
+
+    def n_cols(self) -> int:
+        cols = [p.col for p in self.paras]
+        cols += [c for _, c in self.images] + [c for _, c in self.files]
+        cols += [c for _, c in self.tables]
+        return max(cols, default=0) + 1
+
+
+def _parse_directive_args(args: str) -> tuple[str | None, str | None]:
+    """Parse the body of a ``<!-- slide: … -->`` directive.
+
+    Returns ``(layout, background)``. The first bare token is the layout name
+    (resolved through :data:`_LAYOUT_ALIASES`); ``background=#hex`` may appear
+    on any layout. Unknown layouts fall back to the default content layout so
+    a typo degrades gracefully instead of crashing the build.
+    """
+    background: str | None = None
+    rest = args.strip()
+    for m in _DIRECTIVE_ARG_RE.finditer(rest):
+        key = m.group(1).lower()
+        value = m.group(3) if m.group(3) is not None else (m.group(4) or m.group(2))
+        if key == "background":
+            background = value.strip()
+    bare = _DIRECTIVE_ARG_RE.sub("", rest).strip().split()
+    layout: str | None = None
+    if bare:
+        layout = _LAYOUT_ALIASES.get(bare[0].lower())
+        if layout is None:
+            logger.warning("pptx: unknown slide layout %r — using default content layout.", bare[0])
+    return layout, background
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +177,7 @@ class _SlideParser(HTMLParser):
         self._cur: _Slide | None = None
 
         self._para: _Para | None = None
+        self._cur_col = 0  # column cursor on `columns` slides (advanced by <!-- col -->)
         self._bold = False
         self._italic = False
         self._code = False
@@ -127,10 +197,17 @@ class _SlideParser(HTMLParser):
 
     # -- slide/paragraph management ------------------------------------------
 
-    def _new_slide(self, title: str | None, kind: str) -> None:
-        self._cur = _Slide(title=title, kind=kind)
+    def _new_slide(
+        self,
+        title: str | None,
+        kind: str,
+        layout: str | None = None,
+        background: str | None = None,
+    ) -> None:
+        self._cur = _Slide(title=title, kind=kind, layout=layout, background=background)
         self.slides.append(self._cur)
         self._para = None
+        self._cur_col = 0
 
     def _slide(self) -> _Slide:
         if self._cur is None:
@@ -142,7 +219,7 @@ class _SlideParser(HTMLParser):
         # Ensure the slide exists *first* — _slide() may create one via
         # _new_slide(), which resets self._para.
         slide = self._slide()
-        self._para = _Para(level=max(len(self._list_stack) - 1, 0), kind=kind)
+        self._para = _Para(level=max(len(self._list_stack) - 1, 0), kind=kind, col=self._cur_col)
         slide.paras.append(self._para)
 
     def _add_text(self, text: str) -> None:
@@ -220,7 +297,7 @@ class _SlideParser(HTMLParser):
             self._code = False
         elif tag == "pre":
             self._in_pre = False
-            para = _Para(kind="code")
+            para = _Para(kind="code", col=self._cur_col)
             para.runs.append(_Run(text=self._pre_text.rstrip("\n"), code=True))
             self._slide().paras.append(para)
             self._pre_text = ""
@@ -235,7 +312,7 @@ class _SlideParser(HTMLParser):
         elif tag == "table":
             self._in_table = False
             if self._cur_table:
-                self._slide().tables.append(self._cur_table)
+                self._slide().tables.append((self._cur_table, self._cur_col))
             self._cur_table = None
 
     def handle_data(self, data: str) -> None:
@@ -251,8 +328,21 @@ class _SlideParser(HTMLParser):
         self._add_text(data)
 
     def handle_comment(self, data: str) -> None:
-        if data.strip() == "slidebreak":
+        text = data.strip()
+        if text in ("slidebreak", "slide"):
             self._new_slide(None, "content")
+            return
+        if text == "col":
+            # Advance the column cursor; content that follows lands in the
+            # next column of a `columns` slide.
+            self._slide()
+            self._cur_col += 1
+            return
+        dm = _DIRECTIVE_RE.match(text)
+        if dm:
+            layout, background = _parse_directive_args(dm.group(1))
+            kind = "section" if layout == "section" else "content"
+            self._new_slide(None, kind, layout=layout, background=background)
             return
         m = _NOTES_RE.match(f"<!--{data}-->")
         if m:
@@ -260,9 +350,23 @@ class _SlideParser(HTMLParser):
 
     # -- helpers -------------------------------------------------------------
 
+    def _adopt_title(self, text: str) -> bool:
+        """Give a heading to the current slide instead of starting a new one.
+
+        A layout directive opens a fresh, untitled slide; the very next heading
+        names that slide rather than splitting to another.
+        """
+        cur = self._cur
+        if cur is not None and cur.layout and cur.title is None and not cur.has_content():
+            cur.title = text
+            return True
+        return False
+
     def _finish_heading(self, tag: str) -> None:
         text = getattr(self, "_heading_text", "").strip()
         self._pending_heading = None
+        if tag in ("h1", "h2") and self._adopt_title(text):
+            return
         if tag == "h1":
             self._new_slide(text, "section")
         elif tag == "h2" and self._split in ("h2",):
@@ -277,11 +381,11 @@ class _SlideParser(HTMLParser):
         src = attrs.get("src") or ""
         m = _MERMAID_IMG_RE.fullmatch(src)
         if m:
-            self._slide().images.append(int(m.group(1)))
+            self._slide().images.append((int(m.group(1)), self._cur_col))
             return
         path = _resolve_asset(src, self._doc_path, self._repo_root)
         if path is not None:
-            self._slide().files.append(path)
+            self._slide().files.append((path, self._cur_col))
         else:
             logger.warning("pptx: could not resolve image %r — skipped.", src)
 
@@ -318,9 +422,11 @@ _TABLE_HEADER_PT = 14.0
 _TABLE_BODY_PT = 12.0
 
 
-def _write_para(tf, para: _Para, first: bool, theme: dict) -> None:
+def _write_para(tf, para: _Para, first: bool, theme: dict, scale: float = 1.0, align=None) -> None:
     p = tf.paragraphs[0] if first else tf.add_paragraph()
     p.level = min(para.level, 4)
+    if align is not None:
+        p.alignment = align
 
     body_font = theme.get("font_body")
     code_font = theme.get("font_code", "Courier New")
@@ -343,11 +449,11 @@ def _write_para(tf, para: _Para, first: bool, theme: dict) -> None:
         # family + size (size is slide-appropriate, not the theme's print size)
         if mono:
             r.font.name = code_font
-            r.font.size = Pt(_CODE_PT)
+            r.font.size = Pt(max(_CODE_PT * scale, 10.0))
         else:
             if body_font:
                 r.font.name = body_font
-            r.font.size = Pt(_BODY_PT)
+            r.font.size = Pt(max(_BODY_PT * scale, 12.0))
         # colour precedence: code > strong > em > quote > body
         colour = (
             code_color
@@ -362,7 +468,7 @@ def _write_para(tf, para: _Para, first: bool, theme: dict) -> None:
             r.font.color.rgb = colour
 
 
-def _fill_text_frame(tf, paras: list[_Para], theme: dict) -> None:
+def _fill_text_frame(tf, paras: list[_Para], theme: dict, scale: float = 1.0, align=None) -> None:
     tf.word_wrap = True
     try:
         from pptx.enum.text import MSO_AUTO_SIZE
@@ -372,8 +478,34 @@ def _fill_text_frame(tf, paras: list[_Para], theme: dict) -> None:
         pass
     first = True
     for para in paras:
-        _write_para(tf, para, first, theme)
+        _write_para(tf, para, first, theme, scale=scale, align=align)
         first = False
+
+
+def _para_text(para: _Para) -> str:
+    return "".join(r.text for r in para.runs)
+
+
+def _estimate_paras_height_in(paras: list[_Para], width_in: float) -> float:
+    """Rough rendered height (inches) of *paras* wrapped to *width_in*.
+
+    Used to pick a shrink factor when a slide overflows — an estimate is fine,
+    python-pptx can't measure text.
+    """
+    total = 0.0
+    for para in paras:
+        text = _para_text(para)
+        if para.kind == "code":
+            # monospace at _CODE_PT: ~13.5 chars/inch, 0.24in per line
+            cpl = max(width_in * 13.5, 10.0)
+            lines = sum(max(1, -(-len(line) // int(cpl))) for line in (text.split("\n") or [""]))
+            total += lines * 0.24 + 0.08
+        else:
+            # body at _BODY_PT: ~10.5 chars/inch, 0.30in per line
+            cpl = max((width_in - para.level * 0.35) * 10.5, 10.0)
+            lines = max(1, -(-len(text) // int(cpl)))
+            total += lines * 0.30 + 0.04
+    return total
 
 
 def _add_table(slide, rows: list[list[str]], left, top, width, theme: dict) -> Emu:
@@ -435,6 +567,263 @@ def _style_title(shape, theme: dict, level: int) -> None:
             r.font.name = font
 
 
+def _is_dark(hex_color: str) -> bool:
+    r, g, b = _hex_to_rgb(hex_color)
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 140
+
+
+def _apply_background(slide, s: _Slide, theme: dict) -> dict:
+    """Fill the slide background; on dark fills flip the text palette to white."""
+    if not s.background:
+        return theme
+    colour = _rgb(s.background)
+    if colour is None:
+        return theme
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = colour
+    if _is_dark(s.background):
+        theme = {
+            **theme,
+            "color_body": "#ffffff",
+            "color_h1": "#ffffff",
+            "color_h2": "#ffffff",
+            "color_strong": "#ffffff",
+            "color_em": "#e8ecf1",
+            "color_blockquote": "#e8ecf1",
+            "color_code": "#e8ecf1",
+        }
+    return theme
+
+
+def _body_area(prs: Presentation, has_title: bool) -> tuple:
+    """(left, top, width, bottom) of the content region below the title."""
+    margin = Inches(0.6)
+    top = Inches(1.6) if has_title else Inches(0.6)
+    width = prs.slide_width - margin * 2
+    bottom = prs.slide_height - Inches(0.4)
+    return margin, top, width, bottom
+
+
+def _render_body_region(
+    slide,
+    s: _Slide,
+    col: int | None,
+    images: list[tuple[bytes, int, int]],
+    theme: dict,
+    left,
+    top,
+    width,
+    bottom,
+) -> None:
+    """Stack paras/tables/pictures top-to-bottom in a rectangular region.
+
+    *col* filters content to one column of a ``columns`` slide (None = all).
+    Text shrinks to fit the region rather than spilling off the canvas.
+    """
+    cursor = top
+    paras = [p for p in s.paras if col is None or p.col == col]
+    tables = [rows for rows, c in s.tables if col is None or c == col]
+    imgs = [i for i, c in s.images if col is None or c == col]
+    files = [f for f, c in s.files if col is None or c == col]
+
+    if paras:
+        width_in = Emu(width).inches
+        est_in = _estimate_paras_height_in(paras, width_in)
+        # Reserve a rough footprint for tables/pictures that share the region.
+        reserved_in = 1.8 * (len(tables) + len(imgs) + len(files) > 0)
+        avail_in = max(Emu(int(bottom - cursor)).inches - reserved_in, 1.0)
+        scale = 1.0
+        if est_in > avail_in:
+            scale = max(avail_in / est_in, 0.55)
+            est_in = avail_in
+        est = Emu(int(Inches(est_in).emu))
+        box = slide.shapes.add_textbox(left, cursor, width, min(est, bottom - cursor))
+        _fill_text_frame(box.text_frame, paras, theme, scale=scale)
+        cursor = Emu(cursor + est + Inches(0.1))
+
+    for rows in tables:
+        if cursor >= bottom:
+            break
+        h = _add_table(slide, rows, left, cursor, width, theme)
+        cursor = Emu(cursor + h + Inches(0.2))
+
+    for idx in imgs:
+        if idx >= len(images) or cursor >= bottom:
+            continue
+        png, w_px, h_px = images[idx]
+        cursor = _place_picture(slide, BytesIO(png), w_px, h_px, left, cursor, width, bottom)
+
+    for path in files:
+        if cursor >= bottom:
+            break
+        w_px, h_px = _image_size(path)
+        cursor = _place_picture(slide, str(path), w_px, h_px, left, cursor, width, bottom)
+
+
+def _image_size(path: Path) -> tuple[int, int]:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            return im.width, im.height
+    except Exception:
+        return 800, 600
+
+
+def _render_columns_slide(prs, slide, s, images, theme) -> None:
+    left, top, width, bottom = _body_area(prs, s.title is not None)
+    n = max(min(s.n_cols(), 4), 2)
+    gap = Inches(0.4)
+    col_w = Emu(int((width - gap * (n - 1)) / n))
+    for c in range(n):
+        col_left = Emu(int(left + c * (col_w + gap)))
+        _render_body_region(slide, s, c, images, theme, col_left, top, col_w, bottom)
+
+
+def _render_quote_slide(prs, slide, s, theme) -> None:
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+
+    left, top, width, bottom = _body_area(prs, s.title is not None)
+    quote_paras: list[_Para] = []
+    attributions: list[_Para] = []
+    for p in s.paras:
+        if _para_text(p).strip().startswith(("—", "–", "--")):
+            attributions.append(p)
+        else:
+            quote_paras.append(p)
+
+    box = slide.shapes.add_textbox(left, top, width, Emu(int(bottom - top)))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    accent = _rgb(theme.get("color_h1")) or _rgb(theme.get("color_body"))
+    muted = _rgb(theme.get("color_em")) or accent
+    body_font = theme.get("font_body")
+    first = True
+    for para in quote_paras:
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        p.alignment = PP_ALIGN.CENTER
+        text = _para_text(para).strip()
+        r = p.add_run()
+        r.text = f"“{text}”" if not text.startswith(("“", '"')) else text
+        r.font.size = Pt(28)
+        r.font.italic = True
+        if body_font:
+            r.font.name = body_font
+        if accent:
+            r.font.color.rgb = accent
+    for para in attributions:
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = _para_text(para).strip()
+        r.font.size = Pt(15)
+        if body_font:
+            r.font.name = body_font
+        if muted:
+            r.font.color.rgb = muted
+
+
+def _render_stat_slide(prs, slide, s, theme) -> None:
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+
+    left, top, width, bottom = _body_area(prs, s.title is not None)
+    tiles = [p for p in s.paras if p.runs][:4]
+    if not tiles:
+        return
+    n = len(tiles)
+    gap = Inches(0.3)
+    tile_w = Emu(int((width - gap * (n - 1)) / n))
+    accent = _rgb(theme.get("color_h1"))
+    muted = _rgb(theme.get("color_em")) or _rgb(theme.get("color_body"))
+    body_font = theme.get("font_body")
+
+    for i, para in enumerate(tiles):
+        value = "".join(r.text for r in para.runs if r.bold).strip()
+        label = "".join(r.text for r in para.runs if not r.bold).strip()
+        if not value:
+            # No bold run — first run is the value, the rest the label.
+            value = para.runs[0].text.strip()
+            label = "".join(r.text for r in para.runs[1:]).strip()
+        tile_left = Emu(int(left + i * (tile_w + gap)))
+        box = slide.shapes.add_textbox(tile_left, top, tile_w, Emu(int(bottom - top)))
+        tf = box.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        vp = tf.paragraphs[0]
+        vp.alignment = PP_ALIGN.CENTER
+        vr = vp.add_run()
+        vr.text = value
+        vr.font.size = Pt(44)
+        vr.font.bold = True
+        if body_font:
+            vr.font.name = body_font
+        if accent:
+            vr.font.color.rgb = accent
+        if label:
+            lp = tf.add_paragraph()
+            lp.alignment = PP_ALIGN.CENTER
+            lr = lp.add_run()
+            lr.text = label
+            lr.font.size = Pt(14)
+            if body_font:
+                lr.font.name = body_font
+            if muted:
+                lr.font.color.rgb = muted
+
+
+def _render_image_slide(prs, slide, s, images, theme) -> None:
+    from pptx.enum.text import PP_ALIGN
+
+    left, top, width, bottom = _body_area(prs, s.title is not None)
+    caption_paras = [p for p in s.paras if _para_text(p).strip()]
+    caption_h = Inches(0.45) if caption_paras else Inches(0)
+    area_h = Emu(int(bottom - top - caption_h))
+
+    pictures: list[tuple[Any, int, int]] = []
+    for idx, _c in s.images:
+        if idx < len(images):
+            png, w_px, h_px = images[idx]
+            pictures.append((BytesIO(png), w_px, h_px))
+    for path, _c in s.files:
+        w_px, h_px = _image_size(path)
+        pictures.append((str(path), w_px, h_px))
+
+    if pictures:
+        # Side-by-side when multiple pictures; each centred in its slot.
+        n = len(pictures)
+        slot_w = Emu(int(width / n))
+        for i, (source, w_px, h_px) in enumerate(pictures):
+            slot_left = Emu(int(left + i * slot_w))
+            disp_w = min(Emu(w_px * _EMU_PER_PX), Emu(int(slot_w - Inches(0.2))))
+            disp_h = Emu(int(disp_w * h_px / max(w_px, 1)))
+            if disp_h > area_h:
+                disp_h = area_h
+                disp_w = Emu(int(disp_h * w_px / max(h_px, 1)))
+            x = Emu(int(slot_left + (slot_w - disp_w) / 2))
+            y = Emu(int(top + (area_h - disp_h) / 2))
+            slide.shapes.add_picture(source, x, y, width=disp_w, height=disp_h)
+
+    if caption_paras:
+        box = slide.shapes.add_textbox(left, Emu(int(bottom - caption_h)), width, caption_h)
+        _fill_text_frame(box.text_frame, caption_paras, theme, scale=14.0 / _BODY_PT)
+        for p in box.text_frame.paragraphs:
+            p.alignment = PP_ALIGN.CENTER
+
+
+def _render_center_slide(prs, slide, s, images, theme) -> None:
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+
+    left, top, width, bottom = _body_area(prs, s.title is not None)
+    if s.paras:
+        box = slide.shapes.add_textbox(left, top, width, Emu(int(bottom - top)))
+        tf = box.text_frame
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        _fill_text_frame(tf, s.paras, theme, align=PP_ALIGN.CENTER)
+
+
 def _render_slide(
     prs: Presentation,
     s: _Slide,
@@ -446,6 +835,7 @@ def _render_slide(
 ) -> None:
     if s.kind == "title":
         slide = prs.slides.add_slide(title_layout)
+        theme = _apply_background(slide, s, theme)
         slide.shapes.title.text = s.title or "Presentation"
         _style_title(slide.shapes.title, theme, 1)
         # subtitle placeholder (idx 1) → any body paras (author/date/product)
@@ -456,6 +846,7 @@ def _render_slide(
 
     if s.kind == "section":
         slide = prs.slides.add_slide(section_layout)
+        theme = _apply_background(slide, s, theme)
         slide.shapes.title.text = s.title or ""
         _style_title(slide.shapes.title, theme, 1)
         # Any content that followed the H1 before the next heading goes in body.
@@ -466,46 +857,24 @@ def _render_slide(
 
     # content slide — Title Only layout + a manually laid-out body region
     slide = prs.slides.add_slide(content_layout)
+    theme = _apply_background(slide, s, theme)
     if slide.shapes.title is not None:
         slide.shapes.title.text = s.title or ""
         _style_title(slide.shapes.title, theme, 2)  # content titles come from H2
 
-    margin = Inches(0.6)
-    top = Inches(1.6)
-    width = prs.slide_width - margin * 2
-    bottom = prs.slide_height - Inches(0.4)
-    cursor = top
-
-    if s.paras:
-        # Rough height estimate: ~0.3" per paragraph/line.
-        est = Emu(int(Inches(0.34).emu * max(len(s.paras), 1)))
-        box = slide.shapes.add_textbox(margin, cursor, width, min(est, bottom - cursor))
-        _fill_text_frame(box.text_frame, s.paras, theme)
-        cursor = Emu(cursor + est + Inches(0.1))
-
-    for rows in s.tables:
-        if cursor >= bottom:
-            break
-        h = _add_table(slide, rows, margin, cursor, width, theme)
-        cursor = Emu(cursor + h + Inches(0.2))
-
-    for idx in s.images:
-        if idx >= len(images) or cursor >= bottom:
-            continue
-        png, w_px, h_px = images[idx]
-        cursor = _place_picture(slide, BytesIO(png), w_px, h_px, margin, cursor, width, bottom)
-
-    for path in s.files:
-        if cursor >= bottom:
-            break
-        try:
-            from PIL import Image
-
-            with Image.open(path) as im:
-                w_px, h_px = im.width, im.height
-        except Exception:
-            w_px, h_px = 800, 600
-        cursor = _place_picture(slide, str(path), w_px, h_px, margin, cursor, width, bottom)
+    if s.layout == "columns":
+        _render_columns_slide(prs, slide, s, images, theme)
+    elif s.layout == "quote":
+        _render_quote_slide(prs, slide, s, theme)
+    elif s.layout == "stat":
+        _render_stat_slide(prs, slide, s, theme)
+    elif s.layout == "image":
+        _render_image_slide(prs, slide, s, images, theme)
+    elif s.layout == "center":
+        _render_center_slide(prs, slide, s, images, theme)
+    else:
+        left, top, width, bottom = _body_area(prs, True)
+        _render_body_region(slide, s, None, images, theme, left, top, width, bottom)
 
     _attach_notes(slide, s)
 
@@ -566,11 +935,14 @@ def build(
     # Convert Markdown → HTML, splitting on explicit slide markers first.
     # ([[field]] markers are a Word-only mechanism; markdown leaves them as
     # literal text, which is the right behaviour for slides.)
+    # Slide/col directives must sit on their own block so markdown emits them
+    # as top-level comments (a directive glued to a paragraph would be inline).
+    body = _BLOCK_COMMENT_RE.sub(lambda m: f"\n\n{m.group(0)}\n\n", body)
     body = _SLIDE_BREAK_RE.sub('\n\n<hr class="md-doc-slide-break">\n\n', body)
     html = markdown.Markdown(extensions=_MD_EXTENSIONS).convert(body)
 
     # Theme (colours + fonts from the CSS cascade) + mermaid diagram theme.
-    theme = resolve_docx_theme(doc_path, repo_root) if (doc_path and repo_root) else {}
+    theme = resolve_docx_theme(doc_path, repo_root, config) if (doc_path and repo_root) else {}
     theme = theme or {}
     mermaid_theme = None
     try:

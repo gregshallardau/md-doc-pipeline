@@ -324,6 +324,12 @@ def _expand_form_fields(md_content: str, is_form: bool) -> str:
 _BLOCK_TAG = r"(?:p|pre|ul|ol|table|blockquote|div|dl)"
 _BLOCK_RE = re.compile(rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL)
 
+# Forced page-break markers must never be pulled into a keep-together
+# container: a forced break inside break-inside:avoid makes WeasyPrint push
+# the whole container to a fresh page (stranding the heading alone) and can
+# emit an entirely blank page.
+_BREAK_DIV_MARKERS = ("md-doc-page-break", "appendix-template-break")
+
 
 def _keep_heading_with_next(html_body: str) -> str:
     """Wrap each heading + up to two following block elements in a keep-together div.
@@ -343,6 +349,17 @@ def _keep_heading_with_next(html_body: str) -> str:
             heading = parts[i]
             tail = parts[i + 1] if i + 1 < len(parts) else ""
             blocks = _BLOCK_RE.findall(tail)
+            # Stop collecting at the first forced page-break div.
+            cut = next(
+                (
+                    idx
+                    for idx, blk in enumerate(blocks)
+                    if any(marker in blk for marker in _BREAK_DIV_MARKERS)
+                ),
+                None,
+            )
+            if cut is not None:
+                blocks = blocks[:cut]
             if len(blocks) >= 2:
                 rest = tail[
                     tail.index(blocks[0])
@@ -560,6 +577,7 @@ def _build_html(
 
     section_bar_style = _build_section_bar_style(full_config or {})
     table_col_widths_style = _build_table_col_widths_style(full_config or {})
+    body_align_style = _build_body_align_style(full_config or {})
     page_bar_html, page_bar_css = _build_page_header_bar_elements(
         page_header_bar,
         header_text=header_text,
@@ -571,8 +589,21 @@ def _build_html(
     footer_style = _build_footer_style(footer_left, footer_center, footer_right)
 
     cover_html = ""
+    cover_support_style = ""
     if cover_page:
         cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri, primary_color=primary_color)}"
+        # Behaviour classes the cover HTML emits (cover_text_align,
+        # cover_footer_line) — injected here rather than relying on the theme
+        # file so pre-existing generated themes honour these config keys too.
+        cover_support_style = (
+            "<style>\n"
+            ".cover-align-right { text-align: right; }\n"
+            ".cover-align-right .cover-divider { margin-left: auto; }\n"
+            ".cover-align-center { text-align: center; }\n"
+            ".cover-align-center .cover-divider { margin-left: auto; margin-right: auto; }\n"
+            ".cover-footer-no-line { border-top: none !important; padding-top: 0; }\n"
+            "</style>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -584,6 +615,8 @@ def _build_html(
   {footer_style}
   {section_bar_style}
   {table_col_widths_style}
+  {body_align_style}
+  {cover_support_style}
   {page_bar_css}
 </head>
 <body>
@@ -796,6 +829,20 @@ def _build_table_col_widths_style(config: dict[str, Any]) -> str:
         )
     lines.append("</style>")
     return "\n".join(lines)
+
+
+def _build_body_align_style(config: dict[str, Any]) -> str:
+    """Generate CSS for the ``body_text_align`` config key.
+
+    Mirrors the docx builder, where the key sets the default paragraph
+    alignment. Applied to the report-body container (not ``p`` directly) so
+    per-section ``<div style="text-align: …">`` overrides still win through
+    normal CSS inheritance — the same cascade order Word uses.
+    """
+    align = str(config.get("body_text_align", "")).strip().lower()
+    if align not in ("justify", "left", "center", "right"):
+        return ""
+    return f"<style>.report-body {{ text-align: {align}; }}</style>"
 
 
 def _build_page_header_bar_elements(
@@ -1062,9 +1109,13 @@ def build(
             "padding": config.get("page_header_bar_padding", "6mm"),
             "logos": phb_logos,
         }
-        if phb_logo_path and not header_logo_uri:
+        # The more-specific page_header_bar_logo wins over header_logo inside
+        # the bar (same precedence as the docx builder).
+        if phb_logo_path:
             header_logo_uri = phb_logo_path.as_uri()
-            header_logo_position = config.get("page_header_bar_logo_position", "right")
+            header_logo_position = config.get(
+                "page_header_bar_logo_position", config.get("header_logo_position", "right")
+            )
 
     if cover_page:
         body = _strip_leading_h1(body)

@@ -25,6 +25,7 @@ Use ``[[field_name]]`` in Markdown source alongside Jinja2 ``{{ }}``:
 
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 import shutil
@@ -42,6 +43,7 @@ from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
 
 from ..docx_theme import (
+    _apply_font_name,
     _hex_to_rgb,
     apply_theme_to_doc,
     patch_docx_theme_fonts,
@@ -49,7 +51,7 @@ from ..docx_theme import (
     set_cell_shading,
     set_para_shading,
 )
-from .pdf import _inject_page_breaks
+from .pdf import _inject_appendix_breaks, _inject_page_breaks
 from ._assets import (
     _EMU_PER_PX,
     _MERMAID_IMG_RE,
@@ -92,33 +94,54 @@ _MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
 # ---------------------------------------------------------------------------
 
 
-def _insert_hyperlink(paragraph: Any, text: str, url: str) -> None:
+def _bookmark_name(anchor: str) -> str:
+    """Sanitize an HTML anchor into a valid Word bookmark name.
+
+    Word bookmark names must start with a letter and contain only letters,
+    digits and underscores (footnote anchors like ``fn:1`` are invalid as-is).
+    Applied to both bookmark definitions and references so they stay in sync.
+    """
+    name = re.sub(r"[^0-9A-Za-z_]", "_", anchor)
+    if not name or not name[0].isalpha():
+        name = "a_" + name
+    return name[:40]
+
+
+def _insert_hyperlink(paragraph: Any, text: str, url: str, *, superscript: bool = False) -> None:
     """Append a clickable hyperlink to *paragraph*.
 
-    Display text is ``text (url)`` when text differs from url, or just ``url``
-    when they're the same (e.g. bare URL links). This keeps the URL visible
-    in printed output.
+    External links display as ``text (url)`` when text differs from url, or
+    just ``url`` when they're the same — keeping the URL visible in printed
+    output (the PDF does this with an ``::after`` rule). Internal ``#anchor``
+    links become bookmark jumps with no URL suffix, matching the PDF, which
+    suppresses the suffix for fragment links.
     """
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
     display = text.strip()
     url_clean = url.strip()
-    if display and display != url_clean:
-        display = f"{display} ({url_clean})"
-    else:
-        display = url_clean
-
-    part = paragraph.part
-    r_id = part.relate_to(url_clean, RT.HYPERLINK, is_external=True)
 
     hyperlink = OxmlElement("w:hyperlink")
-    hyperlink.set(qn("r:id"), r_id)
+    if url_clean.startswith("#"):
+        display = display or url_clean
+        hyperlink.set(qn("w:anchor"), _bookmark_name(url_clean[1:]))
+    else:
+        if display and display != url_clean:
+            display = f"{display} ({url_clean})"
+        else:
+            display = url_clean
+        r_id = paragraph.part.relate_to(url_clean, RT.HYPERLINK, is_external=True)
+        hyperlink.set(qn("r:id"), r_id)
 
     run = OxmlElement("w:r")
     rPr = OxmlElement("w:rPr")
     rStyle = OxmlElement("w:rStyle")
     rStyle.set(qn("w:val"), "Hyperlink")
     rPr.append(rStyle)
+    if superscript:
+        vert = OxmlElement("w:vertAlign")
+        vert.set(qn("w:val"), "superscript")
+        rPr.append(vert)
     run.append(rPr)
 
     t = OxmlElement("w:t")
@@ -288,10 +311,10 @@ def _render_cell_html(
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
-    Handles inline tags: strong/b (bold), em/i (italic), code (monospace).
-    Text (including ``[[field]]`` markers) is written via *write_text*, which
-    is the builder's ``_write_text`` method — ensuring field conversion and
-    bookmark tracking work identically to body text.
+    Handles inline tags: strong/b (bold), em/i (italic), code (monospace),
+    a (hyperlink), br. Text (including ``[[field]]`` markers) is written via
+    *write_text*, which is the builder's ``_write_text`` method — ensuring
+    field conversion and bookmark tracking work identically to body text.
     """
     from html.parser import HTMLParser as _HP
 
@@ -301,6 +324,8 @@ def _render_cell_html(
             self._bold = bold_override
             self._italic = False
             self._code = False
+            self._href: str | None = None
+            self._link_text = ""
 
         def handle_starttag(self, tag: str, attrs: list) -> None:
             tag = tag.lower()
@@ -310,6 +335,9 @@ def _render_cell_html(
                 self._italic = True
             elif tag == "code":
                 self._code = True
+            elif tag == "a":
+                self._href = dict(attrs).get("href") or ""
+                self._link_text = ""
             elif tag == "br":
                 br_run = paragraph.add_run()
                 br_run._r.append(OxmlElement("w:br"))
@@ -322,9 +350,20 @@ def _render_cell_html(
                 self._italic = False
             elif tag == "code":
                 self._code = False
+            elif tag == "a":
+                if self._link_text:
+                    if self._href:
+                        _insert_hyperlink(paragraph, self._link_text, self._href)
+                    else:
+                        write_text(paragraph, self._link_text)
+                self._href = None
+                self._link_text = ""
 
         def handle_data(self, data: str) -> None:
             if not data:
+                return
+            if self._href is not None:
+                self._link_text += data
                 return
             write_text(paragraph, data, bold=self._bold, italic=self._italic, code=self._code)
 
@@ -383,16 +422,26 @@ class _DocxBuilder(HTMLParser):
         self._in_pre = False
         self._in_code = False
         self._in_blockquote = False
+        self._sup = False
+        self._sub = False
+        self._strike = False
         self._list_stack: list[str] = []
         self._list_counters: list[int] = []
+        # Loose-list handling: markdown wraps list-item text in <p> when items
+        # are separated by blank lines.  The first <p> inside an <li> must
+        # reuse the bullet/number paragraph the <li> created — replacing it
+        # would leave an empty bullet followed by unbulleted body text.
+        self._li_depth = 0
+        self._li_fresh = False
 
         # Table state — cells store raw inner HTML to preserve inline markup
         self._in_table = False
         self._in_cell = False  # True while cursor is inside a <th> or <td>
         self._in_th = False
-        self._table_rows: list[list[tuple[bool, str]]] = []
-        self._current_row: list[tuple[bool, str]] = []
+        self._table_rows: list[list[tuple[bool, str, str | None]]] = []
+        self._current_row: list[tuple[bool, str, str | None]] = []
         self._current_cell_html = ""
+        self._current_cell_align: str | None = None  # per-cell text-align from markdown :--:
         # Set by <!-- col-widths: 30, 70 --> comments; consumed by the next table
         self._next_table_col_widths: list[float] | None = None
         self._active_table_col_widths: list[float] | None = None
@@ -418,6 +467,32 @@ class _DocxBuilder(HTMLParser):
 
         # Section-bar state — the heading tag currently wearing a bar (or None)
         self._section_bar_active_tag: str | None = None
+
+        # Body-length baseline for page-break-before headings.  A heading that
+        # is the very first content element must not force a break (matching
+        # CSS, where a forced break at the top of a page collapses).  build()
+        # re-baselines this after the cover page is added.
+        self.mark_content_start()
+
+    def mark_content_start(self) -> None:
+        """Record the current body length as the start of report content."""
+        self._body_baseline = len(self.doc.element.body)
+
+    def _add_bookmark(self, paragraph: Any, anchor: str) -> None:
+        """Insert a Word bookmark named after *anchor* into *paragraph*.
+
+        Targets for internal ``#anchor`` hyperlinks (headings, footnote
+        definitions, footnote references).
+        """
+        name = _bookmark_name(anchor)
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), str(self._bookmark_id))
+        start.set(qn("w:name"), name)
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), str(self._bookmark_id))
+        self._bookmark_id += 1
+        paragraph._p.append(start)
+        paragraph._p.append(end)
 
     # ------------------------------------------------------------------
     # Alignment helpers
@@ -512,6 +587,45 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = self.doc.add_paragraph()
         return self._paragraph
 
+    def _style_inline_run(
+        self,
+        run: Any,
+        *,
+        bold: bool = False,
+        italic: bool = False,
+        code: bool = False,
+        sup: bool = False,
+        sub: bool = False,
+        strike: bool = False,
+    ) -> None:
+        """Apply inline formatting + theme colours to a text run."""
+        if bold:
+            run.bold = True
+            col = self._theme.get("color_strong")
+            if col:
+                r, g, b = _hex_to_rgb(col)
+                run.font.color.rgb = RGBColor(r, g, b)
+        if italic:
+            run.italic = True
+            if not bold:
+                col = self._theme.get("color_em")
+                if col:
+                    r, g, b = _hex_to_rgb(col)
+                    run.font.color.rgb = RGBColor(r, g, b)
+        if code:
+            run.font.name = self._theme.get("font_code", "Courier New")
+            run.font.size = Pt(self._theme.get("font_size_code", 9.0))
+            col = self._theme.get("color_code")
+            if col:
+                r, g, b = _hex_to_rgb(col)
+                run.font.color.rgb = RGBColor(r, g, b)
+        if sup:
+            run.font.superscript = True
+        if sub:
+            run.font.subscript = True
+        if strike:
+            run.font.strike = True
+
     def _write_text(
         self,
         paragraph: Any,
@@ -520,12 +634,17 @@ class _DocxBuilder(HTMLParser):
         bold: bool = False,
         italic: bool = False,
         code: bool = False,
+        sup: bool = False,
+        sub: bool = False,
+        strike: bool = False,
     ) -> None:
         """Write *text* to *paragraph*, handling ``[[field]]`` markers when
         field_type is set, and converting bare ``\\n`` to Word line breaks.
         """
         if not text:
             return
+
+        fmt = dict(bold=bold, italic=italic, code=code, sup=sup, sub=sub, strike=strike)
 
         if self._field_type:
             # Field-aware path: split on [[field]] markers
@@ -540,27 +659,7 @@ class _DocxBuilder(HTMLParser):
                                 br_run = paragraph.add_run()
                                 br_run._r.append(OxmlElement("w:br"))
                             if line:
-                                run = paragraph.add_run(line)
-                                if bold:
-                                    run.bold = True
-                                    col = self._theme.get("color_strong")
-                                    if col:
-                                        r, g, b = _hex_to_rgb(col)
-                                        run.font.color.rgb = RGBColor(r, g, b)
-                                if italic:
-                                    run.italic = True
-                                    if not bold:
-                                        col = self._theme.get("color_em")
-                                        if col:
-                                            r, g, b = _hex_to_rgb(col)
-                                            run.font.color.rgb = RGBColor(r, g, b)
-                                if code:
-                                    run.font.name = self._theme.get("font_code", "Courier New")
-                                    run.font.size = Pt(self._theme.get("font_size_code", 9.0))
-                                    col = self._theme.get("color_code")
-                                    if col:
-                                        r, g, b = _hex_to_rgb(col)
-                                        run.font.color.rgb = RGBColor(r, g, b)
+                                self._style_inline_run(paragraph.add_run(line), **fmt)
                 else:
                     # Field marker
                     if self._field_type == "merge":
@@ -578,27 +677,7 @@ class _DocxBuilder(HTMLParser):
                     br_run = paragraph.add_run()
                     br_run._r.append(OxmlElement("w:br"))
                 if line:
-                    run = paragraph.add_run(line)
-                    if bold:
-                        run.bold = True
-                        col = self._theme.get("color_strong")
-                        if col:
-                            r, g, b = _hex_to_rgb(col)
-                            run.font.color.rgb = RGBColor(r, g, b)
-                    if italic:
-                        run.italic = True
-                        if not bold:
-                            col = self._theme.get("color_em")
-                            if col:
-                                r, g, b = _hex_to_rgb(col)
-                                run.font.color.rgb = RGBColor(r, g, b)
-                    if code:
-                        run.font.name = self._theme.get("font_code", "Courier New")
-                        run.font.size = Pt(self._theme.get("font_size_code", 9.0))
-                        col = self._theme.get("color_code")
-                        if col:
-                            r, g, b = _hex_to_rgb(col)
-                            run.font.color.rgb = RGBColor(r, g, b)
+                    self._style_inline_run(paragraph.add_run(line), **fmt)
 
     def _add_text(self, text: str) -> None:
         if not text:
@@ -611,12 +690,19 @@ class _DocxBuilder(HTMLParser):
             return
         if self._paragraph is None and not text.strip():
             return
+        # HTML formatting whitespace between <li> and its <p> (loose lists)
+        # must not become a line break at the start of the bullet paragraph.
+        if self._li_fresh and not text.strip() and not self._current_para().runs:
+            return
         self._write_text(
             self._current_para(),
             text,
             bold=self._bold,
             italic=self._italic,
             code=self._in_code,
+            sup=self._sup,
+            sub=self._sub,
+            strike=self._strike,
         )
 
     # ------------------------------------------------------------------
@@ -639,12 +725,41 @@ class _DocxBuilder(HTMLParser):
             self._new_para(f"Heading {int(tag[1])}")
             inline_align = self._parse_text_align(attrs)
             word_align = self._effective_alignment(inline_align)
-            if word_align is not None and self._paragraph is not None:
-                self._paragraph.alignment = word_align
+            if self._paragraph is not None:
+                if word_align is not None:
+                    self._paragraph.alignment = word_align
+                # Keep the heading on the same page as the content that follows
+                # (mirrors the PDF builder's keep-heading-with-next behaviour so
+                # headings don't strand at a page bottom in one format only).
+                self._paragraph.paragraph_format.keep_with_next = True
+                # Forced page break before this heading level (mirrors the PDF
+                # theme's `.report-body h1 { page-break-before: always }`).
+                # Skipped for the first content element — a forced break at the
+                # top of a page collapses in CSS, so Word must not add one.
+                if self._theme.get(f"page_break_before_{tag}") and (
+                    len(self.doc.element.body) - self._body_baseline > 1
+                ):
+                    self._paragraph.paragraph_format.page_break_before = True
+                # Headings carry id attrs (toc extension) — bookmark them so
+                # [TOC] and internal #links can jump to them like in the PDF.
+                heading_id = dict(attrs).get("id")
+                if heading_id:
+                    self._add_bookmark(self._paragraph, heading_id)
             self._apply_section_bar_start(tag)
 
         elif tag == "p":
-            self._new_para("Normal")
+            if self._li_depth and self._li_fresh and self._paragraph is not None:
+                # Loose list (<li><p>…</p></li>): keep the bullet/number
+                # paragraph the <li> just created.
+                self._li_fresh = False
+            elif self._li_depth and not self._in_blockquote:
+                # Later paragraphs of the same list item — indented
+                # continuation text under the bullet.
+                self._new_para("Normal")
+                depth = max(len(self._list_stack), 1)
+                self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
+            else:
+                self._new_para("Normal")
             inline_align = self._parse_text_align(attrs)
             word_align = self._effective_alignment(inline_align)
             if word_align is not None and self._paragraph is not None:
@@ -669,10 +784,11 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
-            class_attr = dict(attrs).get("class") or ""
-            if "md-doc-page-break" in class_attr.split():
-                # Emit a real Word page break.  The marker div has no content
-                # so nothing else needs to be rendered for it.
+            classes = (dict(attrs).get("class") or "").split()
+            # Both the explicit <!-- pagebreak --> marker and the APPENDIX
+            # auto-break marker (shared with the PDF builder) emit a real Word
+            # page break so the two formats break at the same points.
+            if "md-doc-page-break" in classes or "appendix-template-break" in classes:
                 self.doc.add_page_break()
 
         elif tag == "a":
@@ -693,11 +809,29 @@ class _DocxBuilder(HTMLParser):
                     self._paragraph = self.doc.add_paragraph(style="List Number")
             else:
                 self._new_para("List Bullet")
+            self._li_depth += 1
+            self._li_fresh = True
             # Indent nested list items so depth is visible (the base list styles
             # only indent one level, matching CSS nested-list indentation).
             depth = max(len(self._list_stack), 1)
             if depth > 1 and self._paragraph is not None:
                 self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
+            # Footnote definitions carry id="fn:N" — bookmark them so the
+            # in-text reference links can jump here.
+            li_id = dict(attrs).get("id")
+            if li_id and self._paragraph is not None:
+                self._add_bookmark(self._paragraph, li_id)
+
+        elif tag == "dt":
+            # Definition-list term — a bold Normal paragraph.
+            self._new_para("Normal")
+            self._bold = True
+
+        elif tag == "dd":
+            # Definition-list description — indented Normal paragraph.
+            self._new_para("Normal")
+            if self._paragraph is not None:
+                self._paragraph.paragraph_format.left_indent = Pt(18)
 
         elif tag == "pre":
             self._in_pre = True
@@ -717,6 +851,20 @@ class _DocxBuilder(HTMLParser):
 
         elif tag in ("em", "i"):
             self._italic = True
+
+        elif tag == "sup":
+            self._sup = True
+            # Footnote references carry id="fnref:N" — bookmark them so the
+            # ↩ back-reference in the footnote list can jump back.
+            sup_id = dict(attrs).get("id")
+            if sup_id and self._paragraph is not None:
+                self._add_bookmark(self._paragraph, sup_id)
+
+        elif tag == "sub":
+            self._sub = True
+
+        elif tag in ("del", "s", "strike"):
+            self._strike = True
 
         elif tag == "br":
             run = self._current_para().add_run()
@@ -764,6 +912,9 @@ class _DocxBuilder(HTMLParser):
             self._in_th = tag == "th"
             self._in_cell = True
             self._current_cell_html = ""
+            # Markdown column alignment (:--:, --:) arrives as an inline
+            # style="text-align: …" on the cell — capture it for _flush_table.
+            self._current_cell_align = self._parse_text_align(attrs)
 
     def handle_endtag(self, tag: str) -> None:
         if self._tag_stack and self._tag_stack[-1] == tag:
@@ -808,6 +959,15 @@ class _DocxBuilder(HTMLParser):
             self._paragraph = None
 
         elif tag == "li":
+            self._li_depth = max(0, self._li_depth - 1)
+            self._li_fresh = False
+            self._paragraph = None
+
+        elif tag == "dt":
+            self._bold = False
+            self._paragraph = None
+
+        elif tag == "dd":
             self._paragraph = None
 
         elif tag == "pre":
@@ -836,6 +996,9 @@ class _DocxBuilder(HTMLParser):
                 ind.set(qn("w:left"), str(int(10 * 20)))  # 10pt indent
             para.paragraph_format.space_before = Pt(6)
             para.paragraph_format.space_after = Pt(10)
+            # Keep the whole code block on one page (mirrors the PDF theme's
+            # `pre { page-break-inside: avoid }`).
+            para.paragraph_format.keep_together = True
             run = para.add_run(self._pre_text.strip())
             run.font.name = pre_font
             run.font.size = Pt(pre_size)
@@ -859,7 +1022,12 @@ class _DocxBuilder(HTMLParser):
         elif tag == "a":
             if self._link_text_buf and self._paragraph is not None:
                 if self._current_href:
-                    _insert_hyperlink(self._current_para(), self._link_text_buf, self._current_href)
+                    _insert_hyperlink(
+                        self._current_para(),
+                        self._link_text_buf,
+                        self._current_href,
+                        superscript=self._sup,
+                    )
                 else:
                     self._write_text(self._current_para(), self._link_text_buf)
             self._current_href = None
@@ -871,9 +1039,20 @@ class _DocxBuilder(HTMLParser):
         elif tag in ("em", "i"):
             self._italic = False
 
+        elif tag == "sup":
+            self._sup = False
+
+        elif tag == "sub":
+            self._sub = False
+
+        elif tag in ("del", "s", "strike"):
+            self._strike = False
+
         elif tag in ("th", "td"):
             if self._in_table:
-                self._current_row.append((self._in_th, self._current_cell_html))
+                self._current_row.append(
+                    (self._in_th, self._current_cell_html, self._current_cell_align)
+                )
             self._in_cell = False
 
         elif tag == "tr":
@@ -1075,7 +1254,12 @@ class _DocxBuilder(HTMLParser):
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
             n_row_cells = len(row_cells)
-            for c_idx, (is_header, cell_html) in enumerate(row_cells):
+            # Keep each row on one page (mirrors the PDF theme's
+            # `tr { page-break-inside: avoid }`).
+            trPr = table.rows[r_idx]._tr.get_or_add_trPr()
+            if trPr.find(qn("w:cantSplit")) is None:
+                trPr.append(OxmlElement("w:cantSplit"))
+            for c_idx, (is_header, cell_html, cell_align) in enumerate(row_cells):
                 if c_idx >= max_cols:
                     break
                 cell = table.cell(r_idx, c_idx)
@@ -1099,13 +1283,15 @@ class _DocxBuilder(HTMLParser):
                     para, cell_html.strip(), self._theme, self._write_text, bold_override=is_header
                 )
 
-                # Apply alignment to cell paragraphs — Word table cells don't
-                # inherit document-level/div alignment the way body text does,
-                # so resolve through the same cascade (div > body_text_align).
-                if not is_header:
-                    word_align = self._effective_alignment()
-                    if word_align is not None:
-                        para.alignment = word_align
+                # Apply alignment — the cell's own text-align (markdown column
+                # alignment, :--:/--:) wins; body cells otherwise resolve
+                # through the div > body_text_align cascade (Word table cells
+                # don't inherit document-level alignment the way body text does).
+                word_align = self._effective_alignment(cell_align)
+                if cell_align is None and is_header:
+                    word_align = None  # headers keep Word's default unless explicit
+                if word_align is not None:
+                    para.alignment = word_align
 
                 # Apply body font explicitly (Word table cells don't always inherit Normal)
                 if font_body:
@@ -1171,20 +1357,273 @@ class _DocxBuilder(HTMLParser):
 # ---------------------------------------------------------------------------
 
 
-def _setup_page(doc: Document) -> None:
-    """Set A4 page size and margins matching the default PDF layout."""
+# Named page sizes in mm, portrait (w, h) — matches WeasyPrint/CSS @page sizes.
+_PAGE_SIZES_MM = {
+    "a3": (297.0, 420.0),
+    "a4": (210.0, 297.0),
+    "a5": (148.0, 210.0),
+    "letter": (215.9, 279.4),
+    "legal": (215.9, 355.6),
+}
+# Default geometry (A4 + PDF theme margins), used when no @page is found.
+_DEFAULT_GEOMETRY = {
+    "w": 210.0,
+    "h": 297.0,
+    "top": 25.0,
+    "right": 20.0,
+    "bottom": 22.0,
+    "left": 25.0,
+}
+
+
+def _length_to_mm(token: str) -> float | None:
+    """Convert a CSS length (mm/cm/in/pt/px) to mm."""
+    m = re.match(r"^([\d.]+)\s*(mm|cm|in|pt|px)?$", token.strip())
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(2) or "mm"
+    return {
+        "mm": val,
+        "cm": val * 10,
+        "in": val * 25.4,
+        "pt": val * 25.4 / 72,
+        "px": val * 25.4 / 96,
+    }[unit]
+
+
+def _page_geometry(css_text: str | None) -> dict[str, float]:
+    """Parse the ``@page { size; margin }`` from theme CSS into mm geometry.
+
+    Mirrors the PDF's page so docx uses the same paper size and margins (and
+    therefore the same text width → consistent pagination). Falls back to A4 +
+    the standard margins when absent.
+    """
+    geom = dict(_DEFAULT_GEOMETRY)
+    if not css_text:
+        return geom
+    block = re.search(r"@page\s*\{([^}]*)\}", css_text, re.IGNORECASE)
+    if not block:
+        return geom
+    body = block.group(1)
+
+    size_m = re.search(r"size:\s*([^;]+);", body, re.IGNORECASE)
+    if size_m:
+        tokens = size_m.group(1).lower().split()
+        named = next((t for t in tokens if t in _PAGE_SIZES_MM), None)
+        if named:
+            w, h = _PAGE_SIZES_MM[named]
+            if "landscape" in tokens:
+                w, h = h, w
+            geom["w"], geom["h"] = w, h
+        else:
+            lengths = [_length_to_mm(t) for t in tokens]
+            lengths = [x for x in lengths if x is not None]
+            if len(lengths) >= 2:
+                geom["w"], geom["h"] = lengths[0], lengths[1]
+
+    margin_m = re.search(r"margin:\s*([^;]+);", body, re.IGNORECASE)
+    if margin_m:
+        vals = [_length_to_mm(t) for t in margin_m.group(1).split()]
+        vals = [v for v in vals if v is not None]
+        if len(vals) == 1:
+            geom["top"] = geom["right"] = geom["bottom"] = geom["left"] = vals[0]
+        elif len(vals) == 2:
+            geom["top"] = geom["bottom"] = vals[0]
+            geom["right"] = geom["left"] = vals[1]
+        elif len(vals) == 3:
+            geom["top"], geom["right"], geom["bottom"] = vals[:3]
+            geom["left"] = vals[1]
+        elif len(vals) >= 4:
+            geom["top"], geom["right"], geom["bottom"], geom["left"] = vals[:4]
+    return geom
+
+
+def _setup_page(doc: Document, geometry: dict[str, float] | None = None) -> None:
+    """Set page size and margins to match the PDF layout (from theme @page)."""
+    g = geometry or _DEFAULT_GEOMETRY
     section = doc.sections[0]
-    section.page_width = Mm(210)
-    section.page_height = Mm(297)
-    section.left_margin = Mm(25)
-    section.right_margin = Mm(20)
-    section.top_margin = Mm(25)
-    section.bottom_margin = Mm(22)
+    section.page_width = Mm(g["w"])
+    section.page_height = Mm(g["h"])
+    section.top_margin = Mm(g["top"])
+    section.right_margin = Mm(g["right"])
+    section.bottom_margin = Mm(g["bottom"])
+    section.left_margin = Mm(g["left"])
 
 
 # ---------------------------------------------------------------------------
 # Cover page
 # ---------------------------------------------------------------------------
+
+
+_TWIPS_PER_MM = 1440 / 25.4
+
+
+def _cfg_mm(value: Any, default_mm: float) -> float:
+    """Parse a config length (e.g. ``"10mm"``, ``"1cm"``) to mm."""
+    if value is None:
+        return default_mm
+    mm = _length_to_mm(str(value))
+    return mm if mm is not None else default_mm
+
+
+def _set_para_mark_size(paragraph: Any, half_points: int = 2) -> None:
+    """Shrink a paragraph's mark so an empty paragraph takes ~no vertical space."""
+    pPr = paragraph._p.get_or_add_pPr()
+    rPr = pPr.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        pPr.append(rPr)
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), str(half_points))
+    rPr.append(sz)
+
+
+def _tiny_spacer(doc: Document) -> Any:
+    """Add a ~zero-height paragraph (separates consecutive floating tables)."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    _set_para_mark_size(p)
+    return p
+
+
+def _add_floating_table(
+    doc: Document,
+    *,
+    width_twips: int,
+    height_mm: float,
+    fill: str,
+    y_spec: str | None = None,
+    y_mm: float | None = None,
+    x_mm: float | None = None,
+    height_rule: str = "exact",
+    inline_indent_twips: int | None = None,
+) -> Any:
+    """Add a 1×1 borderless shaded table band for the cover page.
+
+    By default the band is floated to an absolute page position (used for the
+    top bar/stripe so they sit at the physical page edges the way the PDF
+    cover's full-bleed elements do, given ``@page cover { margin: 0 }``).
+    With *inline_indent_twips* the band stays in the normal flow instead and
+    bleeds into the margins via a negative table indent — used where the PDF
+    also lays the element out in flow (e.g. the bottom cover bar).
+    """
+    table = doc.add_table(rows=1, cols=1)
+    try:
+        table.style = "Table Normal"
+    except KeyError:
+        table.style = "Normal Table"
+    _clear_table_borders(table)
+
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+
+    if inline_indent_twips is None:
+        # Absolute page positioning (w:tblpPr) + allow overlap with other floats.
+        tblpPr = OxmlElement("w:tblpPr")
+        tblpPr.set(qn("w:horzAnchor"), "page")
+        tblpPr.set(qn("w:vertAnchor"), "page")
+        if x_mm is None:
+            tblpPr.set(qn("w:tblpXSpec"), "left")
+        else:
+            tblpPr.set(qn("w:tblpX"), str(max(1, round(x_mm * _TWIPS_PER_MM))))
+        if y_mm is not None:
+            tblpPr.set(qn("w:tblpY"), str(max(1, round(y_mm * _TWIPS_PER_MM))))
+        else:
+            tblpPr.set(qn("w:tblpYSpec"), y_spec or "top")
+        overlap = OxmlElement("w:tblOverlap")
+        overlap.set(qn("w:val"), "overlap")
+        tblStyle = tblPr.find(qn("w:tblStyle"))
+        if tblStyle is not None:
+            tblStyle.addnext(tblpPr)
+        else:
+            tblPr.insert(0, tblpPr)
+        tblpPr.addnext(overlap)
+    else:
+        tblInd = OxmlElement("w:tblInd")
+        tblInd.set(qn("w:w"), str(inline_indent_twips))
+        tblInd.set(qn("w:type"), "dxa")
+        tblPr.append(tblInd)
+
+    # Fixed layout at the exact requested width.
+    for old in tblPr.findall(qn("w:tblW")):
+        tblPr.remove(old)
+    tblW = OxmlElement("w:tblW")
+    tblW.set(qn("w:w"), str(width_twips))
+    tblW.set(qn("w:type"), "dxa")
+    tblPr.append(tblW)
+    for old in tblPr.findall(qn("w:tblLayout")):
+        tblPr.remove(old)
+    tblLayout = OxmlElement("w:tblLayout")
+    tblLayout.set(qn("w:type"), "fixed")
+    tblPr.append(tblLayout)
+
+    # Zero default cell margins so the shading fills the full band.
+    tblCellMar = OxmlElement("w:tblCellMar")
+    for side in ("top", "left", "bottom", "right"):
+        mar = OxmlElement(f"w:{side}")
+        mar.set(qn("w:w"), "0")
+        mar.set(qn("w:type"), "dxa")
+        tblCellMar.append(mar)
+    tblPr.append(tblCellMar)
+
+    for old_grid in tbl.findall(qn("w:tblGrid")):
+        tbl.remove(old_grid)
+    tblGrid = OxmlElement("w:tblGrid")
+    gridCol = OxmlElement("w:gridCol")
+    gridCol.set(qn("w:w"), str(width_twips))
+    tblGrid.append(gridCol)
+    tbl.insert(list(tbl).index(tblPr) + 1, tblGrid)
+
+    tr = table.rows[0]._tr
+    trPr = tr.get_or_add_trPr()
+    trHeight = OxmlElement("w:trHeight")
+    trHeight.set(qn("w:val"), str(max(1, int(Mm(height_mm).pt * 20))))
+    trHeight.set(qn("w:hRule"), height_rule)
+    trPr.append(trHeight)
+
+    cell = table.rows[0].cells[0]
+    set_cell_shading(cell, fill)
+    tcPr = cell._tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn("w:tcW")):
+        tcPr.remove(old)
+    tcW_el = OxmlElement("w:tcW")
+    tcW_el.set(qn("w:w"), str(width_twips))
+    tcW_el.set(qn("w:type"), "dxa")
+    tcPr.append(tcW_el)
+    tcBorders = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"), "none")
+        tcBorders.append(b)
+    tcPr.append(tcBorders)
+    vAlign = OxmlElement("w:vAlign")
+    vAlign.set(qn("w:val"), "center")
+    tcPr.append(vAlign)
+    p0 = cell.paragraphs[0]
+    p0.paragraph_format.space_before = Pt(0)
+    p0.paragraph_format.space_after = Pt(0)
+    _set_para_mark_size(p0)
+
+    return table
+
+
+def _set_cell_margins_mm(cell: Any, top: float, right: float, bottom: float, left: float) -> None:
+    """Set explicit tcMar margins (mm) on a table cell."""
+    tcPr = cell._tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn("w:tcMar")):
+        tcPr.remove(old)
+    tcMar = OxmlElement("w:tcMar")
+    for side, mm_val in (("top", top), ("left", left), ("bottom", bottom), ("right", right)):
+        mar = OxmlElement(f"w:{side}")
+        mar.set(qn("w:w"), str(max(0, round(mm_val * _TWIPS_PER_MM))))
+        mar.set(qn("w:type"), "dxa")
+        tcMar.append(mar)
+    tcPr.append(tcMar)
 
 
 def _add_docx_cover_page(
@@ -1195,140 +1634,309 @@ def _add_docx_cover_page(
 ) -> None:
     """Insert a styled cover page for .docx output, then a page break.
 
-    Approximates the PDF cover design: coloured top bar, cover label, title,
-    thin divider, and metadata (author / date).
+    Mirrors the PDF cover design element for element: full-bleed coloured
+    bar(s) at the physical page top/bottom, optional accent stripe and logo,
+    cover label, title, short divider rule, metadata (author / date) and a
+    footer positioned ~14mm from the page bottom — matching the geometry of
+    the PDF's ``@page cover { margin: 0 }`` + ``.cover-content`` padding.
     """
     title = config.get("title", "")
     author = config.get("author", "")
     date_str = config.get("date", "")
-    product = config.get("product", "")
     label = str(config.get("cover_label", "Report"))
     show_bar = bool(config.get("cover_bar", True))
+    bar_pos = str(config.get("cover_bar_position", "top")).lower()
+    bar_h = _cfg_mm(config.get("cover_bar_height"), 10.0)
+    bar_top_h = _cfg_mm(config.get("cover_bar_top_height"), bar_h)
+    bar_bot_h = _cfg_mm(config.get("cover_bar_bottom_height"), bar_h)
+    show_stripe = bool(config.get("cover_stripe", False))
+    stripe_h = _cfg_mm(config.get("cover_stripe_height"), 120.0)
+    stripe_w = _cfg_mm(config.get("cover_stripe_width"), 6.0)
+    text_on_bar = bool(config.get("cover_text_on_bar", False))
     show_divider = bool(config.get("cover_divider", True))
     show_footer = bool(config.get("cover_footer", True))
-    bar_height_str = str(config.get("cover_bar_height", "10mm"))
+    show_footer_line = bool(config.get("cover_footer_line", True))
     footer_text = config.get("cover_footer_text") or (
         f"{author}  ·  Confidential" if author else ""
     )
     meta_label = str(config.get("cover_meta_label", "Prepared by"))
     meta_author = str(config.get("cover_meta_author", author))
 
-    bar_color = (theme.get("color_table_header_bg") or theme.get("color_h1") or "1b4f72").lstrip(
+    # Match the PDF cover: bar + title + divider use $primary (color_h1); the
+    # label uses the accent (color_h2); meta value is muted grey with a
+    # body-coloured bold label.
+    primary = (theme.get("color_h1") or theme.get("color_table_header_bg") or "1b4f72").lstrip("#")
+    bar_color = primary
+    title_color = primary
+    accent = (theme.get("color_h2") or theme.get("color_h1") or "2e86c1").lstrip("#")
+    label_color = accent
+    divider_color = primary  # .cover-divider { border-top: 3pt solid $primary }
+    meta_label_color = (theme.get("color_body") or theme.get("color_strong") or "212529").lstrip(
         "#"
     )
-    label_color = (theme.get("color_h2") or theme.get("color_h1") or "2e86c1").lstrip("#")
-    bar_mm = float(re.sub(r"[^\d.]", "", bar_height_str) or "10")
+    meta_value_color = (theme.get("color_em") or "5d6d7e").lstrip("#")
+    font_body = theme.get("font_body")
+    text_align = str(config.get("cover_text_align", "left")).lower()
+    para_align = {
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+    }.get(text_align, WD_ALIGN_PARAGRAPH.LEFT)
 
-    # 1. Coloured top bar — full page width, bleeds into margins
-    if show_bar:
-        section = doc.sections[0]
-        left_margin = section.left_margin
-        page_width = section.page_width
-        # Twips: 1 EMU = 1/635 twips
-        page_twips = round(page_width / 635)
-        left_twips = round(left_margin / 635)
+    section = doc.sections[0]
+    page_w_mm = section.page_width / 36000
+    page_h_mm = section.page_height / 36000
+    top_margin_mm = section.top_margin / 36000
+    text_width_mm = (section.page_width - section.left_margin - section.right_margin) / 36000
+    page_twips = round(section.page_width / 635)
 
-        bar_tbl = doc.add_table(rows=1, cols=1)
-        _clear_table_borders(bar_tbl)
+    has_top_bar = show_bar and bar_pos in ("top", "both")
+    has_bottom_bar = show_bar and bar_pos in ("bottom", "both")
 
-        # Set table width to full page width
-        tbl = bar_tbl._tbl
-        tblPr = tbl.find(qn("w:tblPr"))
-        if tblPr is None:
-            tblPr = OxmlElement("w:tblPr")
-            tbl.insert(0, tblPr)
-        for old in tblPr.findall(qn("w:tblW")):
-            tblPr.remove(old)
-        tblW = OxmlElement("w:tblW")
-        tblW.set(qn("w:w"), str(page_twips))
-        tblW.set(qn("w:type"), "dxa")
-        tblPr.append(tblW)
-        # Negative left indent to bleed into left margin
-        tblInd = OxmlElement("w:tblInd")
-        tblInd.set(qn("w:w"), str(-left_twips))
-        tblInd.set(qn("w:type"), "dxa")
-        tblPr.append(tblInd)
-        tr = bar_tbl.rows[0]._tr
-        trPr = tr.get_or_add_trPr()
-        trHeight = OxmlElement("w:trHeight")
-        trHeight.set(qn("w:val"), str(int(Mm(bar_mm).pt * 20)))
-        trHeight.set(qn("w:hRule"), "exact")
-        trPr.append(trHeight)
-        cell = bar_tbl.rows[0].cells[0]
-        set_cell_shading(cell, bar_color)
-        tcPr = cell._tc.get_or_add_tcPr()
-        tcBorders = OxmlElement("w:tcBorders")
-        for side in ("top", "left", "bottom", "right"):
-            b = OxmlElement(f"w:{side}")
-            b.set(qn("w:val"), "none")
-            tcBorders.append(b)
-        tcPr.append(tcBorders)
-        cell.paragraphs[0].paragraph_format.space_before = Pt(0)
-        cell.paragraphs[0].paragraph_format.space_after = Pt(0)
+    # 1. Full-bleed bars + accent stripe, floated to absolute page positions
+    #    (the PDF cover has margin: 0, so its bars touch the physical edges).
+    if has_top_bar and not text_on_bar:
+        _add_floating_table(
+            doc, width_twips=page_twips, height_mm=bar_top_h, fill=bar_color, y_spec="top"
+        )
+        _tiny_spacer(doc)
 
-    # 2. Cover label (e.g. "REPORT")
+    if show_stripe:
+        stripe_y = bar_top_h if has_top_bar else 10.0
+        _add_floating_table(
+            doc,
+            width_twips=max(1, round(stripe_w * _TWIPS_PER_MM)),
+            height_mm=stripe_h,
+            fill=accent,
+            y_mm=stripe_y,
+        )
+        _tiny_spacer(doc)
+
+    bar_logo_val = config.get("cover_bar_logo")
+    bar_logo_path = (
+        _resolve_asset(str(bar_logo_val), builder._doc_path, builder._repo_root)
+        if bar_logo_val
+        else None
+    )
+
+    # 2. Content container. Normally content flows in the body; with
+    #    cover_text_on_bar it sits inside the top bar itself (PDF wraps
+    #    .cover-content in .cover-bar-wrapper with the primary background).
+    container: Any = doc
+    first_space_before_pt = 0.0
+    base_indent_l_mm, base_indent_r_mm = 3.0, 10.0  # 28mm/30mm padding vs 25mm/20mm margins
+    avail_mm = text_width_mm - base_indent_l_mm - base_indent_r_mm
+    if text_on_bar and has_top_bar:
+        wrap_tbl = _add_floating_table(
+            doc,
+            width_twips=page_twips,
+            height_mm=bar_top_h,
+            fill=bar_color,
+            y_spec="top",
+            height_rule="atLeast",
+        )
+        wrap_cell = wrap_tbl.rows[0].cells[0]
+        # Mirror .cover-content { padding: 50mm 30mm 20mm 28mm; }
+        _set_cell_margins_mm(wrap_cell, top=50.0, right=30.0, bottom=20.0, left=28.0)
+        container = wrap_cell
+        base_indent_l_mm = base_indent_r_mm = 0.0
+        avail_mm = page_w_mm - 28.0 - 30.0
+        _tiny_spacer(doc)
+    else:
+        # .cover-content padding-top is 50mm below the top bar; subtract the
+        # section top margin since flow content starts there.
+        content_top_mm = (bar_top_h if has_top_bar else 0.0) + 50.0
+        first_space_before_pt = max(0.0, (content_top_mm - top_margin_mm) * 72.0 / 25.4)
+
+    used_first_cell_para = False
+
+    def _cover_para(space_before: float, space_after: float) -> Any:
+        nonlocal used_first_cell_para
+        if container is not doc and not used_first_cell_para:
+            used_first_cell_para = True
+            p = container.paragraphs[0]
+        else:
+            p = container.add_paragraph()
+        p.alignment = para_align
+        p.paragraph_format.space_before = Pt(space_before)
+        p.paragraph_format.space_after = Pt(space_after)
+        if base_indent_l_mm:
+            p.paragraph_format.left_indent = Mm(base_indent_l_mm)
+        if base_indent_r_mm:
+            p.paragraph_format.right_indent = Mm(base_indent_r_mm)
+        return p
+
+    pending_space_before = first_space_before_pt
+
+    # 3. Optional cover logo above the label (PDF: .cover-logo before .cover-label).
+    logo_val = config.get("cover_logo")
+    logo_path = (
+        _resolve_asset(str(logo_val), builder._doc_path, builder._repo_root) if logo_val else None
+    )
+    if logo_path:
+        lp = _cover_para(pending_space_before, 12)
+        pending_space_before = 0.0
+        run = lp.add_run()
+        try:
+            logo_w_emu: int | None = None
+            try:
+                from PIL import Image
+
+                with Image.open(logo_path) as im:
+                    logo_w_emu = int(im.width * _EMU_PER_PX)
+            except Exception:
+                logo_w_emu = None
+            max_w_emu = int(Mm(avail_mm))
+            if logo_w_emu:
+                run.add_picture(str(logo_path), width=Emu(min(logo_w_emu, max_w_emu)))
+            else:
+                run.add_picture(str(logo_path))
+        except Exception as exc:
+            logger.warning("docx cover logo embed failed: %s", exc)
+
+    # 4. Cover label (e.g. "REPORT") — small uppercase accent, tracked out.
+    #    PDF: .cover-label { 8.5pt / 700 / letter-spacing 2.5pt / 10mm below }.
     if label:
-        lp = doc.add_paragraph()
-        lp.paragraph_format.space_before = Pt(30)
-        lp.paragraph_format.space_after = Pt(0)
+        lp = _cover_para(pending_space_before, 28)  # 10mm ≈ 28pt below
+        pending_space_before = 0.0
         run = lp.add_run(label.upper())
         run.bold = True
         run.font.size = Pt(8.5)
+        if font_body:
+            _apply_font_name(run.font, font_body)
         r, g, b = _hex_to_rgb(label_color)
         run.font.color.rgb = RGBColor(r, g, b)
+        # Letter-spacing 2.5pt (val is in twentieths of a point).
+        rPr = run._r.get_or_add_rPr()
+        spacing = OxmlElement("w:spacing")
+        spacing.set(qn("w:val"), "50")
+        rPr.append(spacing)
 
-    # 3. Title
-    title_para = doc.add_paragraph(style="Title")
-    title_para.paragraph_format.space_before = Pt(10)
-    builder._write_text(title_para, title or "Document")
+    # 5. Title — large bold run in $primary using the body font (NOT the
+    #    built-in serif "Title" style, which looks nothing like the PDF).
+    #    PDF: .cover-title { 24pt / 700 / 8mm below }.
+    title_para = _cover_para(pending_space_before, 23)  # 8mm ≈ 23pt below
+    pending_space_before = 0.0
+    trun = title_para.add_run(title or "Document")
+    trun.bold = True
+    trun.font.size = Pt(24)
+    if font_body:
+        _apply_font_name(trun.font, font_body)
+    r, g, b = _hex_to_rgb(title_color)
+    trun.font.color.rgb = RGBColor(r, g, b)
 
-    # 4. Product subtitle
-    if product:
-        sub_para = doc.add_paragraph(style="Subtitle")
-        builder._write_text(sub_para, product)
-
-    # 5. Divider line (3pt, uses bar colour)
+    # 6. Short divider rule — 40mm, 3pt, $primary (PDF: .cover-divider).
+    #    A bottom-bordered empty paragraph, indented from the far side so the
+    #    rule is 40mm wide rather than full-width.
     if show_divider:
-        div_para = doc.add_paragraph()
-        div_para.paragraph_format.space_before = Pt(14)
-        div_para.paragraph_format.space_after = Pt(14)
-        pPr = div_para._p.get_or_add_pPr()
+        dp = _cover_para(0, 23)  # 8mm below
+        _set_para_mark_size(dp)
+        gap_mm = max(0.0, avail_mm - 40.0)
+        if para_align == WD_ALIGN_PARAGRAPH.RIGHT:
+            dp.paragraph_format.left_indent = Mm(base_indent_l_mm + gap_mm)
+        elif para_align == WD_ALIGN_PARAGRAPH.CENTER:
+            dp.paragraph_format.left_indent = Mm(base_indent_l_mm + gap_mm / 2)
+            dp.paragraph_format.right_indent = Mm(base_indent_r_mm + gap_mm / 2)
+        else:
+            dp.paragraph_format.right_indent = Mm(base_indent_r_mm + gap_mm)
+        pPr = dp._p.get_or_add_pPr()
         pBdr = OxmlElement("w:pBdr")
         bot = OxmlElement("w:bottom")
         bot.set(qn("w:val"), "single")
         bot.set(qn("w:sz"), "24")  # 3pt
         bot.set(qn("w:space"), "0")
-        bot.set(qn("w:color"), bar_color.upper())
+        bot.set(qn("w:color"), divider_color.upper())
         pBdr.append(bot)
         pPr.append(pBdr)
-    else:
-        doc.add_paragraph().paragraph_format.space_after = Pt(14)
 
-    # 6. Author / date metadata
+    # 7. Author / date metadata — bold body-coloured label + muted value, no
+    #    colons (matches the PDF's "<strong>Prepared by</strong> {author}").
+    def _meta_line(bold_label: str, value: str) -> None:
+        mp = _cover_para(0, 4)
+        lbl = mp.add_run(f"{bold_label} ")
+        lbl.bold = True
+        lbl.font.size = Pt(10.5)
+        if font_body:
+            _apply_font_name(lbl.font, font_body)
+        lr, lg, lb = _hex_to_rgb(meta_label_color)
+        lbl.font.color.rgb = RGBColor(lr, lg, lb)
+        val = mp.add_run(value)
+        val.font.size = Pt(10.5)
+        if font_body:
+            _apply_font_name(val.font, font_body)
+        vr, vg, vb = _hex_to_rgb(meta_value_color)
+        val.font.color.rgb = RGBColor(vr, vg, vb)
+
     if meta_author:
-        mp = doc.add_paragraph()
-        mp.paragraph_format.space_before = Pt(0)
-        mp.paragraph_format.space_after = Pt(4)
-        mp.add_run(f"{meta_label}: ").bold = True
-        builder._write_text(mp, meta_author)
+        _meta_line(meta_label, meta_author)
     if date_str:
-        mp = doc.add_paragraph()
-        mp.paragraph_format.space_before = Pt(0)
-        mp.paragraph_format.space_after = Pt(4)
-        mp.add_run("Date: ").bold = True
-        builder._write_text(mp, date_str)
+        _meta_line("Date", date_str)
 
-    # 7. Footer text (confidentiality notice)
+    # 8. Bottom bar — laid out in flow after the content, exactly where the
+    #    PDF places .cover-bar-bottom (after .cover-content's 20mm bottom
+    #    padding). An in-flow full-bleed band also avoids LibreOffice's
+    #    clipping of floating tables near the page bottom.
+    if has_bottom_bar:
+        gap = _tiny_spacer(doc)
+        gap.paragraph_format.space_before = Pt(20 * 72 / 25.4)  # 20mm padding-bottom
+        left_margin_twips = round(section.left_margin / 635)
+        bottom_tbl = _add_floating_table(
+            doc,
+            width_twips=page_twips,
+            height_mm=bar_bot_h,
+            fill=bar_color,
+            inline_indent_twips=-left_margin_twips,
+        )
+        if bar_logo_path:
+            # The PDF places cover_bar_logo inside the bottom bar, right-aligned
+            # with the content edge.
+            bp = bottom_tbl.rows[0].cells[0].paragraphs[0]
+            bp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            bp.paragraph_format.right_indent = section.right_margin
+            try:
+                bp.add_run().add_picture(
+                    str(bar_logo_path), height=Mm(max(min(bar_bot_h * 0.7, 8.0), 3.0))
+                )
+            except Exception as exc:
+                logger.warning("docx cover bar logo embed failed: %s", exc)
+        _tiny_spacer(doc)
+
+    # 9. Footer (confidentiality notice) — a text frame positioned so its text
+    #    sits ~14mm from the physical page bottom, spanning the PDF cover
+    #    footer's 28mm→(width−20mm) span, with an optional thin top rule
+    #    (PDF: .cover-footer { bottom: 14mm; border-top: 1pt #d5d8dc; 8pt }).
     if show_footer and footer_text:
-        doc.add_paragraph()  # spacer
         fp = doc.add_paragraph()
-        fp.paragraph_format.space_before = Pt(0)
+        fp.alignment = para_align
+        pPr = fp._p.get_or_add_pPr()
+        framePr = OxmlElement("w:framePr")
+        frame_w_mm = max(10.0, page_w_mm - 28.0 - 20.0)
+        frame_top_mm = max(0.0, page_h_mm - 14.0 - 7.0)  # ≈ rule + padding + one 8pt line
+        framePr.set(qn("w:w"), str(round(frame_w_mm * _TWIPS_PER_MM)))
+        framePr.set(qn("w:h"), "0")
+        framePr.set(qn("w:hRule"), "auto")
+        framePr.set(qn("w:wrap"), "around")
+        framePr.set(qn("w:hAnchor"), "page")
+        framePr.set(qn("w:x"), str(round(28.0 * _TWIPS_PER_MM)))
+        framePr.set(qn("w:vAnchor"), "page")
+        framePr.set(qn("w:y"), str(round(frame_top_mm * _TWIPS_PER_MM)))
+        pPr.append(framePr)
+        if show_footer_line:
+            # Thin top rule above the footer text (PDF: 1pt #d5d8dc, 4mm padding).
+            pBdr = OxmlElement("w:pBdr")
+            top = OxmlElement("w:top")
+            top.set(qn("w:val"), "single")
+            top.set(qn("w:sz"), "8")  # 1pt
+            top.set(qn("w:space"), "8")  # ~4pt padding above text
+            top.set(qn("w:color"), "D5D8DC")
+            pBdr.append(top)
+            pPr.append(pBdr)
         run = fp.add_run(footer_text)
         run.font.size = Pt(8)
-        col = theme.get("color_em") or theme.get("color_h3")
-        if col:
-            r, g, b = _hex_to_rgb(col)
-            run.font.color.rgb = RGBColor(r, g, b)
+        if font_body:
+            _apply_font_name(run.font, font_body)
+        col = config.get("cover_footer_color") or "#7f8c9a"  # PDF .cover-footer colour
+        r, g, b = _hex_to_rgb(str(col))
+        run.font.color.rgb = RGBColor(r, g, b)
 
     doc.add_page_break()
 
@@ -1431,10 +2039,14 @@ def _strip_form_fields_for_docx(md_content: str) -> str:
     return _FORM_FIELD_RE.sub("________", md_content)
 
 
-def _resolve_docx_theme(doc_path: Path | None, repo_root: Path | None) -> dict[str, Any]:
+def _resolve_docx_theme(
+    doc_path: Path | None,
+    repo_root: Path | None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if doc_path is None or repo_root is None:
         return {}
-    result = resolve_docx_theme(doc_path, repo_root)
+    result = resolve_docx_theme(doc_path, repo_root, config)
     return result if result is not None else {}
 
 
@@ -1444,35 +2056,44 @@ def _add_page_header_bar(
     doc_path: Path | None,
     repo_root: Path | None,
 ) -> None:
-    """Add a coloured header bar with optional logo to every page."""
+    """Add a coloured header bar with optional text/logos to every page.
+
+    Mirrors the PDF's ``.page-header-bar-fixed``: a full-bleed bar at the
+    physical page top (the PDF positions it with negative margin offsets),
+    8pt regular text, logos capped at 8mm, content aligned with the page
+    margins, and the content area starting ``height + padding`` below the top.
+    """
     if not config.get("page_header_bar"):
         return
 
     color_hex = str(config.get("page_header_bar_color", "#2563eb")).lstrip("#")
     text_color_hex = str(config.get("page_header_bar_text_color", "#ffffff")).lstrip("#")
-    height_str = str(config.get("page_header_bar_height", "12mm"))
-    padding_str = str(config.get("page_header_bar_padding", "6mm"))
-    logo_file = config.get("page_header_bar_logo") or config.get("header_logo")
+    height_mm = _cfg_mm(config.get("page_header_bar_height"), 12.0)
+    gap_mm = _cfg_mm(config.get("page_header_bar_padding"), 6.0)
     header_text = config.get("header_text", "")
+    text_position = str(config.get("header_text_position", "left")).lower()
 
-    height_mm = float(re.sub(r"[^\d.]", "", height_str) or "12")
-    gap_mm = float(re.sub(r"[^\d.]", "", padding_str) or "6")
-
-    logo_path = _resolve_asset(str(logo_file), doc_path, repo_root) if logo_file else None
+    single_logo = config.get("page_header_bar_logo") or config.get("header_logo")
+    single_logo_position = str(
+        config.get("page_header_bar_logo_position") or config.get("header_logo_position", "right")
+    ).lower()
 
     section = doc.sections[0]
+
+    # The PDF bar starts at the physical page top and content begins
+    # height + padding below it (@page { margin-top: calc(h + p) }).
+    section.header_distance = Mm(0)
+    section.top_margin = Mm(height_mm + gap_mm)
+
     header = section.header
-
-    header_distance_mm = section.header_distance / 914400 * 25.4  # EMU → mm
-    section.top_margin = Mm(header_distance_mm + height_mm + gap_mm)
-
+    header.is_linked_to_previous = False
     for para in list(header.paragraphs):
         para._p.getparent().remove(para._p)
 
-    text_width_emu = section.page_width - section.left_margin - section.right_margin
-    text_width_twips = round(text_width_emu / 914400 * 1440)
-    cols = 2 if logo_path else 1
-    table = header.add_table(rows=1, cols=cols, width=text_width_emu)
+    left_margin_twips = round(section.left_margin / 635)
+    page_twips = round(section.page_width / 635)
+
+    table = header.add_table(rows=1, cols=3, width=section.page_width)
 
     # Set the same style as body tables so the style-level tblInd is 0.
     # Without this, Word applies the default table style (tblInd ~108 twips)
@@ -1488,11 +2109,11 @@ def _add_page_header_bar(
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
 
-    # Use absolute dxa width — same unit as body tables so they align exactly.
+    # Full page width, bleeding into both margins via a negative left indent.
     for old in tblPr.findall(qn("w:tblW")):
         tblPr.remove(old)
     tblW = OxmlElement("w:tblW")
-    tblW.set(qn("w:w"), str(text_width_twips))
+    tblW.set(qn("w:w"), str(page_twips))
     tblW.set(qn("w:type"), "dxa")
     tblPr.append(tblW)
 
@@ -1502,20 +2123,26 @@ def _add_page_header_bar(
     tblLayout.set(qn("w:type"), "fixed")
     tblPr.append(tblLayout)
 
-    # Zero indent — Word applies a default ~108-twip indent in headers.
     for old in tblPr.findall(qn("w:tblInd")):
         tblPr.remove(old)
     tblInd = OxmlElement("w:tblInd")
-    tblInd.set(qn("w:w"), "0")
+    tblInd.set(qn("w:w"), str(-left_margin_twips))
     tblInd.set(qn("w:type"), "dxa")
     tblPr.append(tblInd)
 
-    # Replace the tblGrid python-docx created with one using our exact widths.
-    if cols == 2:
-        col_widths = [round(text_width_twips * 0.7), 0]
-        col_widths[1] = text_width_twips - col_widths[0]
-    else:
-        col_widths = [text_width_twips]
+    # Zero default cell margins; the outer cells re-add the page margins so
+    # bar content aligns with body content (PDF: padding 0 20mm 0 25mm).
+    tblCellMar = OxmlElement("w:tblCellMar")
+    for side in ("top", "left", "bottom", "right"):
+        mar = OxmlElement(f"w:{side}")
+        mar.set(qn("w:w"), "0")
+        mar.set(qn("w:type"), "dxa")
+        tblCellMar.append(mar)
+    tblPr.append(tblCellMar)
+
+    # 3 slots: left / center / right.
+    side_w = round(page_twips * 0.35)
+    col_widths = [side_w, page_twips - 2 * side_w, side_w]
     for old_grid in tbl.findall(qn("w:tblGrid")):
         tbl.remove(old_grid)
     tblGrid = OxmlElement("w:tblGrid")
@@ -1524,17 +2151,6 @@ def _add_page_header_bar(
         gridCol.set(qn("w:w"), str(cw))
         tblGrid.append(gridCol)
     tbl.insert(list(tbl).index(tblPr) + 1, tblGrid)
-
-    # Set explicit tcW on each cell to match the grid.
-    for c_idx, cell in enumerate(table.rows[0].cells):
-        tc = cell._tc
-        tcPr = tc.get_or_add_tcPr()
-        for old in tcPr.findall(qn("w:tcW")):
-            tcPr.remove(old)
-        tcW_el = OxmlElement("w:tcW")
-        tcW_el.set(qn("w:w"), str(col_widths[c_idx]))
-        tcW_el.set(qn("w:type"), "dxa")
-        tcPr.append(tcW_el)
 
     tblBorders = OxmlElement("w:tblBorders")
     for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
@@ -1548,12 +2164,19 @@ def _add_page_header_bar(
     trPr = tr.get_or_add_trPr()
     trHeight = OxmlElement("w:trHeight")
     trHeight.set(qn("w:val"), str(int(Mm(height_mm).pt * 20)))
-    trHeight.set(qn("w:hRule"), "atLeast")
+    trHeight.set(qn("w:hRule"), "exact")
     trPr.append(trHeight)
 
-    for cell in row.cells:
+    aligns = (WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.RIGHT)
+    for c_idx, cell in enumerate(row.cells):
         set_cell_shading(cell, color_hex)
         tcPr = cell._tc.get_or_add_tcPr()
+        for old in tcPr.findall(qn("w:tcW")):
+            tcPr.remove(old)
+        tcW_el = OxmlElement("w:tcW")
+        tcW_el.set(qn("w:w"), str(col_widths[c_idx]))
+        tcW_el.set(qn("w:type"), "dxa")
+        tcPr.append(tcW_el)
         tcBorders = OxmlElement("w:tcBorders")
         for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
             b = OxmlElement(f"w:{side}")
@@ -1563,23 +2186,51 @@ def _add_page_header_bar(
         vAlign = OxmlElement("w:vAlign")
         vAlign.set(qn("w:val"), "center")
         tcPr.append(vAlign)
+        para = cell.paragraphs[0]
+        para.alignment = aligns[c_idx]
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
+        _set_para_mark_size(para)
+    # Align outer-cell content with the page margins.
+    _set_cell_margins_mm(row.cells[0], top=0, right=0, bottom=0, left=section.left_margin / 36000)
+    _set_cell_margins_mm(row.cells[2], top=0, right=section.right_margin / 36000, bottom=0, left=0)
+
+    slot_paras = {
+        "left": row.cells[0].paragraphs[0],
+        "center": row.cells[1].paragraphs[0],
+        "right": row.cells[2].paragraphs[0],
+    }
+    logo_height = Mm(max(min(height_mm * 0.7, 8.0), 3.0))  # PDF: .phb-logo max-height 8mm
 
     if header_text:
-        para = row.cells[0].paragraphs[0]
-        para.paragraph_format.space_before = Pt(0)
-        para.paragraph_format.space_after = Pt(0)
+        para = slot_paras.get(text_position, slot_paras["left"])
         run = para.add_run(str(header_text))
-        run.bold = True
-        run.font.color.rgb = RGBColor.from_string(text_color_hex)
-        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run.font.size = Pt(8)  # PDF: .phb-text { font-size: 8pt; } (not bold)
+        run.font.color.rgb = RGBColor.from_string(text_color_hex.upper())
 
-    if logo_path:
-        para = row.cells[-1].paragraphs[0]
-        para.paragraph_format.space_before = Pt(0)
-        para.paragraph_format.space_after = Pt(0)
-        para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        run = para.add_run()
-        run.add_picture(str(logo_path), height=Mm(max(height_mm * 0.7, 4)))
+    def _slot_picture(pos: str, path: Path) -> None:
+        para = slot_paras.get(pos, slot_paras["center"])
+        if para.runs:
+            para.add_run("  ")
+        try:
+            para.add_run().add_picture(str(path), height=logo_height)
+        except Exception as exc:
+            logger.warning("docx header bar logo embed failed: %s", exc)
+
+    if single_logo:
+        logo_path = _resolve_asset(str(single_logo), doc_path, repo_root)
+        if logo_path:
+            _slot_picture(single_logo_position, logo_path)
+
+    for entry in config.get("page_header_bar_logos", []) or []:
+        if isinstance(entry, dict):
+            lpath = _resolve_asset(str(entry.get("path", "")), doc_path, repo_root)
+            pos = str(entry.get("position", "center")).lower()
+        else:
+            lpath = _resolve_asset(str(entry), doc_path, repo_root)
+            pos = "center"
+        if lpath:
+            _slot_picture(pos, lpath)
 
 
 # ---------------------------------------------------------------------------
@@ -1588,6 +2239,84 @@ def _add_page_header_bar(
 
 
 _FOOTER_TOKEN_RE = re.compile(r"(\{pages?\})")
+
+_CSS_CONTENT_TOKEN_RE = re.compile(
+    r'"([^"]*)"'  # double-quoted string
+    r"|'([^']*)'"  # single-quoted string
+    r"|counter\(\s*pages\s*\)"
+    r"|counter\(\s*page\s*\)"
+    r"|string\([^)]*\)"
+)
+
+
+def _css_content_to_text(value: str, date_str: str) -> str | None:
+    """Convert a CSS ``content`` value into footer text.
+
+    Quoted strings become literals, ``counter(page)``/``counter(pages)`` become
+    the ``{page}``/``{pages}`` tokens the Word footer expands to live fields,
+    and ``string(...)`` (the theme's running date) becomes *date_str*.
+    """
+    if value.strip().lower() in ("none", "normal"):
+        return None
+    out: list[str] = []
+    for m in _CSS_CONTENT_TOKEN_RE.finditer(value):
+        if m.group(1) is not None:
+            out.append(m.group(1))
+        elif m.group(2) is not None:
+            out.append(m.group(2))
+        elif m.group(0).startswith("string"):
+            out.append(date_str)
+        elif "pages" in m.group(0):
+            out.append("{pages}")
+        else:
+            out.append("{page}")
+    text = "".join(out)
+    return text or None
+
+
+def _css_footer_defaults(css_text: str | None, date_str: str) -> dict[str, tuple[str, float, str]]:
+    """Extract the theme's default ``@page`` footer boxes for Word.
+
+    The PDF renders ``@bottom-left/center/right`` margin boxes straight from
+    the theme CSS (org name, running date, "Page N of M") even when no
+    ``footer_*`` config keys are set. Parse those defaults so the Word footer
+    shows the same content. Returns ``{slot: (text, font_size_pt, color_hex)}``.
+    """
+    if not css_text:
+        return {}
+    clean = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+    m = re.search(r"@page\s*\{", clean)
+    if not m:
+        return {}
+    # Brace-match the @page block (it contains nested margin-box blocks).
+    depth, i = 1, m.end()
+    while i < len(clean) and depth:
+        if clean[i] == "{":
+            depth += 1
+        elif clean[i] == "}":
+            depth -= 1
+        i += 1
+    block = clean[m.end() : i - 1]
+
+    result: dict[str, tuple[str, float, str]] = {}
+    for slot in ("left", "center", "right"):
+        bm = re.search(rf"@bottom-{slot}\s*\{{([^}}]*)\}}", block)
+        if not bm:
+            continue
+        props: dict[str, str] = {}
+        for decl in bm.group(1).split(";"):
+            if ":" in decl:
+                prop, _, val = decl.partition(":")
+                props[prop.strip().lower()] = val.strip()
+        text = _css_content_to_text(props.get("content", ""), date_str)
+        if not text:
+            continue
+        size_m = re.search(r"([\d.]+)\s*pt", props.get("font-size", ""))
+        size = float(size_m.group(1)) if size_m else 7.5
+        color_m = re.search(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", props.get("color", ""))
+        color = color_m.group(0) if color_m else "#7f8c9a"
+        result[slot] = (text, size, color)
+    return result
 
 
 def _add_simple_field(paragraph: Any, instr: str) -> Any:
@@ -1637,18 +2366,37 @@ def _emit_footer_segment(paragraph: Any, text: str) -> list[Any]:
     return runs
 
 
-def _add_footer(doc: Document, config: dict[str, Any]) -> None:
+def _add_footer(
+    doc: Document,
+    config: dict[str, Any],
+    *,
+    css_text: str | None = None,
+    date_str: str = "",
+) -> None:
     """Populate the document footer from footer_left/center/right.
 
     The three slots are laid out with centre and right tab stops so they mirror
     the PDF ``@bottom-left/center/right`` margin boxes. ``{page}`` and
     ``{pages}`` tokens become live Word page-number fields (the same tokens work
     in the PDF footer). A top border separates the footer from body content.
+
+    Per-slot resolution matches the PDF exactly: an explicitly configured
+    ``footer_*`` key wins (6pt, #7f8c9a — the style ``_build_footer_style``
+    injects), an empty string suppresses the slot, and an absent key falls back
+    to the theme CSS's ``@bottom-*`` default box (its own font-size/colour).
     """
-    left_text = config.get("footer_left")
-    center_text = config.get("footer_center")
-    right_text = config.get("footer_right")
-    if not any([left_text, center_text, right_text]):
+    defaults = _css_footer_defaults(css_text, date_str)
+
+    slots: dict[str, tuple[str, float, str] | None] = {}
+    for slot in ("left", "center", "right"):
+        cfg_val = config.get(f"footer_{slot}")
+        if cfg_val is not None:
+            # Explicit config — empty string suppresses the slot (content: none).
+            slots[slot] = (str(cfg_val), 6.0, "#7f8c9a") if str(cfg_val) else None
+        else:
+            slots[slot] = defaults.get(slot)
+
+    if not any(slots.values()):
         return
 
     section = doc.sections[0]
@@ -1670,26 +2418,30 @@ def _add_footer(doc: Document, config: dict[str, Any]) -> None:
     tabs.add_tab_stop(Emu(text_width_emu // 2), WD_TAB_ALIGNMENT.CENTER)
     tabs.add_tab_stop(Emu(text_width_emu), WD_TAB_ALIGNMENT.RIGHT)
 
-    pPr = para._element.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    top = OxmlElement("w:top")
-    top.set(qn("w:val"), "single")
-    top.set(qn("w:sz"), "4")
-    top.set(qn("w:space"), "4")
-    top.set(qn("w:color"), "d5d8dc")
-    pBdr.append(top)
-    pPr.append(pBdr)
+    # Top border (theme @bottom-* boxes: 0.5pt #d5d8dc). The PDF drops the
+    # footer border when a page header bar is enabled — mirror that here.
+    if not config.get("page_header_bar"):
+        pPr = para._element.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        top = OxmlElement("w:top")
+        top.set(qn("w:val"), "single")
+        top.set(qn("w:sz"), "4")
+        top.set(qn("w:space"), "4")
+        top.set(qn("w:color"), "d5d8dc")
+        pBdr.append(top)
+        pPr.append(pBdr)
 
-    runs: list[Any] = []
-    runs += _emit_footer_segment(para, str(left_text)) if left_text else []
-    para.add_run().add_tab()
-    runs += _emit_footer_segment(para, str(center_text)) if center_text else []
-    para.add_run().add_tab()
-    runs += _emit_footer_segment(para, str(right_text)) if right_text else []
-
-    for run in runs:
-        run.font.size = Pt(6)
-        run.font.color.rgb = RGBColor(0x73, 0x85, 0x99)
+    for i, slot in enumerate(("left", "center", "right")):
+        if i > 0:
+            para.add_run().add_tab()
+        entry = slots[slot]
+        if not entry:
+            continue
+        text, size_pt, color_hex = entry
+        r, g, b = _hex_to_rgb(color_hex)
+        for run in _emit_footer_segment(para, text):
+            run.font.size = Pt(size_pt)
+            run.font.color.rgb = RGBColor(r, g, b)
 
 
 def _add_plain_header(
@@ -1728,6 +2480,18 @@ def _add_plain_header(
     tabs = para.paragraph_format.tab_stops
     tabs.add_tab_stop(Emu(text_width_emu // 2), WD_TAB_ALIGNMENT.CENTER)
     tabs.add_tab_stop(Emu(text_width_emu), WD_TAB_ALIGNMENT.RIGHT)
+
+    # Hairline under the header content (theme @top-* boxes carry a
+    # border-bottom: 0.5pt solid #d5d8dc in the PDF).
+    pPr = para._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), "4")
+    bot.set(qn("w:space"), "3")
+    bot.set(qn("w:color"), "d5d8dc")
+    pBdr.append(bot)
+    pPr.append(pBdr)
 
     # Place text and logo into left/center/right slots via tab stops.
     slots: dict[str, list[Any]] = {"left": [], "center": [], "right": []}
@@ -1808,13 +2572,19 @@ def build(
 
     body = _strip_frontmatter(rendered_md)
     title: str = config.get("title") or _extract_title(body) or out_path.stem
-    author: str = config.get("author", "")
+    # Same defaults as the PDF builder so the cover carries identical metadata
+    # (the PDF always shows an author and a date).
+    author: str = config.get("author", "Document Producer")
+    date_str: str = config.get("date") or datetime.date.today().strftime("%-d %B %Y")
 
     if cover_page:
-        body = _strip_leading_h1(body)
-    elif not is_dotx:
+        # The first H1 becomes the cover title. Without a cover the H1 stays in
+        # the body as a Heading 1 — exactly what the PDF does.
         body = _strip_leading_h1(body)
 
+    # Inject the same page breaks the PDF builder uses so both formats break at
+    # identical points: APPENDIX section H2s and explicit <!-- pagebreak -->.
+    body = _inject_appendix_breaks(body)
     body = _inject_page_breaks(body)
     body = _strip_form_fields_for_docx(body)
 
@@ -1825,20 +2595,24 @@ def build(
     # uses so diagram colours match across formats. Falls back to leaving the
     # code block if cairosvg is unavailable.
     mermaid_theme = None
+    css_text: str | None = None
     try:
         from .pdf import _resolve_css
         from ..mermaid import extract_theme_from_css
 
         css_path = _resolve_css(config, repo_root, doc_path=doc_path)
         if css_path and css_path.exists():
-            mermaid_theme = extract_theme_from_css(css_path.read_text(encoding="utf-8"))
+            css_text = css_path.read_text(encoding="utf-8")
+            mermaid_theme = extract_theme_from_css(css_text)
     except Exception:
         mermaid_theme = None
     html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)
 
-    theme = _resolve_docx_theme(doc_path, repo_root)
+    theme = _resolve_docx_theme(doc_path, repo_root, config)
     doc = Document()
-    _setup_page(doc)
+    # Match the PDF's paper size + margins (parsed from the theme's @page) so
+    # both formats share the same text width and break at the same points.
+    _setup_page(doc, _page_geometry(css_text))
 
     props = doc.core_properties
     if is_dotx:
@@ -1852,7 +2626,16 @@ def build(
 
     _add_page_header_bar(doc, config, doc_path, repo_root)
     _add_plain_header(doc, config, doc_path, repo_root)
-    _add_footer(doc, config)
+    _add_footer(doc, config, css_text=css_text, date_str=date_str)
+
+    if cover_page:
+        # The PDF's @page cover rule suppresses every header/footer margin box
+        # on the cover — Word's "different first page" does the same. The
+        # first-page header/footer parts are created empty (unlinked).
+        section = doc.sections[0]
+        section.different_first_page_header_footer = True
+        section.first_page_header.is_linked_to_previous = False
+        section.first_page_footer.is_linked_to_previous = False
 
     body_text_align = str(config.get("body_text_align", "")).lower() or None
 
@@ -1888,10 +2671,16 @@ def build(
     if cover_page:
         # Both docx and dotx use the richer composable cover; _write_text keeps
         # [[field]] markers working in dotx output.
-        _add_docx_cover_page(doc, {**config, "title": title}, builder, theme)
-    elif not is_dotx:
-        doc.add_paragraph(title, style="Title")
+        _add_docx_cover_page(
+            doc,
+            {**config, "title": title, "author": author, "date": date_str},
+            builder,
+            theme,
+        )
 
+    # Content after the cover starts the pagination baseline — the first body
+    # heading must not force an extra page break on top of the cover's.
+    builder.mark_content_start()
     builder.feed(html)
 
     doc.save(str(out_path))
