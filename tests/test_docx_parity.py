@@ -76,9 +76,9 @@ def test_mermaid_diagram_is_rasterized(tmp_repo):
 
 
 def test_mermaid_falls_back_to_code_when_no_rasterizer(tmp_repo, monkeypatch):
-    import md_doc.builders.docx as d
+    import md_doc.builders._assets as assets
 
-    monkeypatch.setattr(d, "_svg_to_png", lambda *a, **k: None)
+    monkeypatch.setattr(assets, "_svg_to_png", lambda *a, **k: None)
     out = _build(tmp_repo, '```mermaid\npie\n"Done" : 100\n```\n', {})
     # No image embedded, but the build still succeeds (renders as a code block).
     assert _media_names(out) == []

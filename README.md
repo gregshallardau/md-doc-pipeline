@@ -14,6 +14,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **PDF output** — WeasyPrint builder with branded cover page, headers, footers, and pagination
 - **DOCX output** — python-docx builder for copy-to-email Word documents
 - **DOTX output** — Word merge template builder; your other application fills the fields
+- **PPTX output** — python-pptx slide builder; Markdown headings segment into slides, with speaker notes, tables, images, and Mermaid diagrams
 - **Cascading PDF themes** — `_theme.css` at any folder level; deepest wins. Run `md-doc theme init` to generate a full theme or `md-doc theme override` for a minimal colour override
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
@@ -356,7 +357,7 @@ md-doc doctor
 md-doc build [ROOT] [OPTIONS]
   ROOT                  Directory to build (default: current directory)
   -o, --output DIR      Mirror source tree under DIR instead of alongside source
-  -f, --format          pdf | docx | dotx | all  (default: from outputs config)
+  -f, --format          pdf | docx | dotx | pptx | all  (default: from outputs config)
   -j, --jobs N          Build N documents in parallel (default: 1)
   --force               Rebuild even if outputs are newer than their inputs
   --strict              Fail on undefined Jinja2 variables

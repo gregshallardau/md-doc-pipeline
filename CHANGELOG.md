@@ -6,6 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-02
+
+### Added
+- **PPTX (PowerPoint) output** via a new `python-pptx` builder. `outputs: [pptx]`
+  or `md-doc build --format pptx` segments Markdown into slides — first H1 (or
+  `title`) → title slide, later H1s → section slides, each H2 → a content slide;
+  `<!-- slide -->` forces a break and `<!-- notes: … -->` adds speaker notes.
+  Bullets (with nesting), tables, images, code, blockquotes, and Mermaid
+  diagrams (as PNGs) are supported. New keys: `slide_split`, `slide_size`,
+  `pptx_template`.
+- **Theming parity** across PDF / docx / pptx: slides apply the full CSS theme
+  palette — heading colours (H1/H2), body colour + font family, strong/em/code
+  colours, blockquote styling, and table header + alternating-row colours —
+  from the same `_pdf-theme.css`/`_theme.css` cascade the other builders use.
+  (Font *sizes* stay slide-appropriate rather than inheriting print pt sizes.)
+- `md-doc doctor` now also checks `python-pptx`.
+
+### Changed
+- Shared image/Mermaid helpers extracted to `md_doc/builders/_assets.py` and
+  reused by the docx and pptx builders.
+- Sync and register now include `.pptx` (and `.dotx`) outputs.
+
+### Fixed
+- Mermaid flowchart nodes with **unquoted** labels (`A[Plan]`, `A(Go)`, `A{Q}`,
+  etc.) now parse and render — previously only quoted labels (`A["Plan"]`) were
+  recognised, so unquoted nodes were dropped and layout crashed with a
+  `KeyError`. Affects all builders (PDF/docx/pptx).
+
 ## [0.2.0] — 2026-07-02
 
 Major reliability, parity, and hardening release.
@@ -42,5 +70,6 @@ Major reliability, parity, and hardening release.
   members, frontmatter without a trailing newline, and CSS/HTML injection vectors
   in the PDF builder (colors, footer/header strings, form-field attributes).
 
-[Unreleased]: https://github.com/gregshallardau/md-doc-pipeline/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gregshallardau/md-doc-pipeline/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.3.0
 [0.2.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.2.0

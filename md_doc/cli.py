@@ -330,6 +330,10 @@ def _build_document(
                 from .builders.dotx import build as build_dotx  # type: ignore[import]
 
                 build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+            elif format_name == "pptx":
+                from .builders.pptx import build as build_pptx  # type: ignore[import]
+
+                build_pptx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
             else:
                 events.append(("warn", f"unknown format '{format_name}' — skipped"))
                 continue
@@ -612,6 +616,7 @@ def doctor() -> None:
         ("weasyprint", "weasyprint"),
         ("markdown", "markdown"),
         ("docx", "python-docx"),
+        ("pptx", "python-pptx"),
         ("jinja2", "jinja2"),
         ("yaml", "pyyaml"),
         ("click", "click"),
@@ -692,7 +697,7 @@ def doctor() -> None:
     "-f",
     "fmt",
     default="all",
-    type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
+    type=click.Choice(["pdf", "docx", "dotx", "pptx", "all"], case_sensitive=False),
     help="Output format(s). Overrides per-document 'outputs' config when set explicitly.",
 )
 @click.option(
@@ -988,7 +993,7 @@ def workspaces_cmd() -> None:
     "-f",
     "fmt",
     default="all",
-    type=click.Choice(["pdf", "docx", "dotx", "all"], case_sensitive=False),
+    type=click.Choice(["pdf", "docx", "dotx", "pptx", "all"], case_sensitive=False),
     help="Output format(s). Defaults to per-document 'export_format' or 'pdf'.",
 )
 @click.option(

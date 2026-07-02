@@ -25,7 +25,7 @@ from ..config import load_config, should_sync_md
 logger = logging.getLogger(__name__)
 
 # Extensions treated as "built outputs" to always include
-_OUTPUT_EXTENSIONS: set[str] = {".pdf", ".docx"}
+_OUTPUT_EXTENSIONS: set[str] = {".pdf", ".docx", ".dotx", ".pptx"}
 
 # Directories to exclude from sync discovery
 _EXCLUDE_DIRS: set[str] = {".git", "__pycache__", "themes", "templates"}

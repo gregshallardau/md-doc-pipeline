@@ -32,6 +32,7 @@ uv run md-doc lint workspace/                # lint everything
 uv run md-doc build workspace/acme/          # one company
 uv run md-doc build workspace/               # all workspace projects
 uv run md-doc build workspace/acme/ --format dotx  # merge templates only
+uv run md-doc build workspace/acme/ --format pptx  # PowerPoint slide deck
 uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
 uv run md-doc build workspace/               # incremental: skips docs whose output is newer
                                              #   than the source, config, theme and templates
@@ -112,6 +113,7 @@ cover_page: true   # default — applies to pdf and dotx; set false to omit
    - PDF forms — Add `pdf_forms: true` to any document's frontmatter or parent `_meta.yml` to produce interactive fillable PDFs. The standard `pdf.py` builder passes `pdf_forms=True` to WeasyPrint 68.x, which natively supports AcroForm fields. HTML `<input>`, `<select>`, `<textarea>` elements become real interactive fields. Output file gets a `-form` suffix: `onboarding.md` → `onboarding-form.pdf`. See `workspace/CLAUDE.md` for authoring guidance.
    - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use. Word theme cascade: at each directory level looks for `_docx-theme.css` first, then `_theme.css` (shared base), then `_pdf-theme.css` (legacy fallback). CSS `@import` in any of these files is resolved by `docx_theme.parse_css_for_word`.
    - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word fields (Text Form Fields by default, MERGEFIELDs if `dotx_field_type: merge`). Patches the saved file's ZIP content type from `.docx` → `.dotx`. Applies Word CSS theme via the same cascade as `docx.py`.
+   - `pptx.py` — Markdown → HTML → python-pptx presentation. Unlike the flowing builders, it **segments** the document into slides: the first H1 (or `title`) → title slide, later H1s → section slides, each H2 → a content slide; `<!-- slide -->` forces a break and `<!-- notes: … -->` attaches speaker notes. `slide_split` (`h2` default | `h1` | `marker`) selects the strategy. Reuses the shared image/Mermaid helpers in `builders/_assets.py` (`_resolve_asset`, `_render_mermaid_to_images`, `_svg_to_png` — extracted so docx and pptx share them). Theme colours/fonts come from the same CSS cascade (`resolve_docx_theme`); an optional `_pptx-template.pptx`/`.potx` (via `pptx_template`) is used as the base for brand master slides.
 
 4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Pure Python — no external rendering service required. Supported diagram types:
    - `flowchart`/`graph` — directed graphs with 8 node shapes (rect, diamond, stadium, rounded, circle, cylinder, hexagon, subroutine), edge styles (solid `-->`, dotted `-.->`, thick `==>`, no-arrow `---`), pipe labels (`-->|label|`), and subgraph grouping
@@ -151,7 +153,7 @@ Use `md-doc fields [DIR]` to see all resolved fields at a given level. `config.l
 **Metadata & output control:**
 ```yaml
 title, product, document_type, version, status, author  # standard metadata fields
-outputs: [pdf, docx]          # default: [pdf]; valid values: pdf | docx | dotx
+outputs: [pdf, docx]          # default: [pdf]; valid values: pdf | docx | dotx | pptx
 output_filename: "{{ product }}-proposal"  # override output filename (all formats); Jinja2 vars supported; extension auto-appended
 output_dir: /path/to/dest/    # route outputs here; cascades from _meta.yml; CLI --output wins
 pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
@@ -168,6 +170,19 @@ dotx_field_type: form         # "form" (default, Text Form Fields, fillable in W
 body_text_align: justify      # default paragraph alignment for docx/dotx body text: justify | left | center | right
 table_col_widths: [30, 70]    # relative column widths for docx/dotx tables; must match column count or equal widths are used
 ```
+
+**Slides (`pptx` output):**
+```yaml
+outputs: [pptx]
+slide_split: h2               # slide boundaries: h2 (default, each H2 → slide) | h1 | marker (only <!-- slide -->)
+slide_size: "16:9"            # "16:9" (default) | "4:3"  — quote it so YAML doesn't parse 16:9 as a number
+pptx_template: templates/brand.pptx   # optional .pptx/.potx base for brand master slides (cascade-resolved)
+# reuses title / author / product / date (title slide) and the theme colour/font cascade
+```
+
+Segmentation: the first `# H1` (or `title`) → title slide, later `# H1`s → section slides,
+each `## H2` → content slide. `<!-- slide -->` forces a break; `<!-- notes: … -->` adds speaker
+notes. Mermaid diagrams embed as PNGs (needs the `[mermaid]` extra / `cairosvg`).
 
 **Per-section alignment in Markdown (docx/dotx):**
 

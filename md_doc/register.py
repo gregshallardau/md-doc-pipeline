@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 # File extensions recognised as built documents
-_BUILD_EXTENSIONS = {".pdf", ".docx", ".md"}
+_BUILD_EXTENSIONS = {".pdf", ".docx", ".dotx", ".pptx", ".md"}
 
 # Files to exclude from the register
 _EXCLUDE_NAMES = {
