@@ -139,6 +139,42 @@ def test_slide_size_widescreen(repo):
     assert prs.slide_width == Inches(13.333)
 
 
+def test_picks_up_css_theme_and_yaml(repo):
+    # YAML frontmatter (title/author/product) and the CSS theme cascade
+    # (h1 colour + body font) both flow into the deck.
+    (repo / "_pdf-theme.css").write_text(
+        ':root { --primary: #CC0066; }\nbody { font-family: "Georgia"; }\nh1 { color: #CC0066; }\n',
+        encoding="utf-8",
+    )
+    body = (
+        "---\ntitle: Themed Deck\nauthor: Ada\nproduct: Engine\n---\n\n"
+        "# Themed Deck\n\n## Point\n\n- hello\n"
+    )
+    prs = _build(repo, body, {})
+    # YAML → title slide
+    assert prs.slides[0].shapes.title.text == "Themed Deck"
+    sub = "\n".join(
+        ph.text_frame.text for ph in prs.slides[0].placeholders if ph.placeholder_format.idx != 0
+    )
+    assert "Ada" in sub and "Engine" in sub
+    # CSS → content-slide title colour
+    content = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Point")
+    from pptx.dml.color import RGBColor
+
+    assert content.shapes.title.text_frame.paragraphs[0].font.color.rgb == RGBColor(
+        0xCC, 0x00, 0x66
+    )
+    # CSS → body font
+    fonts = {
+        r.font.name
+        for sh in content.shapes
+        if sh.has_text_frame
+        for p in sh.text_frame.paragraphs
+        for r in p.runs
+    }
+    assert "Georgia" in fonts
+
+
 def test_mermaid_diagram_embeds_as_picture(repo):
     pytest.importorskip("cairosvg")
     body = '---\ntitle: T\n---\n\n## Chart\n\n```mermaid\npie\n"A" : 60\n"B" : 40\n```\n'

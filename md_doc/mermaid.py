@@ -358,6 +358,16 @@ _NODE_PATTERNS = [
     # A["label"] — rect (must be after [["]] and [(")])
     (re.compile(r'^([A-Za-z_]\w*)\["([^"]+)"\]$'), "rect"),
     (re.compile(r"^([A-Za-z_]\w*)\['([^']+)'\]$"), "rect"),
+    # ---- Unquoted labels (the common Mermaid form, e.g. A[Plan]) ----
+    # Ordered specific-first so multi-char delimiters win over single-char ones.
+    (re.compile(r"^([A-Za-z_]\w*)\(\[([^\]]+)\]\)$"), "stadium"),  # A([label])
+    (re.compile(r"^([A-Za-z_]\w*)\(\(([^)]+)\)\)$"), "circle"),  # A((label))
+    (re.compile(r"^([A-Za-z_]\w*)\[\(([^)]+)\)\]$"), "cylinder"),  # A[(label)]
+    (re.compile(r"^([A-Za-z_]\w*)\{\{([^}]+)\}\}$"), "hexagon"),  # A{{label}}
+    (re.compile(r"^([A-Za-z_]\w*)\[\[([^\]]+)\]\]$"), "subroutine"),  # A[[label]]
+    (re.compile(r"^([A-Za-z_]\w*)\{([^}]+)\}$"), "diamond"),  # A{label}
+    (re.compile(r"^([A-Za-z_]\w*)\(([^)]+)\)$"), "rounded"),  # A(label)
+    (re.compile(r"^([A-Za-z_]\w*)\[([^\]]+)\]$"), "rect"),  # A[label]
 ]
 
 # Edge patterns — order: longest operators first
@@ -400,7 +410,7 @@ def _ensure_node(fc: Flowchart, token: str) -> str:
     for pattern, shape in _NODE_PATTERNS:
         m = pattern.match(token)
         if m:
-            nid, label = m.group(1), m.group(2)
+            nid, label = m.group(1), m.group(2).strip()
             if nid not in fc.nodes:
                 fc.nodes[nid] = Node(id=nid, label=label, shape=shape)
             else:
@@ -482,7 +492,7 @@ def parse(source: str) -> Flowchart:
         for pattern, shape in _NODE_PATTERNS:
             m = pattern.match(line)
             if m:
-                nid, label = m.group(1), m.group(2)
+                nid, label = m.group(1), m.group(2).strip()
                 fc.nodes[nid] = Node(id=nid, label=label, shape=shape)
                 if subgraph_stack:
                     subgraph_stack[-1].node_ids.append(nid)

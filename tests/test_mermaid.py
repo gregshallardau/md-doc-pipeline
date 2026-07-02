@@ -56,6 +56,35 @@ def test_full_circle_donut_punches_hole():
     assert svg.count("<circle") >= 2
 
 
+def test_flowchart_unquoted_labels_register_nodes():
+    # Unquoted labels (A[Plan]) are the common Mermaid form and must register
+    # nodes with the right shape, not fall through to raw tokens (which crashed
+    # layout with a KeyError).
+    fc = m.parse("flowchart LR\n  A[Plan] --> B[Build]\n  B --> C[Ship]")
+    assert set(fc.nodes) == {"A", "B", "C"}
+    assert {(e.src, e.dst) for e in fc.edges} == {("A", "B"), ("B", "C")}
+    assert m.render_to_svg("flowchart LR\n  A[Plan] --> B[Build]\n  B --> C[Ship]")
+
+
+def test_flowchart_all_unquoted_shapes():
+    src = (
+        "flowchart TD\n R[rect]\n D{diamond}\n S([stadium])\n Rn(rounded)\n"
+        " Ci((circle))\n Cy[(cyl)]\n Hx{{hex}}\n Sr[[sub]]\n R-->D"
+    )
+    fc = m.parse(src)
+    shapes = {fc.nodes[n].shape for n in fc.nodes}
+    assert shapes == {
+        "rect",
+        "diamond",
+        "stadium",
+        "rounded",
+        "circle",
+        "cylinder",
+        "hexagon",
+        "subroutine",
+    }
+
+
 def test_subgraph_edge_members_assigned():
     fc = m.parse("flowchart LR\n  subgraph G1\n    A --> B\n  end")
     assert set(fc.subgraphs[0].node_ids) == {"A", "B"}

@@ -22,6 +22,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reused by the docx and pptx builders.
 - Sync and register now include `.pptx` (and `.dotx`) outputs.
 
+### Fixed
+- Mermaid flowchart nodes with **unquoted** labels (`A[Plan]`, `A(Go)`, `A{Q}`,
+  etc.) now parse and render — previously only quoted labels (`A["Plan"]`) were
+  recognised, so unquoted nodes were dropped and layout crashed with a
+  `KeyError`. Affects all builders (PDF/docx/pptx).
+
 ## [0.2.0] — 2026-07-02
 
 Major reliability, parity, and hardening release.
