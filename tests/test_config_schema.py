@@ -31,9 +31,22 @@ def test_typo_of_reserved_key_warns_with_suggestion():
     assert "cover_bard" in msg and "cover_bar" in msg
 
 
-def test_bool_key_wrong_type_is_error():
-    issues = validate_config({"cover_page": "yes"})
-    assert issues == [("error", "'cover_page' must be true or false, got str")]
+def test_bool_key_accepts_boollike_strings():
+    # Real bools and yes/no-style strings are all fine (YAML + rendered Jinja
+    # values routinely produce the string "false" / "true").
+    for value in (True, False, "true", "false", "yes", "no", "on", "off", "1", "0"):
+        assert validate_config({"cover_page": value}) == [], f"{value!r} should be accepted"
+
+
+def test_bool_key_skips_unresolved_template():
+    # A value still containing a Jinja expression can't be type-checked pre-render.
+    assert validate_config({"cover_page": "{{ want_cover }}"}) == []
+
+
+def test_bool_key_non_boollike_string_is_error():
+    issues = validate_config({"cover_page": "maybe"})
+    assert len(issues) == 1 and issues[0][0] == "error"
+    assert "must be true or false" in issues[0][1]
 
 
 def test_enum_key_invalid_value_is_error():

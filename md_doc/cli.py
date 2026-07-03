@@ -409,6 +409,9 @@ def _render_config_strings(config: dict[str, Any]) -> dict[str, Any]:
     from jinja2 import DebugUndefined
     from jinja2.sandbox import SandboxedEnvironment
 
+    from .config import coerce_bool
+    from .config_schema import BOOL_KEYS
+
     env = SandboxedEnvironment(undefined=DebugUndefined, trim_blocks=True, lstrip_blocks=True)
     result = dict(config)
     for key, value in config.items():
@@ -417,6 +420,13 @@ def _render_config_strings(config: dict[str, Any]) -> dict[str, Any]:
                 result[key] = env.from_string(value).render(**config)
             except Exception:
                 pass  # leave unrendered on any error
+
+    # Coerce boolean keys to real bools *after* rendering.  A rendered template
+    # (or a quoted YAML value) yields the string "false", and plain bool("false")
+    # is True — so builders must receive a proper bool, not a truthy string.
+    for key in BOOL_KEYS:
+        if key in result and not isinstance(result[key], bool):
+            result[key] = coerce_bool(result[key])
     return result
 
 

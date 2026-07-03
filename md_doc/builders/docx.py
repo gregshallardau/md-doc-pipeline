@@ -42,6 +42,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
 
+from ..config import coerce_bool
 from ..docx_theme import (
     _apply_font_name,
     _hex_to_rgb,
@@ -2564,7 +2565,7 @@ def build(
     is_dotx = output_format == "dotx"
 
     field_type: str | None = None
-    cover_page = bool(config.get("cover_page", False))
+    cover_page = coerce_bool(config.get("cover_page"), False)
 
     if is_dotx:
         ft = str(config.get("dotx_field_type", "form")).lower()
