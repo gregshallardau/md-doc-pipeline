@@ -7,11 +7,36 @@ import pytest
 
 from md_doc.config import (
     _find_repo_root,
+    coerce_bool,
+    is_boolish,
     load_config,
     get_output_formats,
     should_sync_md,
     load_merge_fields,
 )
+
+
+class TestCoerceBool:
+    def test_real_bools(self):
+        assert coerce_bool(True) is True
+        assert coerce_bool(False) is False
+
+    def test_truthy_strings(self):
+        for v in ("true", "True", "TRUE", "yes", "on", "1", " t "):
+            assert coerce_bool(v) is True, v
+
+    def test_falsy_strings(self):
+        # Critically: the string "false" must be False (plain bool() gets this wrong).
+        for v in ("false", "False", "no", "off", "0", ""):
+            assert coerce_bool(v) is False, v
+
+    def test_none_uses_default(self):
+        assert coerce_bool(None) is False
+        assert coerce_bool(None, default=True) is True
+
+    def test_is_boolish(self):
+        assert is_boolish("false") and is_boolish(True) and is_boolish(0)
+        assert not is_boolish("maybe") and not is_boolish(None)
 
 
 @pytest.fixture()

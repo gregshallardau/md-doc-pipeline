@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Boolean config keys now accept string / templated values.** A quoted YAML
+  value (`cover_page: "false"`) or one rendered from a Jinja variable
+  (`cover_page: "{{ want_cover }}"`) arrives as a *string*, and Python's
+  `bool("false")` is `True` — so the cover (or any boolean-gated feature) turned
+  on when it should have been off, and `md-doc lint` errored with
+  "must be true or false, got str". Booleans are now coerced correctly
+  (`true/false/yes/no/on/off/1/0`, case-insensitive) after Jinja rendering, the
+  linter accepts bool-like and still-templated values, and only a genuinely
+  non-boolean string (e.g. `maybe`) is flagged. Applies to every boolean key
+  (`cover_page`, `pdf_forms`, `section_bar`, `page_header_bar`, `cover_*`, …).
+
 ### Changed
 - **`cover_page` now defaults to `false`.** Previously a cover page was added
   unless you set `cover_page: false`; now the document starts with your content

@@ -17,6 +17,8 @@ from __future__ import annotations
 import difflib
 from typing import Any, Iterable
 
+from .config import is_boolish
+
 _FORMATS = {"pdf", "docx", "dotx", "pptx"}
 _LR = {"left", "right"}
 _LCR = {"left", "center", "right"}
@@ -171,8 +173,20 @@ def validate_config(config: dict[str, Any]) -> list[Issue]:
                 )
             continue
 
-        if key in BOOL_KEYS and not isinstance(value, bool):
-            issues.append(("error", f"'{key}' must be true or false, got {type(value).__name__}"))
+        # Values are validated before Jinja rendering, so an unresolved template
+        # (e.g. ``cover_page: "{{ want_cover }}"``) can't be type-checked yet —
+        # its real type is only known after rendering. Skip type checks for it.
+        if isinstance(value, str) and "{{" in value:
+            continue
+
+        if key in BOOL_KEYS and not is_boolish(value):
+            issues.append(
+                (
+                    "error",
+                    f"'{key}' must be true or false (or a yes/no string), "
+                    f"got {type(value).__name__} {value!r}",
+                )
+            )
         elif key in ENUM_KEYS:
             allowed = ENUM_KEYS[key]
             for item in _norm_list(value):

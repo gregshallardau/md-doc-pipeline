@@ -16,6 +16,46 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# Strings YAML doesn't parse as booleans but users (and rendered Jinja values)
+# routinely mean as booleans.  `cover_page: "{{ want_cover }}"` renders to the
+# string "false", and Python's ``bool("false")`` is ``True`` — so config bools
+# must be coerced through :func:`coerce_bool` rather than ``bool()``.
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on", "y", "t"})
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off", "n", "f", ""})
+
+
+def coerce_bool(value: Any, default: bool = False) -> bool:
+    """Interpret a config value as a boolean.
+
+    Accepts real bools, ``None`` (→ *default*), and common string/int spellings
+    (``"true"``/``"false"``/``"yes"``/``"no"``/``1``/``0`` …, case-insensitive).
+    Unrecognised non-empty values fall back to Python truthiness. This is the
+    correct way to read a boolean config key — plain ``bool(value)`` treats the
+    string ``"false"`` as ``True``.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in _TRUE_STRINGS:
+            return True
+        if v in _FALSE_STRINGS:
+            return False
+    return bool(value)
+
+
+def is_boolish(value: Any) -> bool:
+    """True if *value* is a real bool or a recognised bool-like string/int."""
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return value in (0, 1)
+    if isinstance(value, str):
+        return value.strip().lower() in (_TRUE_STRINGS | _FALSE_STRINGS)
+    return False
+
 
 def _load_yaml_file(path: Path) -> dict[str, Any]:
     """Load a YAML file, returning an empty dict on missing or parse error."""

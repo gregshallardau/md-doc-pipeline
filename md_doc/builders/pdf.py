@@ -34,6 +34,8 @@ logging.getLogger("fonttools").setLevel(logging.ERROR)
 import markdown  # noqa: E402
 import weasyprint  # noqa: E402
 
+from ..config import coerce_bool  # noqa: E402
+
 # Markdown extensions to enable
 _MD_EXTENSIONS = [
     "tables",
@@ -1066,7 +1068,7 @@ def build(
     author: str = config.get("author", "Document Producer")
     date_str: str = config.get("date") or datetime.date.today().strftime("%-d %B %Y")
 
-    cover_page: bool = bool(config.get("cover_page", False))
+    cover_page: bool = coerce_bool(config.get("cover_page"), False)
 
     cover_logo_path = _resolve_logo(config.get("cover_logo"), repo_root, doc_path)
     cover_logo_uri = cover_logo_path.as_uri() if cover_logo_path else None
