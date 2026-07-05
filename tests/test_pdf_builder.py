@@ -35,6 +35,30 @@ class TestResolveCss:
         assert generated.exists()
         assert result == generated.resolve()
 
+    def test_root_theme_css_found_for_root_doc(self, tmp_repo):
+        """A hand-written _theme.css at the repo root applies to a doc at the root.
+
+        Regression: the candidate walk excluded the repo root itself, so the
+        root theme was skipped and a default _pdf-theme.css was generated next
+        to it, silently shadowing the brand theme forever after.
+        """
+        css = tmp_repo / "_theme.css"
+        css.write_text("body { color: navy; }")
+        doc = tmp_repo / "form.md"
+        doc.write_text("# F\n")
+        result = _resolve_css({}, tmp_repo, doc_path=doc)
+        assert result == css.resolve()
+        assert not (tmp_repo / "_pdf-theme.css").exists()  # no shadow generated
+
+    def test_root_theme_css_found_for_subdir_doc(self, tmp_repo):
+        css = tmp_repo / "_theme.css"
+        css.write_text("body { color: navy; }")
+        sub = tmp_repo / "clients"
+        sub.mkdir()
+        doc = sub / "form.md"
+        doc.write_text("# F\n")
+        assert _resolve_css({}, tmp_repo, doc_path=doc) == css.resolve()
+
     def test_nested_css_in_doc_dir(self, tmp_repo):
         """_pdf-theme.css placed next to the document is picked up."""
         doc_dir = tmp_repo / "products" / "alpha"

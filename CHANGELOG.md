@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **A `_theme.css` at the repo root now applies to documents at the root.**
+  The theme resolver's directory walk excluded the repo root itself, so a
+  hand-written root theme was skipped and a default `_pdf-theme.css` was
+  auto-generated next to it — silently shadowing the brand theme from then on.
 - **The first body H1 no longer forces a page break** (PDF + Word). With a
   letterhead include before the H1, the theme's `h1 { page-break-before:
   always }` used to strand the letterhead alone on a near-blank page 1 —

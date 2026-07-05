@@ -230,29 +230,31 @@ def _field_to_html(field_spec: str) -> str:
             return f'<select name="{_escape_html(name)}"{req}>\n{opts_html}\n</select>'
 
         elif ftype in ("radio", "radio-inline"):
+            # Span-level markup: block-level <div>s inside generated table
+            # cells get restructured by md_in_html, merging adjacent cells.
             inline = ftype == "radio-inline"
-            style = ' style="display: inline; margin-right: 12pt;"' if inline else ""
             sep = "\n" if inline else "<br>\n"
             items = []
             for o in options:
                 val = o.lower().replace(" ", "_").replace("-", "_")
                 items.append(
-                    f'<label{style}><input type="radio" name="{_escape_html(name)}" '
+                    f'<label class="option-item"><input type="radio" '
+                    f'name="{_escape_html(name)}" '
                     f'value="{_escape_html(val)}"> {_escape_html(o)}</label>'
                 )
-            return f"<div>\n{sep.join(items)}\n</div>"
+            return f'<span class="option-group">{sep.join(items)}</span>'
 
         elif ftype == "checkbox-inline":
             items = []
             for o in options:
                 field_name = f"{name}_{o.lower().replace(' ', '_').replace('-', '_')}"
                 items.append(
-                    f'<label style="display: inline; margin-right: 12pt;">'
+                    f'<label class="option-item">'
                     f'<input type="checkbox" name="{_escape_html(field_name)}"> '
                     f"{_escape_html(o)}</label>"
                 )
             joined = "\n".join(items)
-            return f"<div>\n{joined}\n</div>"
+            return f'<span class="option-group">{joined}</span>'
 
         return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
@@ -273,8 +275,9 @@ def _field_to_html(field_spec: str) -> str:
                 f" {_escape_html(str(label_text))}" if label_text and label_text is not True else ""
             )
             return (
-                f'<div><label><input type="checkbox" name="{_escape_html(name)}"{req}{extra}>'
-                f"{label_html}</label></div>"
+                f'<label class="option-item">'
+                f'<input type="checkbox" name="{_escape_html(name)}"{req}{extra}>'
+                f"{label_html}</label>"
             )
         elif ftype == "yesno":
             # Insurance-style Yes/No checkbox pair (fields <name>_yes / <name>_no).
@@ -346,7 +349,11 @@ def _expand_row_block(row_content: str) -> str:
             )
         rows_html.append(f'<tr style="background: none;">{"".join(tds)}</tr>')
 
-    return f'<table style="border: none; width: 100%;">\n' f'{"".join(rows_html)}\n' f"</table>"
+    return (
+        f'<table class="field-row" style="border: none; width: 100%;">\n'
+        f'{"".join(rows_html)}\n'
+        f"</table>"
+    )
 
 
 def _expand_box_block(args: str | None, box_content: str) -> str:
@@ -767,31 +774,67 @@ _BASE_FIXES_CSS = (
 )
 
 # Injected only for pdf_forms documents. Provides the insurance-form
-# constructs (?[box] field grids, ?[yesno:] pairs) and fixes the signature
-# block (previously a dark filled bar colliding with its rule).
+# constructs (?[box] field grids, ?[yesno:] pairs), gives ordinary tables a
+# ruled-grid look (forms want black rules, not the report theme's shaded
+# header + zebra rows), and fixes the signature block.
 _FORM_SUPPORT_CSS = """<style>
-/* Bordered field-grid (?[box] … ?[/box]) — labels live inside the cells */
-table.field-box { width: 100%; border-collapse: collapse; border: 1.2pt solid #333333; margin: 4pt 0 10pt 0; page-break-inside: auto; }
-table.field-box td { border: 0.6pt solid #333333; padding: 4pt 6pt 5pt 6pt; vertical-align: top; }
+/* Forms don't show the running date used by report footers */
+.running-date { display: none; }
+/* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
+   the cells, deterministic row heights so the grid has an even rhythm */
+table.field-box { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; margin: 3pt 0 10pt 0; page-break-inside: auto; }
+table.field-box td { border: 0.5pt solid #000000; padding: 3pt 5pt; vertical-align: top; line-height: 1.25; }
 table.field-box tr { page-break-inside: avoid; }
+table.field-box strong { font-size: 0.95em; }
+table.field-box em { font-size: 7.5pt; }
 table.field-box input[type="text"], table.field-box input[type="email"],
 table.field-box input[type="date"], table.field-box input[type="number"],
 table.field-box input[type="tel"], table.field-box input[type="url"],
-table.field-box textarea, table.field-box select {
-  border: none; background: transparent; width: 100%; margin: 0; padding: 1pt 0; border-radius: 0;
+table.field-box select {
+  appearance: auto; border: none; background: transparent; border-radius: 0;
+  width: 100%; height: 14pt; margin: 0; padding: 0 1pt; font-size: 10pt;
 }
-table.field-box em { font-size: 7.5pt; }
-/* Fillable cells inside ordinary markdown tables */
+/* A bare write-in row (input with no label in the cell) gets a taller band */
+table.field-box td > input:only-child { height: 19pt; }
+table.field-box textarea {
+  appearance: auto; border: none; background: transparent; border-radius: 0;
+  width: 100%; margin: 0; padding: 1pt; font-size: 10pt; resize: none;
+}
+/* Borderless side-by-side cells (?[row]) — bare inputs show a writing rule */
+table.field-row td > input[type="text"], table.field-row td > input[type="email"],
+table.field-row td > input[type="date"], table.field-row td > input[type="number"],
+table.field-row td > input[type="tel"], table.field-row td > input[type="url"] {
+  border: none; border-bottom: 0.75pt solid #555555;
+}
+/* Ordinary markdown tables in a form document: ruled black grid, no report
+   styling (shaded header, zebra rows) — matches the application-form look */
+.report-body table:not(.field-box):not(.field-row) { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; }
+.report-body table:not(.field-box) th {
+  border: 0.5pt solid #000000; background: none; color: inherit;
+  text-transform: none; letter-spacing: 0; padding: 3pt 5pt; font-size: inherit;
+}
+.report-body table:not(.field-box) td { border: 0.5pt solid #000000; padding: 3pt 5pt; }
+.report-body table:not(.field-box) tr:nth-child(even) td { background: none; }
+.report-body table:not(.field-box) tr:last-child td { border-bottom: 0.5pt solid #000000; }
+/* Fillable cells inside those tables */
 table td > input[type="text"], table td > input[type="email"],
 table td > input[type="date"], table td > input[type="number"],
 table td > input[type="tel"], table td > input[type="url"],
 table td > textarea, table td > select {
-  border: none; background: transparent; width: 100%; margin: 0; padding: 1pt 0; border-radius: 0;
+  appearance: auto; border: none; background: transparent; border-radius: 0;
+  width: 100%; height: 13pt; margin: 0; padding: 0 1pt; font-size: 10pt;
 }
+/* Checkboxes sit inline beside their label (the UA form stylesheet makes
+   inputs block-level, which strands the label on the next line) */
+input[type="checkbox"], input[type="radio"] {
+  display: inline-block; width: 11pt; height: 11pt;
+  margin: 1pt 5pt 1pt 1pt; vertical-align: middle;
+}
+/* Checkbox / radio items — span-level so table cells survive md_in_html */
+label.option-item { display: inline-block; margin: 1pt 12pt 1pt 0; }
 /* Yes/No checkbox pair (?[yesno: name]) */
 .yesno { white-space: nowrap; }
 .yesno label { display: inline; margin-right: 14pt; }
-.yesno input[type="checkbox"] { width: 11pt; height: 11pt; margin-right: 5pt; }
 /* Signature block — transparent field over a single rule, kept on one page */
 .signature-field { page-break-inside: avoid; margin: 12pt 0 14pt 0; width: 60%; }
 .signature-input {
@@ -1293,10 +1336,14 @@ def _resolve_css(
         doc_dir = doc_path.parent if doc_path.is_file() else doc_path
         try:
             rel = doc_dir.relative_to(repo_root)
-            # All dirs from repo_root to doc_dir (inclusive), deepest first
+            # All dirs from doc_dir up to repo_root (INCLUSIVE), deepest first.
+            # The root itself must be a candidate: a hand-written _theme.css at
+            # the project root was previously skipped, silently shadowed by an
+            # auto-generated default _pdf-theme.css.
             candidate_dirs = [
                 repo_root / Path(*rel.parts[:i]) for i in range(len(rel.parts), 0, -1)
             ]
+            candidate_dirs.append(repo_root)
         except ValueError:
             candidate_dirs = [doc_dir]
         for directory in candidate_dirs:
