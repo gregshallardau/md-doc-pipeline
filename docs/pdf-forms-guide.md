@@ -415,3 +415,89 @@ Add small explanatory text below a label using a paragraph or `<small>` tag.
 | `<select>` | Dropdown | `name`, `required` |
 | `<textarea>` | Multiline text | `name`, `rows`, `required` |
 | `<input type="submit">` | Submit button | `value` (button text) |
+
+---
+
+## The `?[...]` shorthand (recommended)
+
+Instead of raw HTML you can write fields with a compact marker. The shorthand
+produces the same interactive fields, adds insurance-form layout constructs,
+gets linted (`md-doc lint` catches typo'd types, duplicate names, and a
+missing `pdf_forms: true`), **and maps to fillable Word form fields in
+`.dotx` output** — one source, fillable PDF *and* fillable Word template.
+
+### Field types
+
+```markdown
+?[text: full_name, required]            text input (also: email, date, number, tel, url)
+?[text: abn, maxlength=14]              maxlength carries into the PDF
+?[text: quote_ref, readonly, value=Q-1024]   prefilled + locked
+?[text: email, title=Where documents are sent]   title= becomes the hover tooltip
+?[textarea: notes, rows=4]              multiline text
+?[checkbox: agree, label=I agree]       single checkbox (+ checked to pre-tick)
+?[yesno: cover_required]                Yes/No checkbox pair (fields <name>_yes / <name>_no)
+?[select: region | -- Select -- | North | South]   dropdown
+?[radio-inline: priority | Low | Medium | High]    radio group
+?[signature: signed_by]                 signature line
+?[submit Send]                          submit button
+```
+
+### Layout constructs
+
+**Bordered field grid** (`?[box]`) — the insurance-application look: every
+line is a row, cells split on `|`, labels and `*hints*` live inside the
+bordered cells, and inputs fill the remaining space:
+
+```markdown
+?[box]
+**Insured Name** *Including any registered business name* ?[text: insured_name]
+**City** ?[text: city] | **State** ?[text: state] | **Post Code** ?[text: post_code]
+?[/box]
+
+?[box: widths=72,28]
+Do you require cover for agistment? *If No, go to Section 8.* | ?[yesno: agistment]
+What is the maximum value horse on agistment? | $ ?[number: max_value]
+?[textarea: further_details, rows=3]
+?[/box]
+```
+
+`widths=` fixes column proportions; rows with fewer cells span the full grid.
+
+**Side-by-side fields without borders** (`?[row]`):
+
+```markdown
+?[row]
+?[signature: applicant] | **Date** ?[date: signed_on]
+?[/row]
+```
+
+**Fillable cells in ordinary markdown tables** — put a field in a cell and it
+renders borderless, filling the cell:
+
+```markdown
+| Activity | % of turnover | $ amount |
+|:---------|:--------------|:---------|
+| Agistment | ?[number: agistment_pct] | ?[number: agistment_amt] |
+```
+
+### What actually reaches the PDF (verified on WeasyPrint 68.x)
+
+| Attribute | Carried by WeasyPrint | md-doc adds it |
+|-----------|----------------------|----------------|
+| `name`, `value`, `checked`, `maxlength` | ✅ native | — |
+| `required` | ❌ dropped | ✅ `/Ff` Required flag |
+| `readonly` | ❌ dropped | ✅ `/Ff` ReadOnly flag |
+| `title` (tooltip) | ❌ dropped | ✅ `/TU` (hover text + screen readers) |
+| `<option selected>` default | ❌ dropped | ✅ `/V` on the dropdown |
+
+md-doc patches the missing ones into the PDF automatically (for both the
+shorthand and raw-HTML forms), so `required`/`readonly`/`title` behave as
+documented in any AcroForm viewer.
+
+### Word output
+
+- **`.dotx`** — `?[...]` fields become real Word form fields: text-ish types →
+  Text Form Fields, `checkbox`/`yesno` → legacy checkboxes (FORMCHECKBOX),
+  `select`/`radio` → dropdowns (FORMDROPDOWN). Protect the template for
+  filling in Word (Review → Restrict Editing → Filling in forms).
+- **`.docx`** — fields render as `________` fill-in lines for print-and-write.

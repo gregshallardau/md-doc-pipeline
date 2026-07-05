@@ -144,6 +144,13 @@ def _inject_page_breaks(md_content: str) -> str:
 _FORM_FIELD_RE = re.compile(r"\?\[(.+?)\]")
 _ROW_OPEN_RE = re.compile(r"^\?\[row\]\s*$", re.MULTILINE)
 _ROW_CLOSE_RE = re.compile(r"^\?\[/row\]\s*$", re.MULTILINE)
+# ?[box] … ?[/box] — bordered field-grid (insurance-application style): every
+# line is a row, cells split on |, labels/hints live INSIDE the bordered cell.
+_BOX_OPEN_RE = re.compile(r"^\?\[box(?::\s*([^\]]*))?\]\s*$", re.MULTILINE)
+_BOX_BLOCK_RE = re.compile(
+    r"^\?\[box(?::\s*([^\]]*))?\]\s*\n(.*?)\n\?\[/box\]\s*$",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def _parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
@@ -159,6 +166,34 @@ def _parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
         else:
             attrs[part] = True
     return attrs
+
+
+# Input types the ?[...] shorthand passes through verbatim; anything else
+# falls back to a plain text input.
+_INPUT_TYPES = ("text", "email", "date", "number", "tel", "url")
+# Every field type the shorthand understands (used by the linter too).
+KNOWN_FORM_FIELD_TYPES = frozenset(
+    (*_INPUT_TYPES, "textarea", "checkbox", "signature", "select", "radio")
+    + ("radio-inline", "checkbox-inline", "yesno")
+)
+
+
+def _extra_attrs_html(attrs: dict[str, str | bool], skip: tuple[str, ...] = ()) -> str:
+    """Render parsed field attrs as HTML attributes (safe names only)."""
+    extra = ""
+    for k, v in attrs.items():
+        if k in skip:
+            continue
+        # Only emit attributes whose name is a safe HTML identifier, and never
+        # event handlers — a crafted key like ``onfocus=alert(1)`` must not
+        # become active markup.
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", k) or k.lower().startswith("on"):
+            continue
+        if v is True:
+            extra += f" {k}"
+        else:
+            extra += f' {k}="{_escape_html(str(v))}"'
+    return extra
 
 
 def _field_to_html(field_spec: str) -> str:
@@ -195,29 +230,31 @@ def _field_to_html(field_spec: str) -> str:
             return f'<select name="{_escape_html(name)}"{req}>\n{opts_html}\n</select>'
 
         elif ftype in ("radio", "radio-inline"):
+            # Span-level markup: block-level <div>s inside generated table
+            # cells get restructured by md_in_html, merging adjacent cells.
             inline = ftype == "radio-inline"
-            style = ' style="display: inline; margin-right: 12pt;"' if inline else ""
             sep = "\n" if inline else "<br>\n"
             items = []
             for o in options:
                 val = o.lower().replace(" ", "_").replace("-", "_")
                 items.append(
-                    f'<label{style}><input type="radio" name="{_escape_html(name)}" '
+                    f'<label class="option-item"><input type="radio" '
+                    f'name="{_escape_html(name)}" '
                     f'value="{_escape_html(val)}"> {_escape_html(o)}</label>'
                 )
-            return f"<div>\n{sep.join(items)}\n</div>"
+            return f'<span class="option-group">{sep.join(items)}</span>'
 
         elif ftype == "checkbox-inline":
             items = []
             for o in options:
                 field_name = f"{name}_{o.lower().replace(' ', '_').replace('-', '_')}"
                 items.append(
-                    f'<label style="display: inline; margin-right: 12pt;">'
+                    f'<label class="option-item">'
                     f'<input type="checkbox" name="{_escape_html(field_name)}"> '
                     f"{_escape_html(o)}</label>"
                 )
             joined = "\n".join(items)
-            return f"<div>\n{joined}\n</div>"
+            return f'<span class="option-group">{joined}</span>'
 
         return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
@@ -227,30 +264,29 @@ def _field_to_html(field_spec: str) -> str:
         attrs = _parse_field_attrs(",".join(parts[1:])) if len(parts) > 1 else {}
 
         req = " required" if attrs.get("required") else ""
-        extra = ""
-        for k, v in attrs.items():
-            if k == "required":
-                continue
-            # Only emit attributes whose name is a safe HTML identifier; a
-            # crafted key like ``onfocus=alert(1)`` must not become markup.
-            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", k):
-                continue
-            if v is True:
-                extra += f" {k}"
-            else:
-                extra += f' {k}="{_escape_html(str(v))}"'
+        extra = _extra_attrs_html(attrs, skip=("required", "label", "rows"))
 
         if ftype == "textarea":
             rows = _escape_html(str(attrs.get("rows", "4")))
-            return f'<textarea name="{_escape_html(name)}" rows="{rows}"{req}></textarea>'
+            return f'<textarea name="{_escape_html(name)}" rows="{rows}"{req}{extra}></textarea>'
         elif ftype == "checkbox":
             label_text = attrs.get("label", "")
             label_html = (
                 f" {_escape_html(str(label_text))}" if label_text and label_text is not True else ""
             )
             return (
-                f'<div><label><input type="checkbox" name="{_escape_html(name)}"{req}>'
-                f"{label_html}</label></div>"
+                f'<label class="option-item">'
+                f'<input type="checkbox" name="{_escape_html(name)}"{req}{extra}>'
+                f"{label_html}</label>"
+            )
+        elif ftype == "yesno":
+            # Insurance-style Yes/No checkbox pair (fields <name>_yes / <name>_no).
+            n = _escape_html(name)
+            return (
+                f'<span class="yesno">'
+                f'<label><input type="checkbox" name="{n}_yes"> Yes</label>'
+                f'<label><input type="checkbox" name="{n}_no"> No</label>'
+                f"</span>"
             )
         elif ftype == "signature":
             return (
@@ -261,12 +297,32 @@ def _field_to_html(field_spec: str) -> str:
                 f"</div>"
             )
         else:
-            input_type = ftype if ftype in ("text", "email", "date", "number") else "text"
+            input_type = ftype if ftype in _INPUT_TYPES else "text"
             return f'<input type="{input_type}" name="{_escape_html(name)}"{req}{extra}>'
 
 
+_BOLD_SPAN_RE = re.compile(r"\*\*(.+?)\*\*")
+_EM_SPAN_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
+
+
+def _cell_to_html(cell: str) -> str:
+    """Expand fields + inline ``**bold**``/``*italic*`` spans in a grid cell.
+
+    Generated tables are raw HTML blocks, which python-markdown leaves
+    untouched — so inline label markup must be converted here.
+    """
+    html = _FORM_FIELD_RE.sub(lambda m: _field_to_html(m.group(1)), cell)
+    html = _BOLD_SPAN_RE.sub(r"<strong>\1</strong>", html)
+    html = _EM_SPAN_RE.sub(r"<em>\1</em>", html)
+    return html
+
+
 def _expand_row_block(row_content: str) -> str:
-    """Expand a ?[row]...?[/row] block into a borderless table."""
+    """Expand a ?[row]...?[/row] block into a borderless table.
+
+    Cells may carry inline labels (``**City** ?[text: city]``) — bold/italic
+    spans are converted here since the block is raw HTML to markdown.
+    """
     lines = row_content.strip().split("\n")
     rows_html: list[str] = []
 
@@ -286,14 +342,79 @@ def _expand_row_block(row_content: str) -> str:
             padding = (
                 "0 8pt 4pt 0" if i == 0 else ("0 0 4pt 8pt" if i == n - 1 else "0 8pt 4pt 8pt")
             )
-            cell_html = _FORM_FIELD_RE.sub(lambda m: _field_to_html(m.group(1)), cell)
             tds.append(
-                f'<td style="border: none; width: {width}; padding: {padding}; vertical-align: top;">'
-                f"{cell_html}</td>"
+                f'<td style="border: none; width: {width}; '
+                f'padding: {padding}; vertical-align: top;">'
+                f"{_cell_to_html(cell)}</td>"
             )
         rows_html.append(f'<tr style="background: none;">{"".join(tds)}</tr>')
 
-    return f'<table style="border: none; width: 100%;">\n' f'{"".join(rows_html)}\n' f"</table>"
+    return (
+        f'<table class="field-row" style="border: none; width: 100%;">\n'
+        f'{"".join(rows_html)}\n'
+        f"</table>"
+    )
+
+
+def _expand_box_block(args: str | None, box_content: str) -> str:
+    """Expand a ?[box]...?[/box] block into a bordered field-grid table.
+
+    The insurance-application construct: every content line is a grid row,
+    cells split on ``|``, and labels/hints live *inside* the bordered cell with
+    the input filling the remaining space. ``?[box: widths=70,30]`` fixes the
+    column proportions (otherwise cells share the row evenly).
+
+    ```
+    ?[box: widths=72,28]
+    Do you require cover? *If No, go to Section 8* | ?[yesno: cover]
+    How many horses do you agist at any one time? | ?[text: horse_count]
+    ?[textarea: details, rows=4]
+    ?[/box]
+    ```
+    """
+    widths: list[float] = []
+    if args:
+        m = re.search(r"widths\s*=\s*([\d.,\s]+)", args)
+        if m:
+            try:
+                widths = [float(w) for w in m.group(1).split(",") if w.strip()]
+            except ValueError:
+                widths = []
+    total = sum(widths) if widths else 0.0
+
+    # Parse rows first so short rows can span the full grid width (colspan).
+    rows: list[list[str]] = []
+    for line in box_content.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        cells = [c for c in cells if c]
+        if cells:
+            rows.append(cells)
+    if not rows:
+        return ""
+    max_cols = max(len(r) for r in rows)
+
+    rows_html: list[str] = []
+    for cells in rows:
+        n = len(cells)
+        tds = []
+        for i, cell in enumerate(cells):
+            is_last = i == n - 1
+            span = max_cols - n + 1 if is_last and n < max_cols else 1
+            colspan = f' colspan="{span}"' if span > 1 else ""
+            if widths and len(widths) == max_cols and total > 0 and span == 1:
+                width_style = f' style="width: {widths[i] / total * 100:.2f}%;"'
+            elif n == max_cols:
+                width_style = f' style="width: {100 // max_cols}%;"'
+            else:
+                width_style = ""
+            tds.append(f"<td{colspan}{width_style}>{_cell_to_html(cell)}</td>")
+        rows_html.append(f"<tr>{''.join(tds)}</tr>")
+
+    body = "".join(rows_html)
+    return f'<table class="field-box">\n{body}\n</table>'
 
 
 def _expand_form_fields(md_content: str, is_form: bool) -> str:
@@ -314,7 +435,16 @@ def _expand_form_fields(md_content: str, is_form: bool) -> str:
             text = pattern.sub(lambda m: _expand_row_block(m.group(1)), text)
         return text
 
-    result = expand_rows(md_content)
+    def expand_boxes(text: str) -> str:
+        while _BOX_OPEN_RE.search(text):
+            new = _BOX_BLOCK_RE.sub(lambda m: _expand_box_block(m.group(1), m.group(2)), text)
+            if new == text:  # unmatched ?[box] without ?[/box] — stop looping
+                break
+            text = new
+        return text
+
+    result = expand_boxes(md_content)
+    result = expand_rows(result)
     result = _FORM_FIELD_RE.sub(lambda m: _field_to_html(m.group(1)), result)
 
     if is_form and "<form" not in result.lower():
@@ -545,6 +675,185 @@ def _build_cover(
 """
 
 
+def _collect_form_field_meta(html_body: str) -> dict[str, dict[str, Any]]:
+    """Collect per-field metadata WeasyPrint drops from the generated PDF.
+
+    WeasyPrint 68.x carries ``value``/``checked``/``maxlength`` into the
+    AcroForm, but silently ignores ``required``, ``readonly``, ``title``
+    (tooltip) and a ``<select>``'s ``selected`` option. We collect those from
+    the final HTML (works for both raw-HTML forms and ``?[...]`` shorthand)
+    and patch them into the PDF via the ``finisher`` hook.
+    """
+    from html.parser import HTMLParser
+
+    meta: dict[str, dict[str, Any]] = {}
+
+    class _P(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self._select: str | None = None
+
+        def handle_starttag(self, tag: str, attrs: list) -> None:
+            a = dict(attrs)
+            name = a.get("name")
+            if tag in ("input", "textarea", "select") and name:
+                entry = meta.setdefault(name, {})
+                if "required" in a:
+                    entry["required"] = True
+                if "readonly" in a:
+                    entry["readonly"] = True
+                if a.get("title"):
+                    entry["tooltip"] = a["title"]
+                if tag == "select":
+                    self._select = name
+            elif tag == "option" and self._select and "selected" in a:
+                value = a.get("value")
+                if value is None:
+                    self._pending_option = True  # value = option text
+                else:
+                    meta.setdefault(self._select, {})["default"] = value
+
+        def handle_data(self, data: str) -> None:
+            if getattr(self, "_pending_option", False) and self._select:
+                meta.setdefault(self._select, {})["default"] = data.strip()
+                self._pending_option = False
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == "select":
+                self._select = None
+
+    _P().feed(html_body)
+    return {k: v for k, v in meta.items() if v}
+
+
+def _make_forms_finisher(field_meta: dict[str, dict[str, Any]]):
+    """Build a WeasyPrint ``finisher`` that patches AcroForm field dicts.
+
+    Sets ``/Ff`` bit 1 (ReadOnly) and bit 2 (Required), ``/TU`` (tooltip,
+    shown by viewers on hover and read by screen readers) and ``/V`` for a
+    select's default option — none of which WeasyPrint 68.x writes itself.
+    """
+
+    def finisher(document: Any, pdf: Any) -> None:
+        import pydyf
+
+        for obj in pdf.objects:
+            try:
+                if not isinstance(obj, pydyf.Dictionary) or "FT" not in obj:
+                    continue
+                t = obj.get("T")
+                name = t.string if hasattr(t, "string") else None
+                if not name or name not in field_meta:
+                    continue
+                entry = field_meta[name]
+                flags = int(obj.get("Ff", 0) or 0)
+                if entry.get("readonly"):
+                    flags |= 1  # bit 1 — ReadOnly
+                if entry.get("required"):
+                    flags |= 2  # bit 2 — Required
+                if flags:
+                    obj["Ff"] = flags
+                if entry.get("tooltip"):
+                    obj["TU"] = pydyf.String(entry["tooltip"])
+                if entry.get("default") and obj.get("FT") == "/Ch":
+                    obj["V"] = pydyf.String(entry["default"])
+            except Exception:  # never let metadata patching break the build
+                logging.getLogger(__name__).warning(
+                    "pdf forms: could not patch field metadata", exc_info=True
+                )
+
+    return finisher
+
+
+# Always-on layout fixes, independent of the theme file's age:
+# the FIRST H1 of the body must not force a page break — with a letterhead
+# include before it, the theme's `h1 { page-break-before: always }` would
+# otherwise strand the letterhead alone on a near-blank page 1.
+# - adjacent tables must never render flush: with a theme that sets no
+#   `table { margin }`, two separate tables looked like one merged grid.
+#   Vertical margins collapse, so themes that already space tables are not
+#   double-spaced.
+_BASE_FIXES_CSS = (
+    "<style>\n"
+    ".report-body > h1:first-of-type { page-break-before: auto; }\n"
+    ".report-body table + table { margin-top: 10pt; }\n"
+    "</style>"
+)
+
+# Injected only for pdf_forms documents. Provides the insurance-form
+# constructs (?[box] field grids, ?[yesno:] pairs), gives ordinary tables a
+# ruled-grid look (forms want black rules, not the report theme's shaded
+# header + zebra rows), and fixes the signature block.
+_FORM_SUPPORT_CSS = """<style>
+/* Forms don't show the running date used by report footers */
+.running-date { display: none; }
+/* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
+   the cells, deterministic row heights so the grid has an even rhythm */
+table.field-box { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; margin: 3pt 0 10pt 0; page-break-inside: auto; }
+table.field-box td { border: 0.5pt solid #000000; padding: 3pt 5pt; vertical-align: top; line-height: 1.25; }
+table.field-box tr { page-break-inside: avoid; }
+table.field-box strong { font-size: 0.95em; }
+table.field-box em { font-size: 7.5pt; }
+table.field-box input[type="text"], table.field-box input[type="email"],
+table.field-box input[type="date"], table.field-box input[type="number"],
+table.field-box input[type="tel"], table.field-box input[type="url"],
+table.field-box select {
+  appearance: auto; border: none; background: transparent; border-radius: 0;
+  width: 100%; height: 14pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+}
+/* A bare write-in row (input with no label in the cell) gets a taller band */
+table.field-box td > input:only-child { height: 19pt; }
+table.field-box textarea {
+  appearance: auto; border: none; background: transparent; border-radius: 0;
+  width: 100%; margin: 0; padding: 1pt; font-size: 10pt; resize: none;
+}
+/* Borderless side-by-side cells (?[row]) — bare inputs show a writing rule */
+table.field-row td > input[type="text"], table.field-row td > input[type="email"],
+table.field-row td > input[type="date"], table.field-row td > input[type="number"],
+table.field-row td > input[type="tel"], table.field-row td > input[type="url"] {
+  border: none; border-bottom: 0.75pt solid #555555;
+}
+/* Ordinary markdown tables in a form document: ruled black grid, no report
+   styling (shaded header, zebra rows) — matches the application-form look */
+.report-body table:not(.field-box):not(.field-row) { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; }
+.report-body table:not(.field-box) th {
+  border: 0.5pt solid #000000; background: none; color: inherit;
+  text-transform: none; letter-spacing: 0; padding: 3pt 5pt; font-size: inherit;
+}
+.report-body table:not(.field-box) td { border: 0.5pt solid #000000; padding: 3pt 5pt; }
+.report-body table:not(.field-box) tr:nth-child(even) td { background: none; }
+.report-body table:not(.field-box) tr:last-child td { border-bottom: 0.5pt solid #000000; }
+/* Fillable cells inside those tables */
+table td > input[type="text"], table td > input[type="email"],
+table td > input[type="date"], table td > input[type="number"],
+table td > input[type="tel"], table td > input[type="url"],
+table td > textarea, table td > select {
+  appearance: auto; border: none; background: transparent; border-radius: 0;
+  width: 100%; height: 13pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+}
+/* Checkboxes sit inline beside their label (the UA form stylesheet makes
+   inputs block-level, which strands the label on the next line) */
+input[type="checkbox"], input[type="radio"] {
+  display: inline-block; width: 11pt; height: 11pt;
+  margin: 1pt 5pt 1pt 1pt; vertical-align: middle;
+}
+/* Checkbox / radio items — span-level so table cells survive md_in_html */
+label.option-item { display: inline-block; margin: 1pt 12pt 1pt 0; }
+/* Yes/No checkbox pair (?[yesno: name]) */
+.yesno { white-space: nowrap; }
+.yesno label { display: inline; margin-right: 14pt; }
+/* Signature block — transparent field over a single rule, kept on one page */
+.signature-field { page-break-inside: avoid; margin: 12pt 0 14pt 0; width: 60%; }
+.signature-input {
+  appearance: auto; display: block; width: 100%; height: 26pt; min-height: 26pt;
+  border: none; border-bottom: 1pt solid #555555; border-radius: 0;
+  background: transparent; margin: 0; padding: 2pt 0; resize: none;
+}
+.signature-line { display: none; }
+.signature-label { font-size: 7.5pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #7f8c9a; margin-top: 3pt; }
+</style>"""
+
+
 def _build_html(
     title: str,
     date_str: str,
@@ -567,6 +876,7 @@ def _build_html(
     footer_right: str | None = None,
     primary_color: str | None = None,
     css_vars_style: str = "",
+    is_form: bool = False,
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -614,12 +924,14 @@ def _build_html(
   <meta charset="utf-8">
   <title>{_escape_html(title)}</title>
   <link rel="stylesheet" href="{css_uri}">
+  {_BASE_FIXES_CSS}
   {header_style}
   {footer_style}
   {section_bar_style}
   {table_col_widths_style}
   {body_align_style}
   {cover_support_style}
+  {_FORM_SUPPORT_CSS if is_form else ""}
   {css_vars_style}
   {page_bar_css}
 </head>
@@ -1031,10 +1343,14 @@ def _resolve_css(
         doc_dir = doc_path.parent if doc_path.is_file() else doc_path
         try:
             rel = doc_dir.relative_to(repo_root)
-            # All dirs from repo_root to doc_dir (inclusive), deepest first
+            # All dirs from doc_dir up to repo_root (INCLUSIVE), deepest first.
+            # The root itself must be a candidate: a hand-written _theme.css at
+            # the project root was previously skipped, silently shadowed by an
+            # auto-generated default _pdf-theme.css.
             candidate_dirs = [
                 repo_root / Path(*rel.parts[:i]) for i in range(len(rel.parts), 0, -1)
             ]
+            candidate_dirs.append(repo_root)
         except ValueError:
             candidate_dirs = [doc_dir]
         for directory in candidate_dirs:
@@ -1215,10 +1531,17 @@ def build(
         footer_right=footer_right,
         primary_color=primary_color,
         css_vars_style=_build_css_vars_style(config, repo_root, doc_path),
+        is_form=is_form,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    wp_kwargs = {"pdf_forms": True} if config.get("pdf_forms") else {}
+    wp_kwargs: dict[str, Any] = {}
+    if is_form:
+        wp_kwargs["pdf_forms"] = True
+        # Patch metadata WeasyPrint drops (required/readonly/tooltip/defaults).
+        field_meta = _collect_form_field_meta(html_body)
+        if field_meta:
+            wp_kwargs["finisher"] = _make_forms_finisher(field_meta)
     weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(
         str(out_path), **wp_kwargs
     )

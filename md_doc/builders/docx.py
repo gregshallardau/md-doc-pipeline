@@ -87,7 +87,10 @@ _MD_EXTENSIONS = [
     "toc",
 ]
 
-_MERGE_RE = re.compile(r"\[\[(\w+)\]\]")
+# [[name]] — Word field markers. Also matches the internal markers the dotx
+# form-conversion emits for the ?[...] shorthand: [[?cb:name]] (checkbox) and
+# [[?dd:name|Option 1|Option 2]] (dropdown). Plain user markers stay \w+ only.
+_MERGE_RE = re.compile(r"\[\[(\?(?:cb|dd):[^\[\]]+|\w+)\]\]")
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +253,74 @@ def _insert_form_field(
         run.bold = True
     if italic:
         run.italic = True
+
+    run = paragraph.add_run()
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_end)
+
+
+def _insert_checkbox_form_field(paragraph: Any, field_name: str) -> None:
+    """Append a Word legacy checkbox form field (FORMCHECKBOX) to *paragraph*."""
+    run = paragraph.add_run()
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    ff_data = OxmlElement("w:ffData")
+    ff_name = OxmlElement("w:name")
+    ff_name.set(qn("w:val"), field_name)
+    ff_data.append(ff_name)
+    ff_data.append(OxmlElement("w:enabled"))
+    ff_calc = OxmlElement("w:calcOnExit")
+    ff_calc.set(qn("w:val"), "0")
+    ff_data.append(ff_calc)
+    checkbox = OxmlElement("w:checkBox")
+    checkbox.append(OxmlElement("w:sizeAuto"))
+    default = OxmlElement("w:default")
+    default.set(qn("w:val"), "0")
+    checkbox.append(default)
+    ff_data.append(checkbox)
+    fld_begin.append(ff_data)
+    run._r.append(fld_begin)
+
+    run = paragraph.add_run()
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = " FORMCHECKBOX "
+    run._r.append(instr)
+
+    run = paragraph.add_run()
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run._r.append(fld_end)
+
+
+def _insert_dropdown_form_field(paragraph: Any, field_name: str, options: list[str]) -> None:
+    """Append a Word legacy dropdown form field (FORMDROPDOWN) to *paragraph*."""
+    run = paragraph.add_run()
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    ff_data = OxmlElement("w:ffData")
+    ff_name = OxmlElement("w:name")
+    ff_name.set(qn("w:val"), field_name)
+    ff_data.append(ff_name)
+    ff_data.append(OxmlElement("w:enabled"))
+    ff_calc = OxmlElement("w:calcOnExit")
+    ff_calc.set(qn("w:val"), "0")
+    ff_data.append(ff_calc)
+    dd_list = OxmlElement("w:ddList")
+    for opt in options:
+        entry = OxmlElement("w:listEntry")
+        entry.set(qn("w:val"), opt[:255])  # Word limit per entry
+        dd_list.append(entry)
+    ff_data.append(dd_list)
+    fld_begin.append(ff_data)
+    run._r.append(fld_begin)
+
+    run = paragraph.add_run()
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = " FORMDROPDOWN "
+    run._r.append(instr)
 
     run = paragraph.add_run()
     fld_end = OxmlElement("w:fldChar")
@@ -434,6 +505,9 @@ class _DocxBuilder(HTMLParser):
         # would leave an empty bullet followed by unbulleted body text.
         self._li_depth = 0
         self._li_fresh = False
+        # First body H1 never forces a page break (parity with the PDF's
+        # h1:first-of-type suppression).
+        self._seen_h1 = False
 
         # Table state — cells store raw inner HTML to preserve inline markup
         self._in_table = False
@@ -662,8 +736,14 @@ class _DocxBuilder(HTMLParser):
                             if line:
                                 self._style_inline_run(paragraph.add_run(line), **fmt)
                 else:
-                    # Field marker
-                    if self._field_type == "merge":
+                    # Field marker. [[?cb:name]] / [[?dd:name|opts]] are the
+                    # internal markers the dotx ?[...] conversion emits.
+                    if part.startswith("?cb:"):
+                        _insert_checkbox_form_field(paragraph, part[4:])
+                    elif part.startswith("?dd:"):
+                        dd_name, *dd_opts = part[4:].split("|")
+                        _insert_dropdown_form_field(paragraph, dd_name, dd_opts)
+                    elif self._field_type == "merge":
                         _insert_merge_field(paragraph, part, bold=bold, italic=italic)
                     else:
                         _insert_form_field(
@@ -735,10 +815,17 @@ class _DocxBuilder(HTMLParser):
                 self._paragraph.paragraph_format.keep_with_next = True
                 # Forced page break before this heading level (mirrors the PDF
                 # theme's `.report-body h1 { page-break-before: always }`).
-                # Skipped for the first content element — a forced break at the
-                # top of a page collapses in CSS, so Word must not add one.
-                if self._theme.get(f"page_break_before_{tag}") and (
-                    len(self.doc.element.body) - self._body_baseline > 1
+                # Skipped for the FIRST H1 of the body (even after a letterhead
+                # include — the PDF suppresses it via h1:first-of-type) and for
+                # the first content element of any level (a forced break at the
+                # top of a page collapses in CSS, so Word must not add one).
+                first_h1 = tag == "h1" and not self._seen_h1
+                if tag == "h1":
+                    self._seen_h1 = True
+                if (
+                    self._theme.get(f"page_break_before_{tag}")
+                    and not first_h1
+                    and (len(self.doc.element.body) - self._body_baseline > 1)
                 ):
                     self._paragraph.paragraph_format.page_break_before = True
                 # Headings carry id attrs (toc extension) — bookmark them so
@@ -2026,18 +2113,62 @@ def _strip_leading_h1(md_content: str) -> str:
     return re.sub(r"^#\s+.+\n?", "", md_content, count=1, flags=re.MULTILINE)
 
 
+_STRUCT_MARKER_RE = re.compile(r"^\?\[(/?(row|box)(:[^\]]*)?)\]\s*$", re.MULTILINE)
+
+
 def _strip_form_fields_for_docx(md_content: str) -> str:
     """Render PDF ``?[...]`` form markers as a plain fill-in line for Word.
 
-    Word output doesn't support the interactive AcroForm fields the PDF builder
-    produces from ``?[...]`` markers, so rather than leaking the literal marker
-    text we substitute an underscore fill-in line. ``?[row]``/``?[/row]`` layout
-    markers are dropped.
+    Plain ``.docx`` output doesn't carry interactive fields, so rather than
+    leaking the literal marker text we substitute an underscore fill-in line.
+    ``?[row]``/``?[box]`` layout markers are dropped.
     """
-    from .pdf import _FORM_FIELD_RE
+    from ..forms import FIELD_RE
 
-    md_content = re.sub(r"^\?\[/?row\]\s*$", "", md_content, flags=re.MULTILINE)
-    return _FORM_FIELD_RE.sub("________", md_content)
+    md_content = _STRUCT_MARKER_RE.sub("", md_content)
+    # Backslash-escaped so markdown renders literal underscores instead of
+    # parsing __ pairs as bold delimiters (which swallowed the fill-in line).
+    return FIELD_RE.sub("\\_" * 8, md_content)
+
+
+def _convert_form_fields_for_dotx(md_content: str) -> str:
+    """Map ``?[...]`` form markers to Word form fields for ``.dotx`` output.
+
+    The same source that produces a fillable PDF produces a fillable Word
+    template: text-ish fields become Text Form Fields (via the existing
+    ``[[name]]`` machinery), checkboxes become FORMCHECKBOX, selects/radios
+    become FORMDROPDOWN, and a ``yesno`` becomes a pair of labelled
+    checkboxes. Row/box layout markers are dropped (cells flow as text);
+    submit buttons have no Word equivalent and are removed.
+    """
+    from ..forms import FIELD_RE, OPTION_TYPES, parse_field_spec
+
+    md_content = _STRUCT_MARKER_RE.sub("", md_content)
+
+    def convert(m: re.Match) -> str:
+        spec = m.group(1).strip()
+        parsed = parse_field_spec(spec)
+        if parsed is None:
+            return ""  # submit / stray structural marker
+        ftype, name, options, attrs = parsed
+        if ftype == "checkbox":
+            label = attrs.get("label")
+            suffix = f" {label}" if label and label is not True else ""
+            return f"[[?cb:{name}]]{suffix}"
+        if ftype == "checkbox-inline":
+            return "   ".join(
+                f"[[?cb:{name}_{o.lower().replace(' ', '_').replace('-', '_')}]] {o}"
+                for o in options
+            )
+        if ftype == "yesno":
+            return f"[[?cb:{name}_yes]] Yes   [[?cb:{name}_no]] No"
+        if ftype in OPTION_TYPES:  # select / radio / radio-inline
+            opts = "|".join(o for o in options if not o.startswith("--"))
+            return f"[[?dd:{name}|{opts}]]" if opts else f"[[{name}]]"
+        # text / email / date / number / tel / url / textarea / signature / unknown
+        return f"[[{name}]]"
+
+    return FIELD_RE.sub(convert, md_content)
 
 
 def _resolve_docx_theme(
@@ -2587,7 +2718,11 @@ def build(
     # identical points: APPENDIX section H2s and explicit <!-- pagebreak -->.
     body = _inject_appendix_breaks(body)
     body = _inject_page_breaks(body)
-    body = _strip_form_fields_for_docx(body)
+    if output_format == "dotx":
+        # Same source, fillable Word template: ?[...] → Word form fields.
+        body = _convert_form_fields_for_dotx(body)
+    else:
+        body = _strip_form_fields_for_docx(body)
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)

@@ -122,6 +122,117 @@ def _check_table_separators(body: str, path: Path, issues: list[LintIssue]) -> N
             i += 1
 
 
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$")
+
+
+def _check_adjacent_tables(body: str, doc_path: Path, issues: list[LintIssue]) -> None:
+    """Warn when two tables are jammed together without a blank line.
+
+    Markdown parses a contiguous run of ``|``-rows as ONE table — the second
+    table's header and separator become data rows of the first, so the tables
+    silently merge. Detect a second header-separator row inside a contiguous
+    table block.
+    """
+    in_table = False
+    separators = 0
+    for lineno, line in enumerate(body.split("\n"), start=1):
+        is_row = "|" in line and line.strip() != ""
+        if not is_row:
+            in_table = False
+            separators = 0
+            continue
+        if _TABLE_SEPARATOR_RE.match(line):
+            separators += 1
+            if in_table and separators > 1:
+                issues.append(
+                    LintIssue(
+                        path=doc_path,
+                        message=(
+                            f"Two tables jammed together at line {lineno} (no blank "
+                            f"line between them) — the build auto-separates them, "
+                            f"but add a blank line so other markdown tools don't "
+                            f"merge them into one table"
+                        ),
+                        severity="warning",
+                    )
+                )
+                separators = 1  # report once per boundary
+        in_table = True
+
+
+def _check_form_fields(
+    body: str, config: dict[str, Any], doc_path: Path, issues: list[LintIssue]
+) -> None:
+    """Validate ``?[...]`` form-field shorthand.
+
+    Catches the failure modes that are otherwise silent: unknown field types
+    (rendered as an HTML comment — the field just vanishes), duplicate field
+    names (AcroForm treats same-named fields as ONE linked field — typing in
+    one fills all of them), and fields in a document that never sets
+    ``pdf_forms: true`` (they render as dead, non-interactive boxes).
+    """
+    from .forms import FIELD_RE, KNOWN_FIELD_TYPES, iter_field_specs, parse_field_spec
+
+    if not FIELD_RE.search(body):
+        return
+
+    # Unknown field types
+    for m in FIELD_RE.finditer(body):
+        spec = m.group(1).strip()
+        parsed = parse_field_spec(spec)
+        if parsed is None:
+            continue
+        ftype = parsed[0]
+        if ftype not in KNOWN_FIELD_TYPES:
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=(
+                        f"Unknown form field type '{ftype}' in '?[{spec}]' — "
+                        f"the field will be dropped from the output"
+                    ),
+                    severity="warning",
+                )
+            )
+
+    # Duplicate names — AcroForm links same-named fields together.
+    seen: dict[str, int] = {}
+    for ftype, name, _options, _attrs in iter_field_specs(body):
+        if ftype == "yesno":
+            names = [f"{name}_yes", f"{name}_no"]
+        else:
+            names = [name]
+        for n in names:
+            seen[n] = seen.get(n, 0) + 1
+    for name, count in sorted(seen.items()):
+        if count > 1:
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=(
+                        f"Duplicate form field name '{name}' ({count}×) — PDF viewers "
+                        f"link same-named fields, so filling one fills all of them"
+                    ),
+                    severity="warning",
+                )
+            )
+
+    # Fields without pdf_forms: true → non-interactive boxes.
+    outputs = config.get("outputs", ["pdf"])
+    outputs = outputs if isinstance(outputs, list) else [outputs]
+    if seen and not config.get("pdf_forms") and "pdf" in [str(o).lower() for o in outputs]:
+        issues.append(
+            LintIssue(
+                path=doc_path,
+                message=(
+                    "Document contains ?[...] form fields but does not set "
+                    "'pdf_forms: true' — fields will render as non-interactive boxes"
+                ),
+                severity="warning",
+            )
+        )
+
+
 def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     """
     Lint a single Markdown document and return all found issues.
@@ -256,6 +367,16 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
                     severity="warning",
                 )
             )
+
+    # ------------------------------------------------------------------
+    # 3c. ?[...] form-field shorthand
+    # ------------------------------------------------------------------
+    _check_form_fields(body, config, doc_path, issues)
+
+    # ------------------------------------------------------------------
+    # 3d. Adjacent tables without a blank line (silently merge into one)
+    # ------------------------------------------------------------------
+    _check_adjacent_tables(body, doc_path, issues)
 
     # ------------------------------------------------------------------
     # 4. {% include %} resolution

@@ -187,9 +187,46 @@ def render(
         context.update(extra_context)
 
     tmpl = env.from_string(body)
-    rendered_body = tmpl.render(**context)
+    rendered_body = _separate_merged_tables(tmpl.render(**context))
 
     return frontmatter + rendered_body
+
+
+_TABLE_SEP_ROW_RE = re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$")
+
+
+def _separate_merged_tables(text: str) -> str:
+    """Insert a blank line where two tables were jammed into one.
+
+    ``trim_blocks`` joins ``{% include %}`` fragments tightly, so two templates
+    that each end/start with a table butt together with no blank line — and
+    markdown then parses the whole run as ONE table (the second table's header
+    and separator become data rows). A second header-separator row inside a
+    contiguous pipe-table run is unambiguous: a real table has exactly one.
+    Split the run by inserting a blank line before the second table's header.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    in_table = False
+    seps = 0
+    for line in lines:
+        is_row = "|" in line and line.strip() != ""
+        if not is_row:
+            in_table = False
+            seps = 0
+            out.append(line)
+            continue
+        if _TABLE_SEP_ROW_RE.match(line):
+            if in_table and seps >= 1 and out and "|" in out[-1]:
+                # `line` is the second table's separator; out[-1] its header.
+                header = out.pop()
+                out.extend(["", header])
+                seps = 1
+            else:
+                seps += 1
+        in_table = True
+        out.append(line)
+    return "\n".join(out)
 
 
 def render_string(

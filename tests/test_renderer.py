@@ -154,3 +154,38 @@ class TestRender:
         result = render(doc, repo_root=tmp_repo)
         assert "## Deep Header" in result
         assert "## Mid Header" not in result
+
+
+class TestSeparateMergedTables:
+    """Tables from adjacent {% include %} fragments must stay separate tables."""
+
+    def test_include_boundary_tables_stay_separate(self, tmp_path):
+        import markdown as md
+
+        from md_doc.renderer import render
+
+        (tmp_path / ".git").mkdir()
+        tdir = tmp_path / "templates"
+        tdir.mkdir()
+        (tdir / "a.md").write_text("| A |\n|---|\n| 1 |\n", encoding="utf-8")
+        (tdir / "b.md").write_text("| B |\n|---|\n| 2 |\n", encoding="utf-8")
+        doc = tmp_path / "doc.md"
+        doc.write_text(
+            '---\ntitle: T\n---\n\n{% include "a.md" %}\n{% include "b.md" %}\n',
+            encoding="utf-8",
+        )
+        body = render(doc, repo_root=tmp_path).split("---", 2)[-1]
+        html = md.markdown(body, extensions=["tables"])
+        assert html.count("<table") == 2
+
+    def test_single_table_untouched(self):
+        from md_doc.renderer import _separate_merged_tables
+
+        t = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"
+        assert _separate_merged_tables(t) == t
+
+    def test_separated_tables_untouched(self):
+        from md_doc.renderer import _separate_merged_tables
+
+        t = "| A |\n|---|\n| 1 |\n\n| B |\n|---|\n| 2 |\n"
+        assert _separate_merged_tables(t) == t
