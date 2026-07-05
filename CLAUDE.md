@@ -352,9 +352,28 @@ WeasyPrint 68.x supports interactive AcroForm PDF fields natively. No extra libr
 - HTML `<textarea name="x">` → `/Tx` multiline text field
 - HTML `<button type="submit">` / `<input type="submit">` → submit action field
 - The `name` attribute becomes the PDF field name (use snake_case)
-- `required`, `maxlength`, `readonly` HTML attributes are honoured
+- WeasyPrint natively carries `name`, `value`, `checked`, `maxlength`; it silently
+  drops `required`, `readonly`, `title` (tooltip) and `<option selected>` — md-doc
+  patches those into the PDF itself via a `write_pdf(finisher=…)` hook
+  (`_collect_form_field_meta` / `_make_forms_finisher` in `builders/pdf.py`)
 - CSS `appearance: auto` must be set on form elements for WeasyPrint to render them as interactive fields
 - CSS controls visual appearance — form field styles should live in `_pdf-theme.css`
+
+**`?[...]` shorthand** (see `docs/pdf-forms-guide.md` for the full reference —
+parsing shared via `md_doc/forms.py`):
+- `?[text: name, required]` (also email/date/number/tel/url), `?[textarea: x, rows=4]`,
+  `?[checkbox: x, label=…]`, `?[yesno: x]` (Yes/No pair → `x_yes`/`x_no`),
+  `?[select: x | A | B]`, `?[radio-inline: x | A | B]`, `?[signature: x]`, `?[submit Label]`
+- `?[box] … ?[/box]` — bordered insurance-form field grid; rows split on `|`,
+  `**labels**`/`*hints*` live inside cells, `?[box: widths=72,28]` fixes columns,
+  short rows span (colspan). `?[row] … ?[/row]` — borderless side-by-side cells.
+- Fields inside ordinary markdown tables render borderless, filling the cell.
+- `md-doc lint` validates fields: unknown types, duplicate names (AcroForm links
+  same-named fields), and `?[…]` present without `pdf_forms: true`.
+- **dotx**: `?[...]` maps to real Word form fields (FORMTEXT / FORMCHECKBOX /
+  FORMDROPDOWN); plain docx renders `________` fill-in lines.
+- The first body H1 never forces a page break (letterhead-friendly; applies to
+  all documents, both PDF and Word).
 
 ### WeasyPrint system dependencies
 

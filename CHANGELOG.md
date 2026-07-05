@@ -7,6 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **PDF forms build-out** (insurance-application grade; full guide in
+  `docs/pdf-forms-guide.md`):
+  - `?[box] … ?[/box]` — bordered field-grid construct (labels + `*hints*`
+    inside cells, `|` column splits, `widths=72,28`, colspan for short rows)
+    and `?[yesno: name]` Yes/No checkbox pairs.
+  - `**bold**`/`*italic*` labels now render inside `?[row]`/`?[box]` cells;
+    fields inside ordinary markdown tables render borderless, filling the cell.
+  - `required`, `readonly`, `title` (tooltip) and `<option selected>` now
+    **actually reach the PDF** — WeasyPrint drops them; md-doc patches the
+    AcroForm via a `finisher` hook. `checked`, `value`, `maxlength` verified
+    native. New input types `tel`/`url`; event-handler attributes rejected.
+  - **`.dotx` gets real Word form fields from the same source**: text-ish
+    `?[...]` → Text Form Fields, `checkbox`/`yesno` → FORMCHECKBOX,
+    `select`/`radio` → FORMDROPDOWN (options included). Plain docx renders
+    escaped `________` fill-ins (previously mangled by markdown bold parsing).
+  - **Form linting**: unknown field types, duplicate field names (AcroForm
+    links same-named fields), and `?[…]` without `pdf_forms: true`.
+  - Signature fields render as a clean rule (was a dark filled bar) and stay
+    on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
+
+### Fixed
+- **The first body H1 no longer forces a page break** (PDF + Word). With a
+  letterhead include before the H1, the theme's `h1 { page-break-before:
+  always }` used to strand the letterhead alone on a near-blank page 1 —
+  common in forms and letters. Later H1s still start new pages.
 - **`css_vars` config key (PDF)** — inject CSS custom properties on `:root` so a
   theme can keep its styling in CSS while the *asset* (or any value) is
   overridden per-document from YAML. A value ending in an image extension is
