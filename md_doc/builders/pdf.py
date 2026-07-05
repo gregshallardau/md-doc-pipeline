@@ -769,8 +769,15 @@ def _make_forms_finisher(field_meta: dict[str, dict[str, Any]]):
 # the FIRST H1 of the body must not force a page break — with a letterhead
 # include before it, the theme's `h1 { page-break-before: always }` would
 # otherwise strand the letterhead alone on a near-blank page 1.
+# - adjacent tables must never render flush: with a theme that sets no
+#   `table { margin }`, two separate tables looked like one merged grid.
+#   Vertical margins collapse, so themes that already space tables are not
+#   double-spaced.
 _BASE_FIXES_CSS = (
-    "<style>\n" ".report-body > h1:first-of-type { page-break-before: auto; }\n" "</style>"
+    "<style>\n"
+    ".report-body > h1:first-of-type { page-break-before: auto; }\n"
+    ".report-body table + table { margin-top: 10pt; }\n"
+    "</style>"
 )
 
 # Injected only for pdf_forms documents. Provides the insurance-form

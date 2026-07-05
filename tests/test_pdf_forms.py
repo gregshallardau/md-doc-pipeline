@@ -321,3 +321,47 @@ def test_docx_first_h1_after_letterhead_no_break(tmp_repo):
     second = next(p for p in d.paragraphs if p.text == "Second Heading")
     assert not first.paragraph_format.page_break_before  # letterhead must not force page 2
     assert second.paragraph_format.page_break_before  # later H1s still break
+
+
+# ── adjacent tables ──────────────────────────────────────────────────────────
+
+
+def test_adjacent_tables_get_separation_css(tmp_repo):
+    # Theme-independent: two separate tables must never render flush (a theme
+    # with no `table { margin }` made them look like one merged grid).
+    pytest.importorskip("weasyprint")
+    from unittest.mock import MagicMock, patch
+
+    from md_doc.builders.pdf import build
+
+    doc = tmp_repo / "d.md"
+    doc.write_text("# T\n", encoding="utf-8")
+    with patch("md_doc.builders.pdf.weasyprint") as wp:
+        wp.HTML.return_value = MagicMock()
+        build("# T\n", {"title": "T"}, tmp_repo / "d.pdf", doc_path=doc)
+        html = wp.HTML.call_args.kwargs["string"]
+    assert "table + table { margin-top" in html
+
+
+def test_lint_warns_on_jammed_tables(tmp_repo):
+    from md_doc.linter import lint_file
+
+    doc = tmp_repo / "jam.md"
+    doc.write_text(
+        "---\ntitle: T\n---\n\n| A |\n|---|\n| 1 |\n| B |\n|---|\n| 2 |\n",
+        encoding="utf-8",
+    )
+    msgs = [i.message for i in lint_file(doc, repo_root=tmp_repo)]
+    assert any("Two tables merged" in m for m in msgs)
+
+
+def test_lint_ok_on_separated_tables(tmp_repo):
+    from md_doc.linter import lint_file
+
+    doc = tmp_repo / "ok.md"
+    doc.write_text(
+        "---\ntitle: T\n---\n\n| A |\n|---|\n| 1 |\n\n| B |\n|---|\n| 2 |\n",
+        encoding="utf-8",
+    )
+    msgs = [i.message for i in lint_file(doc, repo_root=tmp_repo)]
+    assert not any("Two tables merged" in m for m in msgs)

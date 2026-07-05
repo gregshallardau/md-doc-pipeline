@@ -122,6 +122,43 @@ def _check_table_separators(body: str, path: Path, issues: list[LintIssue]) -> N
             i += 1
 
 
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$")
+
+
+def _check_adjacent_tables(body: str, doc_path: Path, issues: list[LintIssue]) -> None:
+    """Warn when two tables are jammed together without a blank line.
+
+    Markdown parses a contiguous run of ``|``-rows as ONE table — the second
+    table's header and separator become data rows of the first, so the tables
+    silently merge. Detect a second header-separator row inside a contiguous
+    table block.
+    """
+    in_table = False
+    separators = 0
+    for lineno, line in enumerate(body.split("\n"), start=1):
+        is_row = "|" in line and line.strip() != ""
+        if not is_row:
+            in_table = False
+            separators = 0
+            continue
+        if _TABLE_SEPARATOR_RE.match(line):
+            separators += 1
+            if in_table and separators > 1:
+                issues.append(
+                    LintIssue(
+                        path=doc_path,
+                        message=(
+                            f"Two tables merged at line {lineno}: no blank line "
+                            f"between them — markdown parses contiguous rows as "
+                            f"one table (the second header becomes data rows)"
+                        ),
+                        severity="warning",
+                    )
+                )
+                separators = 1  # report once per boundary
+        in_table = True
+
+
 def _check_form_fields(
     body: str, config: dict[str, Any], doc_path: Path, issues: list[LintIssue]
 ) -> None:
@@ -334,6 +371,11 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     # 3c. ?[...] form-field shorthand
     # ------------------------------------------------------------------
     _check_form_fields(body, config, doc_path, issues)
+
+    # ------------------------------------------------------------------
+    # 3d. Adjacent tables without a blank line (silently merge into one)
+    # ------------------------------------------------------------------
+    _check_adjacent_tables(body, doc_path, issues)
 
     # ------------------------------------------------------------------
     # 4. {% include %} resolution

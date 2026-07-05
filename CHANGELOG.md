@@ -28,6 +28,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Two adjacent tables no longer render merged into one grid.** With a theme
+  that sets no `table { margin }`, consecutive tables rendered flush and looked
+  like a single table. A theme-independent separation rule now guarantees a gap
+  (margins collapse, so themed spacing isn't doubled). `md-doc lint` also warns
+  when two tables are jammed together with **no blank line** between them —
+  markdown genuinely merges those into one table.
 - **A `_theme.css` at the repo root now applies to documents at the root.**
   The theme resolver's directory walk excluded the repo root itself, so a
   hand-written root theme was skipped and a default `_pdf-theme.css` was
