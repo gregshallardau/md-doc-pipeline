@@ -148,9 +148,10 @@ def _check_adjacent_tables(body: str, doc_path: Path, issues: list[LintIssue]) -
                     LintIssue(
                         path=doc_path,
                         message=(
-                            f"Two tables merged at line {lineno}: no blank line "
-                            f"between them — markdown parses contiguous rows as "
-                            f"one table (the second header becomes data rows)"
+                            f"Two tables jammed together at line {lineno} (no blank "
+                            f"line between them) — the build auto-separates them, "
+                            f"but add a blank line so other markdown tools don't "
+                            f"merge them into one table"
                         ),
                         severity="warning",
                     )

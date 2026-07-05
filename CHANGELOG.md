@@ -28,6 +28,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Tables from adjacent `{% include %}` templates no longer merge into one.**
+  The renderer's `trim_blocks` joins fragments tightly, so two templates each
+  containing a table butted together with no blank line — and markdown parsed
+  the run as ONE table. The renderer now detects a second header-separator row
+  inside a contiguous table run (unambiguous — a real table has exactly one)
+  and re-inserts the blank line, fixing all output formats.
 - **Two adjacent tables no longer render merged into one grid.** With a theme
   that sets no `table { margin }`, consecutive tables rendered flush and looked
   like a single table. A theme-independent separation rule now guarantees a gap

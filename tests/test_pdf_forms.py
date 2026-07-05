@@ -352,7 +352,7 @@ def test_lint_warns_on_jammed_tables(tmp_repo):
         encoding="utf-8",
     )
     msgs = [i.message for i in lint_file(doc, repo_root=tmp_repo)]
-    assert any("Two tables merged" in m for m in msgs)
+    assert any("Two tables jammed together" in m for m in msgs)
 
 
 def test_lint_ok_on_separated_tables(tmp_repo):
@@ -364,4 +364,4 @@ def test_lint_ok_on_separated_tables(tmp_repo):
         encoding="utf-8",
     )
     msgs = [i.message for i in lint_file(doc, repo_root=tmp_repo)]
-    assert not any("Two tables merged" in m for m in msgs)
+    assert not any("Two tables jammed together" in m for m in msgs)
