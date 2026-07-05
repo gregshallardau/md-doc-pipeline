@@ -79,6 +79,7 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "dotx_field_type",
         "body_text_align",
         "table_col_widths",
+        "css_vars",
         # slides (pptx)
         "pptx_template",
         "slide_size",

@@ -192,3 +192,42 @@ class TestBodyAlignAndCoverCss:
         # Opt in explicitly to get one.
         with_cover = self._built_html(tmp_repo, {"cover_page": True})
         assert '<div class="cover' in with_cover
+
+
+class TestCssVars:
+    """css_vars — override a CSS asset/value per-document from YAML."""
+
+    def _style(self, tmp_repo, css_vars):
+        from md_doc.builders.pdf import _build_css_vars_style
+
+        doc = tmp_repo / "doc.md"
+        doc.write_text("# x\n")
+        return _build_css_vars_style({"css_vars": css_vars}, tmp_repo, doc)
+
+    def test_image_asset_becomes_file_url(self, tmp_repo):
+        from PIL import Image
+
+        Image.new("RGB", (10, 10), "navy").save(tmp_repo / "wm.png")
+        style = self._style(tmp_repo, {"cover-watermark": "wm.png"})
+        assert "--cover-watermark: url(" in style
+        assert style.count("file://") == 1 and "wm.png" in style
+
+    def test_literal_value_injected_verbatim(self, tmp_repo):
+        style = self._style(tmp_repo, {"accent": "#ff8800"})
+        assert "--accent: #ff8800;" in style
+
+    def test_missing_asset_is_skipped(self, tmp_repo):
+        style = self._style(tmp_repo, {"cover-watermark": "nope.png"})
+        assert "cover-watermark" not in style
+
+    def test_invalid_name_is_skipped(self, tmp_repo):
+        style = self._style(tmp_repo, {"bad name}": "#fff"})
+        assert style == ""
+
+    def test_literal_value_cannot_break_out_of_block(self, tmp_repo):
+        style = self._style(tmp_repo, {"x": "red; } body { display:none"})
+        assert "}" not in style.split(":root")[1].split("--x:")[1].split("\n")[0]
+
+    def test_no_css_vars_emits_nothing(self, tmp_repo):
+        assert self._style(tmp_repo, None) == ""
+        assert self._style(tmp_repo, {}) == ""
