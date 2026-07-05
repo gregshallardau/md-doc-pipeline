@@ -229,6 +229,19 @@ The alignment cascades: all `<p>` and heading tags inside a `<div>` inherit its 
 
 Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an optional Word-specific CSS override. Place alongside `_pdf-theme.css`. If present, it is used instead of `_pdf-theme.css` for docx/dotx output. If absent, docx/dotx builders fall back to `_pdf-theme.css`. Same CSS format — only properties meaningful to python-docx are needed (body font-family/font-size, h1–h4 color/font-size, code font-family, th background/color).
 
+**CSS custom properties from config (`css_vars`, PDF only):** override an asset or value that lives in your theme CSS, per document, without editing the theme. Each entry becomes a `:root { --name: value }` declaration. A value ending in an image extension (`.png/.jpg/.jpeg/.svg/.webp/.gif`) is resolved through the asset cascade (doc dir → ancestors → repo root) and wrapped as `url("file://…")`; other values are injected literally.
+
+```css
+/* _pdf-theme.css — keep the styling, reference a variable for the asset */
+.cover-bar-bottom::after { background: var(--cover-watermark) no-repeat center center; }
+```
+```yaml
+# document frontmatter (or a parent _meta.yml)
+css_vars:
+  cover-watermark: assets/client-logo.png   # → --cover-watermark: url("file://…/assets/client-logo.png")
+  accent: "#e67e22"                          # literal value, injected as-is
+```
+
 **Cover page:**
 ```yaml
 cover_page: false             # default false — set true to add a branded cover

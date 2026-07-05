@@ -566,6 +566,7 @@ def _build_html(
     footer_center: str | None = None,
     footer_right: str | None = None,
     primary_color: str | None = None,
+    css_vars_style: str = "",
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -619,6 +620,7 @@ def _build_html(
   {table_col_widths_style}
   {body_align_style}
   {cover_support_style}
+  {css_vars_style}
   {page_bar_css}
 </head>
 <body>
@@ -845,6 +847,52 @@ def _build_body_align_style(config: dict[str, Any]) -> str:
     if align not in ("justify", "left", "center", "right"):
         return ""
     return f"<style>.report-body {{ text-align: {align}; }}</style>"
+
+
+_CSS_VAR_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_CSS_VAR_IMG_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif")
+
+
+def _build_css_vars_style(
+    config: dict[str, Any], repo_root: Path | None, doc_path: Path | None
+) -> str:
+    """Inject ``css_vars`` as CSS custom properties on ``:root``.
+
+    Lets a theme keep its styling in CSS while the *asset* (or any value) is
+    overridden per-document from YAML. A value ending in an image extension is
+    resolved through the logo/asset cascade (doc dir → ancestors → repo root)
+    and wrapped as ``url("file://…")`` so a theme can write, e.g.::
+
+        .cover-bar-bottom::after { background: var(--cover-watermark) no-repeat center; }
+
+    and the document sets ``css_vars: {cover-watermark: assets/logo.png}``.
+    Non-asset values are injected literally (e.g. a colour or length).
+    """
+    raw = config.get("css_vars")
+    if not isinstance(raw, dict) or not raw:
+        return ""
+    log = logging.getLogger(__name__)
+    decls: list[str] = []
+    for name, value in raw.items():
+        key = str(name).lstrip("-")
+        if not _CSS_VAR_NAME_RE.match(key):
+            log.warning("css_vars: ignoring invalid custom-property name %r", name)
+            continue
+        sval = str(value).strip()
+        if sval.lower().endswith(_CSS_VAR_IMG_EXT):
+            asset = _resolve_logo(sval, repo_root, doc_path)
+            if asset is None:
+                log.warning("css_vars: could not resolve asset %r for --%s", sval, key)
+                continue
+            decls.append(f'  --{key}: url("{asset.as_uri()}");')
+        else:
+            # Literal CSS value — strip characters that could break out of the
+            # declaration block (defensive; config is author-controlled).
+            safe = sval.replace("}", "").replace("<", "").replace(">", "").replace(";", "")
+            decls.append(f"  --{key}: {safe};")
+    if not decls:
+        return ""
+    return "<style>\n:root {\n" + "\n".join(decls) + "\n}\n</style>"
 
 
 def _build_page_header_bar_elements(
@@ -1166,6 +1214,7 @@ def build(
         footer_center=footer_center,
         footer_right=footer_right,
         primary_color=primary_color,
+        css_vars_style=_build_css_vars_style(config, repo_root, doc_path),
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

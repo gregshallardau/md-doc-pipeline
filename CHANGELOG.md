@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`css_vars` config key (PDF)** — inject CSS custom properties on `:root` so a
+  theme can keep its styling in CSS while the *asset* (or any value) is
+  overridden per-document from YAML. A value ending in an image extension is
+  resolved through the asset cascade and wrapped as `url("file://…")`; other
+  values are injected literally. Lets you swap, e.g., a cover-bar watermark
+  (`.cover-bar-bottom::after { background: var(--cover-watermark) … }`) per
+  document with `css_vars: {cover-watermark: assets/logo.png}`.
+
 ### Fixed
 - **Boolean config keys now accept string / templated values.** A quoted YAML
   value (`cover_page: "false"`) or one rendered from a Jinja variable
