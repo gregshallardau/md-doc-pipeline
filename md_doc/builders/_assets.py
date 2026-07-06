@@ -235,3 +235,58 @@ def _page_geometry(css_text: str | None) -> dict[str, float]:
             if mm is not None:
                 geom[key] = mm
     return geom
+
+
+# ---------------------------------------------------------------------------
+# Brand defaults from theme CSS (--mddoc-* custom properties)
+# ---------------------------------------------------------------------------
+
+# Custom property (without the --mddoc- prefix) → config key it defaults.
+# Feature toggles (page_header_bar, cover_page, …) and content (texts, logos)
+# stay YAML-only by design — these are the pure *look* values, so the brand
+# can live in the theme CSS while YAML overrides per folder/document.
+_MDDOC_PROP_TO_KEY = {
+    "header-bar-color": "page_header_bar_color",
+    "header-bar-text-color": "page_header_bar_text_color",
+    "header-bar-height": "page_header_bar_height",
+    "header-bar-padding": "page_header_bar_padding",
+    "header-logo-height": "header_logo_height",
+    "cover-bar-height": "cover_bar_height",
+    "cover-bar-top-height": "cover_bar_top_height",
+    "cover-bar-bottom-height": "cover_bar_bottom_height",
+    "cover-stripe-height": "cover_stripe_height",
+    "cover-stripe-width": "cover_stripe_width",
+    "cover-footer-color": "cover_footer_color",
+    "section-bar-color": "section_bar_color",
+    "section-bar-text-color": "section_bar_text_color",
+}
+
+_MDDOC_PROP_RE = re.compile(r"--mddoc-([a-z0-9-]+)\s*:\s*([^;}]+)", re.IGNORECASE)
+
+
+def theme_config_defaults(css_text: str | None) -> dict[str, str]:
+    """Extract ``--mddoc-*`` custom properties from theme CSS as config defaults."""
+    if not css_text:
+        return {}
+    out: dict[str, str] = {}
+    for m in _MDDOC_PROP_RE.finditer(css_text):
+        key = _MDDOC_PROP_TO_KEY.get(m.group(1).lower())
+        if key:
+            out[key] = m.group(2).strip().strip("'\"")
+    return out
+
+
+def apply_theme_config_defaults(config: dict, css_text: str | None) -> dict:
+    """Overlay ``--mddoc-*`` theme defaults under *config* (YAML always wins).
+
+    Returns a new dict; a key set anywhere in the YAML cascade (any value,
+    including an explicit empty string) is never touched.
+    """
+    defaults = theme_config_defaults(css_text)
+    if not defaults:
+        return config
+    merged = dict(config)
+    for key, value in defaults.items():
+        if key not in merged:
+            merged[key] = value
+    return merged

@@ -35,7 +35,7 @@ import markdown  # noqa: E402
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
-from ._assets import _drop_empty_table_headers  # noqa: E402
+from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 
 # Markdown extensions to enable
 _MD_EXTENSIONS = [
@@ -1558,6 +1558,17 @@ def build(
     if repo_root is None:
         repo_root = _find_repo_root(out_path.parent)
 
+    # Resolve the theme up front: --mddoc-* custom properties in it provide
+    # brand defaults for the look-related config keys (YAML always wins).
+    css_path = _resolve_css(config, repo_root, doc_path=doc_path)
+    css_text: str | None = None
+    if css_path and css_path.exists():
+        try:
+            css_text = css_path.read_text(encoding="utf-8")
+        except OSError:
+            css_text = None
+    config = apply_theme_config_defaults(config, css_text)
+
     # Strip frontmatter (already processed by renderer)
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", rendered_md, count=1, flags=re.DOTALL)
 
@@ -1648,15 +1659,13 @@ def build(
         config_col_weights = [float(v) for v in raw_col_widths]
     html_body = _apply_table_col_widths(html_body, config_col_weights)
 
-    css_path = _resolve_css(config, repo_root, doc_path=doc_path)
-
     # Render Mermaid diagram blocks to inline SVGs, themed from the CSS
     from ..mermaid import process_html as _process_mermaid, extract_theme_from_css
 
     mermaid_theme = None
-    if css_path and css_path.exists():
+    if css_text:
         try:
-            mermaid_theme = extract_theme_from_css(css_path.read_text(encoding="utf-8"))
+            mermaid_theme = extract_theme_from_css(css_text)
         except Exception:
             pass  # fall back to default theme
     html_body = _process_mermaid(html_body, theme=mermaid_theme)
@@ -1670,9 +1679,9 @@ def build(
 
     page_margins_mm = (25.0, 20.0)
     theme_body_justify = False
-    if css_path and css_path.exists():
+    if css_text:
         try:
-            geom = _page_geometry(css_path.read_text(encoding="utf-8"))
+            geom = _page_geometry(css_text)
             page_margins_mm = (geom["left"], geom["right"])
         except Exception:
             pass

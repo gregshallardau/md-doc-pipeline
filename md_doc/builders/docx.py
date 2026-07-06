@@ -58,6 +58,7 @@ from ._assets import (
     _drop_empty_table_headers,
     _length_to_mm,
     _page_geometry,
+    apply_theme_config_defaults,
     _EMU_PER_PX,
     _MERMAID_IMG_RE,
     _render_mermaid_to_images,
@@ -2726,6 +2727,18 @@ def build(
     """
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # --mddoc-* custom properties in the Word theme cascade provide brand
+    # defaults for the look-related config keys (YAML always wins).
+    if doc_path is not None and repo_root is not None:
+        try:
+            from ..docx_theme import find_docx_theme_css
+
+            _word_css = find_docx_theme_css(doc_path, repo_root, config)
+            if _word_css is not None:
+                config = apply_theme_config_defaults(config, _word_css.read_text(encoding="utf-8"))
+        except Exception:
+            pass
 
     is_dotx = output_format == "dotx"
 

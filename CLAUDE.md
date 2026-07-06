@@ -244,6 +244,31 @@ css_vars:
   accent: "#e67e22"                          # literal value, injected as-is
 ```
 
+**Brand defaults from theme CSS (`--mddoc-*` custom properties):** the pure
+*look* values below can live in the theme CSS at the global level instead of
+YAML — the theme provides the brand default, and any YAML key (any `_meta.yml`
+or frontmatter) still wins. Feature toggles (`page_header_bar`, `cover_page`)
+and content (texts, logo choices) stay YAML-only.
+
+```css
+/* _theme.css — the brand lives here */
+:root {
+  --mddoc-header-bar-color: #002a5b;        /* page_header_bar_color */
+  --mddoc-header-bar-text-color: #ffffff;   /* page_header_bar_text_color */
+  --mddoc-header-bar-height: 24mm;          /* page_header_bar_height */
+  --mddoc-header-bar-padding: 8mm;          /* page_header_bar_padding */
+  --mddoc-header-logo-height: 10mm;         /* header_logo_height */
+  --mddoc-cover-bar-height: 132mm;          /* cover_bar_height (+ -top-/-bottom- variants) */
+  --mddoc-cover-stripe-height: 120mm;       /* cover_stripe_height (+ -width) */
+  --mddoc-cover-footer-color: "#ffffff";    /* cover_footer_color */
+  --mddoc-section-bar-color: #2563eb;       /* section_bar_color (+ -text-color) */
+}
+```
+
+Read from whichever theme file each builder resolves (PDF: `_pdf-theme.css` →
+`_theme.css`; Word: `_docx-theme.css` → `_theme.css` → `_pdf-theme.css`) — put
+them in the shared `_theme.css` unless the formats deliberately diverge.
+
 **Cover page:**
 ```yaml
 cover_page: false             # default false — set true to add a branded cover
