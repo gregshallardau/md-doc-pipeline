@@ -28,6 +28,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Upgrading md-doc now invalidates existing outputs.** The incremental
+  build's freshness check covered the document's inputs (source, `_meta.yml`
+  cascade, theme, templates) but not the pipeline itself — so after an
+  upgrade, `md-doc build` kept reporting "up to date" and fixes never reached
+  the documents without `--force`. The installed package's newest mtime is now
+  a build input. The Neovim plugin's *build workspace* (`<leader>mB`) also
+  passes `--force` — an explicit workspace build always regenerates everything.
 - **Header logos now render at the same size in PDF and Word.** The PDF drew
   margin-box logos at raw pixel size (a high-resolution logo blew out the page
   header) while Word forced every logo to 6mm — too small and inconsistent

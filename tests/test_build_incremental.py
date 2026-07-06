@@ -84,3 +84,35 @@ def test_newest_dep_mtime_includes_meta_and_templates(tmp_repo):
 
     # The template fragment (newest) dominates the dependency mtime.
     assert _newest_dep_mtime(doc, tmp_repo) >= future
+
+
+def test_pipeline_upgrade_invalidates_outputs(tmp_repo, monkeypatch):
+    """Upgrading md-doc itself must trigger a rebuild — otherwise fixes never
+    reach existing documents until someone remembers --force."""
+    import md_doc.cli as cli
+
+    doc = tmp_repo / "doc.md"
+    doc.write_text("---\ntitle: T\n---\n\n# T\n", encoding="utf-8")
+    out = tmp_repo / "doc.pdf"
+    out.write_text("old output", encoding="utf-8")
+
+    now = doc.stat().st_mtime
+    # Output newer than every project input → would be skipped…
+    import os
+
+    os.utime(out, (now + 100, now + 100))
+    monkeypatch.setattr(cli, "_PIPELINE_MTIME", now + 50)
+    assert out.stat().st_mtime >= cli._newest_dep_mtime(doc, tmp_repo)
+
+    # …but a pipeline newer than the output invalidates it.
+    monkeypatch.setattr(cli, "_PIPELINE_MTIME", now + 200)
+    assert out.stat().st_mtime < cli._newest_dep_mtime(doc, tmp_repo)
+
+
+def test_pipeline_mtime_cached_and_positive():
+    import md_doc.cli as cli
+
+    cli._PIPELINE_MTIME = None
+    first = cli._pipeline_mtime()
+    assert first > 0
+    assert cli._pipeline_mtime() == first  # cached
