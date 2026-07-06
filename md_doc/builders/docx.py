@@ -260,6 +260,35 @@ def _insert_form_field(
     run._r.append(fld_end)
 
 
+def _logo_height_mm(path: Path, cap_mm: float, forced_mm: float | None = None) -> float:
+    """Display height (mm) for a header logo — same rule as the PDF builder.
+
+    ``forced_mm`` (from ``header_logo_height``) wins outright. Otherwise the
+    logo renders at its intrinsic height (96dpi), capped at *cap_mm* — never
+    upscaled. Falls back to *cap_mm* if the image can't be read.
+    """
+    if forced_mm is not None:
+        return forced_mm
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            intrinsic_mm = im.height / 96 * 25.4
+        return min(intrinsic_mm, cap_mm)
+    except Exception:
+        return cap_mm
+
+
+def _parse_mm_cfg(value: Any) -> float | None:
+    """Parse a '10mm'-style config value to mm, or None when unset/invalid."""
+    if value is None:
+        return None
+    try:
+        return float(re.sub(r"[^\d.]", "", str(value)) or 0) or None
+    except ValueError:
+        return None
+
+
 def _insert_checkbox_form_field(paragraph: Any, field_name: str) -> None:
     """Append a Word legacy checkbox form field (FORMCHECKBOX) to *paragraph*."""
     run = paragraph.add_run()
@@ -1981,9 +2010,8 @@ def _add_docx_cover_page(
             bp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             bp.paragraph_format.right_indent = section.right_margin
             try:
-                bp.add_run().add_picture(
-                    str(bar_logo_path), height=Mm(max(min(bar_bot_h * 0.7, 8.0), 3.0))
-                )
+                h = _logo_height_mm(bar_logo_path, min(bar_bot_h * 0.7, 8.0))
+                bp.add_run().add_picture(str(bar_logo_path), height=Mm(h))
             except Exception as exc:
                 logger.warning("docx cover bar logo embed failed: %s", exc)
         _tiny_spacer(doc)
@@ -2332,7 +2360,10 @@ def _add_page_header_bar(
         "center": row.cells[1].paragraphs[0],
         "right": row.cells[2].paragraphs[0],
     }
-    logo_height = Mm(max(min(height_mm * 0.7, 8.0), 3.0))  # PDF: .phb-logo max-height 8mm
+    # PDF: .phb-logo max-height 8mm (or header_logo_height). Intrinsically
+    # smaller logos keep their natural size — never upscaled.
+    logo_forced = _parse_mm_cfg(config.get("header_logo_height"))
+    logo_cap = min(height_mm * 0.7, 8.0) if logo_forced is None else logo_forced
 
     if header_text:
         para = slot_paras.get(text_position, slot_paras["left"])
@@ -2345,7 +2376,8 @@ def _add_page_header_bar(
         if para.runs:
             para.add_run("  ")
         try:
-            para.add_run().add_picture(str(path), height=logo_height)
+            h = _logo_height_mm(path, logo_cap, logo_forced)
+            para.add_run().add_picture(str(path), height=Mm(h))
         except Exception as exc:
             logger.warning("docx header bar logo embed failed: %s", exc)
 
@@ -2636,7 +2668,10 @@ def _add_plain_header(
     def _slot_logo(pos: str) -> None:
         run = para.add_run()
         try:
-            run.add_picture(str(logo_path), height=Mm(6))
+            # min(intrinsic, 8mm) by default; header_logo_height forces an
+            # exact height — same rule as the PDF's margin-box logo.
+            h = _logo_height_mm(logo_path, 8.0, _parse_mm_cfg(config.get("header_logo_height")))
+            run.add_picture(str(logo_path), height=Mm(h))
         except Exception as exc:
             logger.warning("docx header logo embed failed: %s", exc)
 
