@@ -2542,8 +2542,13 @@ def _add_simple_field(paragraph: Any, instr: str) -> Any:
     return value_run
 
 
-def _emit_footer_segment(paragraph: Any, text: str) -> list[Any]:
+def _emit_footer_segment(paragraph: Any, text: str, lead_tabs: int = 0) -> list[Any]:
     """Write *text* into *paragraph*, expanding ``{page}``/``{pages}`` to fields.
+
+    ``lead_tabs`` is the number of tabs that reach this slot's tab stop (0 =
+    left, 1 = centre, 2 = right); continuation lines after a soft break re-tab
+    to the same stop so a multiline centre/right slot doesn't fall back to the
+    left margin.
 
     Returns every run created so the caller can apply a consistent footer style.
     """
@@ -2556,7 +2561,13 @@ def _emit_footer_segment(paragraph: Any, text: str) -> list[Any]:
         elif part:
             for i, line in enumerate(part.split("\n")):
                 if i > 0:
-                    paragraph.add_run().add_break()
+                    br = paragraph.add_run()
+                    br.add_break()
+                    runs.append(br)
+                    for _ in range(lead_tabs):
+                        tab = paragraph.add_run()
+                        tab.add_tab()
+                        runs.append(tab)
                 if line:
                     runs.append(paragraph.add_run(line))
     return runs
@@ -2607,6 +2618,11 @@ def _add_footer(
     text_width_emu = int(section.page_width - section.left_margin - section.right_margin)
 
     para = footer.add_paragraph()
+    # Slots are positioned by tab stops, so the paragraph itself must be
+    # left-aligned. Without this it inherits the Normal style — a theme with
+    # body text-align: justify stretched the footer across the full width
+    # instead of centring the middle slot.
+    para.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     from docx.enum.text import WD_TAB_ALIGNMENT
 
@@ -2635,7 +2651,7 @@ def _add_footer(
             continue
         text, size_pt, color_hex = entry
         r, g, b = _hex_to_rgb(color_hex)
-        for run in _emit_footer_segment(para, text):
+        for run in _emit_footer_segment(para, text, lead_tabs=i):
             run.font.size = Pt(size_pt)
             run.font.color.rgb = RGBColor(r, g, b)
 
@@ -2671,6 +2687,9 @@ def _add_plain_header(
 
     text_width_emu = int(section.page_width - section.left_margin - section.right_margin)
     para = header.add_paragraph()
+    # Tab stops position the slots — never inherit the Normal style's
+    # alignment (a justified body theme would stretch the header line).
+    para.alignment = WD_ALIGN_PARAGRAPH.LEFT
     from docx.enum.text import WD_TAB_ALIGNMENT
 
     tabs = para.paragraph_format.tab_stops

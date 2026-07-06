@@ -28,6 +28,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Word footers/headers no longer inherit justified body text.** A theme
+  with `body { text-align: justify }` sets Word's *Normal* style to justify,
+  and the footer/header paragraphs (positioned by left/centre/right tab
+  stops) inherited it — Word stretched the slots across the page width
+  instead of centring the middle slot. Both paragraphs are now explicitly
+  left-aligned. Multiline footer slots also re-tab after each soft line
+  break, so the second line of a centred/right slot stays under the first
+  instead of falling back to the left margin.
 - **Adjacent tables no longer merge in Word.** OOXML treats consecutive
   `w:tbl` elements as a single table, so two tables authored with a blank
   line between them (e.g. an endorsement table followed by a sign/date table
