@@ -328,3 +328,19 @@ class TestApplyTableColWidths:
         html = "<!-- col-widths: 40, 60 -->\n" + self._html("| L | C |\n| --- | :---: |\n| a | b |")
         out = _apply_table_col_widths(html)
         assert "width: 60.0000%; text-align: center;" in out
+
+
+class TestDropEmptyTableHeaders:
+    def test_all_empty_thead_removed(self):
+        from md_doc.builders._assets import _drop_empty_table_headers
+
+        html = (
+            "<table><thead>\n<tr>\n<th></th>\n<th></th>\n</tr>\n</thead><tbody>...</tbody></table>"
+        )
+        assert "<thead>" not in _drop_empty_table_headers(html)
+
+    def test_populated_thead_kept(self):
+        from md_doc.builders._assets import _drop_empty_table_headers
+
+        html = "<table><thead>\n<tr>\n<th>A</th>\n<th></th>\n</tr>\n</thead></table>"
+        assert "<thead>" in _drop_empty_table_headers(html)

@@ -101,3 +101,19 @@ def _resolve_asset(filename: str, doc_path: Path | None, repo_root: Path | None)
         if candidate.exists():
             return candidate
     return None
+
+
+_EMPTY_THEAD_RE = re.compile(
+    r"<thead>\s*<tr>(?:\s*<th[^>]*>\s*</th>)+\s*</tr>\s*</thead>\s*",
+    re.IGNORECASE,
+)
+
+
+def _drop_empty_table_headers(html: str) -> str:
+    """Remove ``<thead>`` blocks whose header cells are all empty.
+
+    Markdown pipe tables *require* a header row, so ``| | |`` is the authoring
+    idiom for a headerless table — without this pass the empty row still
+    renders as a (theme-shaded) band in every format.
+    """
+    return _EMPTY_THEAD_RE.sub("", html)

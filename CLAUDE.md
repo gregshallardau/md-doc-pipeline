@@ -339,6 +339,36 @@ Export workflow:
 4. Outputs go to `vault/Exports/` by default, or `-o /path/` to override
 5. Use `--format pdf|docx|dotx` to force a single format (default: per-document)
 
+### Headerless tables
+
+Markdown pipe tables require a header row. To render a table **without** a
+header band (e.g. a signature block), make every header cell empty — the
+builders drop the all-empty header row in every format:
+
+```markdown
+| | |
+| --- | --- |
+| Greg Shallard | [[signed_date]] |
+```
+
+### Word header/footer geometry
+
+Word's header/footer distance from the page edge (default 12.7mm) can be set
+from the theme CSS `@page` block — custom properties, so WeasyPrint ignores
+them and the PDF is unaffected. Put them in `_docx-theme.css` (or the shared
+theme):
+
+```css
+@page {
+  margin: 24mm 20mm 20mm 25mm;
+  --docx-header-distance: 8mm;   /* header text starts 8mm from the top edge */
+  --docx-footer-distance: 6mm;   /* footer sits 6mm from the bottom edge */
+}
+```
+
+Header/footer paragraphs never inherit the theme's body line-height or
+paragraph spacing (a 1.6 line height would triple the container height).
+
 ### Footer rendering (docx/dotx)
 
 Multiline footer text in Word documents uses soft line breaks (`<w:br/>`) instead of separate paragraphs. This keeps the footer as a single logical unit while preserving line breaks visually. No behavior change for users — footers render correctly whether you use single or multi-line text in `footer_left`, `footer_center`, `footer_right` config keys.

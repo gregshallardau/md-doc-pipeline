@@ -507,3 +507,46 @@ def test_theme_justify_never_reaches_table_cells(tmp_repo):
     tbl = _part(out, "word/document.xml").split("<w:tbl>", 1)[1]
     cell_jcs = re.findall(r'<w:jc w:val="(\w+)"/>', tbl)
     assert cell_jcs and set(cell_jcs) == {"left"}
+
+
+def test_empty_header_row_renders_headerless_table(tmp_repo):
+    # Markdown requires a header row, so `| | |` is the idiom for a headerless
+    # table — the all-empty header row must not render as an empty shaded band.
+    out = _build(tmp_repo, "| | |\n| --- | --- |\n| Greg | [[signed]] |\n", {})
+    import re
+
+    tbl = _part(out, "word/document.xml").split("<w:tbl>", 1)[1].split("</w:tbl>", 1)[0]
+    rows = re.findall(r"<w:tr[ >]", tbl)
+    assert len(rows) == 1  # only the data row
+
+
+def test_footer_header_never_inherit_body_line_spacing(tmp_repo):
+    # A theme's line-height/paragraph spacing on Normal made the header and
+    # footer containers ~3x taller than their 6-8pt content.
+    (tmp_repo / "_docx-theme.css").write_text(
+        "body { font-size: 10pt; line-height: 1.6; }\np { margin: 0 0 10pt 0; }\n",
+        encoding="utf-8",
+    )
+    out = _build(tmp_repo, "Body.\n", {"header_text": "H", "footer_center": "F"})
+    for part in ("word/footer1.xml", "word/header1.xml"):
+        xml = _part(out, part)
+        assert 'w:line="240"' in xml  # single spacing, not the theme's 1.6
+        assert 'w:before="0"' in xml and 'w:after="0"' in xml
+
+
+def test_header_footer_distance_from_css(tmp_repo):
+    # @page { --docx-header-distance / --docx-footer-distance } set Word's
+    # header/footer-from-edge (python-docx defaults both to 12.7mm).
+    (tmp_repo / "_docx-theme.css").write_text(
+        "@page { size: A4; margin: 24mm 20mm 20mm 25mm;"
+        " --docx-header-distance: 8mm; --docx-footer-distance: 6mm; }\n",
+        encoding="utf-8",
+    )
+    out = _build(tmp_repo, "Body.\n", {"header_text": "H", "footer_center": "F"})
+    import re
+
+    pgmar = re.search(r"<w:pgMar[^/]*/>", _part(out, "word/document.xml")).group(0)
+    header = int(re.search(r'w:header="(\d+)"', pgmar).group(1))
+    footer = int(re.search(r'w:footer="(\d+)"', pgmar).group(1))
+    assert round(header / 56.7) == 8
+    assert round(footer / 56.7) == 6

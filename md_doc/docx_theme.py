@@ -663,12 +663,12 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_docx_theme(
+def find_docx_theme_css(
     doc_path: Path,
     repo_root: Path,
     config: "dict[str, Any] | None" = None,
-) -> "dict[str, Any] | None":
-    """Find and parse the nearest Word CSS theme for *doc_path*.
+) -> "Path | None":
+    """Find the nearest Word CSS theme file for *doc_path*.
 
     When *config* carries a ``pdf_theme`` override (the ``--theme`` CLI flag or
     the ``pdf_theme`` key), that file wins outright — the same precedence the
@@ -682,8 +682,8 @@ def resolve_docx_theme(
     2. ``_theme.css``      — shared base theme
     3. ``_pdf-theme.css``  — fallback shared theme
 
-    Returns the parsed theme dict from the first file found, or ``None`` if no
-    theme file exists anywhere in the hierarchy.
+    Returns the path of the first theme file found, or ``None`` if no theme
+    file exists anywhere in the hierarchy.
 
     Parameters
     ----------
@@ -701,11 +701,11 @@ def resolve_docx_theme(
         if ".." in p.parts:
             _log.warning("Ignoring pdf_theme path %r — '..' components are not allowed.", theme_val)
         elif p.is_absolute() and p.exists():
-            return parse_css_for_word(p)
+            return p
         elif repo_root and (repo_root / p).exists():
             resolved = (repo_root / p).resolve()
             if resolved.is_relative_to(repo_root.resolve()):
-                return parse_css_for_word(resolved)
+                return resolved
 
     try:
         start = doc_path.resolve().parent
@@ -730,10 +730,24 @@ def resolve_docx_theme(
         for filename in ("_docx-theme.css", "_theme.css", "_pdf-theme.css"):
             candidate = d / filename
             if candidate.is_file():
-                _log.debug("resolve_docx_theme: using %s for %s", candidate, doc_path)
-                return parse_css_for_word(candidate)
+                _log.debug("docx theme: using %s for %s", candidate, doc_path)
+                return candidate
 
     return None
+
+
+def resolve_docx_theme(
+    doc_path: Path,
+    repo_root: Path,
+    config: "dict[str, Any] | None" = None,
+) -> "dict[str, Any] | None":
+    """Find and parse the nearest Word CSS theme for *doc_path*.
+
+    Thin wrapper over :func:`find_docx_theme_css` + :func:`parse_css_for_word`;
+    see the former for the resolution order.
+    """
+    path = find_docx_theme_css(doc_path, repo_root, config)
+    return parse_css_for_word(path) if path else None
 
 
 def set_para_shading(paragraph: Any, hex_color: str) -> None:

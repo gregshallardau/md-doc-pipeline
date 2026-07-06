@@ -49,7 +49,13 @@ from pptx.dml.color import RGBColor
 from pptx.util import Emu, Inches, Pt
 
 from ..docx_theme import _hex_to_rgb, resolve_docx_theme
-from ._assets import _EMU_PER_PX, _MERMAID_IMG_RE, _render_mermaid_to_images, _resolve_asset
+from ._assets import (
+    _EMU_PER_PX,
+    _MERMAID_IMG_RE,
+    _drop_empty_table_headers,
+    _render_mermaid_to_images,
+    _resolve_asset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -953,6 +959,7 @@ def build(
     body = _BLOCK_COMMENT_RE.sub(lambda m: f"\n\n{m.group(0)}\n\n", body)
     body = _SLIDE_BREAK_RE.sub('\n\n<hr class="md-doc-slide-break">\n\n', body)
     html = markdown.Markdown(extensions=_MD_EXTENSIONS).convert(body)
+    html = _drop_empty_table_headers(html)
 
     # Theme (colours + fonts from the CSS cascade) + mermaid diagram theme.
     theme = resolve_docx_theme(doc_path, repo_root, config) if (doc_path and repo_root) else {}

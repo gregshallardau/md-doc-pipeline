@@ -26,8 +26,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     links same-named fields), and `?[…]` without `pdf_forms: true`.
   - Signature fields render as a clean rule (was a dark filled bar) and stay
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
+- **Headerless tables.** An all-empty markdown header row (`| | |`) now
+  renders as a table without a header band in every format — markdown
+  requires a header row syntactically, so this is the opt-out idiom
+  (previously the empty row still rendered as a theme-shaded band).
+- **Word header/footer distance from CSS.** `@page { --docx-header-distance:
+  8mm; --docx-footer-distance: 6mm; }` in the Word theme cascade sets Word's
+  header/footer-from-edge (python-docx defaulted both to 12.7mm). Custom
+  properties, so WeasyPrint ignores them and the PDF is unaffected.
 
 ### Fixed
+- **Word header/footer containers no longer inherit body typography.** The
+  header/footer paragraphs picked up the theme's body line-height and
+  paragraph spacing from the Normal style — a 1.6 line height + 10pt
+  space-after turned a 6pt footer line into a ~30pt-tall container. Both are
+  pinned to single spacing with zero before/after.
 - **`<!-- col-widths -->` comments now work in PDF output.** The per-table
   column-width comment was honoured by the Word builders only; the PDF now
   applies it to the next table with the same precedence as Word (comment >

@@ -35,6 +35,7 @@ import markdown  # noqa: E402
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
+from ._assets import _drop_empty_table_headers  # noqa: E402
 
 # Markdown extensions to enable
 _MD_EXTENSIONS = [
@@ -1622,6 +1623,7 @@ def build(
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html_body = md_engine.convert(body)
+    html_body = _drop_empty_table_headers(html_body)
 
     # Column widths: <!-- col-widths --> comments and the table_col_widths
     # config key, applied per table with the same precedence as the docx
