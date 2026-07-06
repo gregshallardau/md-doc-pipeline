@@ -293,6 +293,30 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if "text-align" in props and "text_align_body" not in theme:
             theme["text_align_body"] = props["text-align"].strip().lower()
 
+    # li — list-item spacing and line height (mirrors what the PDF gets from
+    # the same rules; applied to Word's List Bullet/Number styles)
+    for sel in ("li", "ul li", "ol li"):
+        props = blocks.get(sel, {})
+        if "margin" in props and ("li_space_after" not in theme or "li_space_before" not in theme):
+            m = _parse_margin(props["margin"])
+            if m.get("bottom") is not None and "li_space_after" not in theme:
+                theme["li_space_after"] = m["bottom"]
+            if m.get("top") is not None and "li_space_before" not in theme:
+                theme["li_space_before"] = m["top"]
+        for css_prop, theme_key in (
+            ("margin-bottom", "li_space_after"),
+            ("margin-top", "li_space_before"),
+        ):
+            if css_prop in props and theme_key not in theme:
+                pt = _parse_pt(props[css_prop])
+                if pt is not None:
+                    theme[theme_key] = pt
+        if "line-height" in props and "li_line_height" not in theme:
+            try:
+                theme["li_line_height"] = float(props["line-height"].strip())
+            except ValueError:
+                pass
+
     # headings
     for level in range(1, 5):
         tag = f"h{level}"
@@ -586,9 +610,13 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
     except KeyError:
         pass
 
-    # List Paragraph — match Normal font and color
-    try:
-        lp = doc.styles["List Paragraph"]
+    # List styles — match Normal font and color; li { margin / line-height }
+    # from the CSS controls the list-item spacing (same rules as the PDF).
+    for list_style in ("List Paragraph", "List Bullet", "List Number"):
+        try:
+            lp = doc.styles[list_style]
+        except KeyError:
+            continue
         if font_body:
             _apply_font_name(lp.font, font_body)
         if font_size_body is not None:
@@ -596,8 +624,13 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if "color_body" in theme:
             r, g, b = _hex_to_rgb(theme["color_body"])
             lp.font.color.rgb = RGBColor(r, g, b)
-    except KeyError:
-        pass
+        if "li_space_after" in theme:
+            lp.paragraph_format.space_after = Pt(theme["li_space_after"])
+        if "li_space_before" in theme:
+            lp.paragraph_format.space_before = Pt(theme["li_space_before"])
+        if "li_line_height" in theme:
+            lp.paragraph_format.line_spacing = theme["li_line_height"]
+            lp.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
 
     # Hyperlink style — apply link colour
     try:

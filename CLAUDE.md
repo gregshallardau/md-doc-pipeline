@@ -369,6 +369,15 @@ theme):
 Header/footer paragraphs never inherit the theme's body line-height or
 paragraph spacing (a 1.6 line height would triple the container height).
 
+### List spacing (Word)
+
+`li { margin / line-height }` in the theme CSS sets Word's *List Bullet* /
+*List Number* style spacing — the same rules the PDF already reads:
+
+```css
+li { margin: 0 0 2pt 0; line-height: 1.2; }   /* tight bullets, both formats */
+```
+
 ### Footer rendering (docx/dotx)
 
 Multiline footer text in Word documents uses soft line breaks (`<w:br/>`) instead of separate paragraphs. This keeps the footer as a single logical unit while preserving line breaks visually. No behavior change for users — footers render correctly whether you use single or multi-line text in `footer_left`, `footer_center`, `footer_right` config keys.

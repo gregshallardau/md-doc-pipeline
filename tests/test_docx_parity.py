@@ -550,3 +550,25 @@ def test_header_footer_distance_from_css(tmp_repo):
     footer = int(re.search(r'w:footer="(\d+)"', pgmar).group(1))
     assert round(header / 56.7) == 8
     assert round(footer / 56.7) == 6
+
+
+def test_list_spacing_from_theme_li_rules(tmp_repo):
+    # li { margin / line-height } in the theme CSS controls Word's List
+    # Bullet/Number style spacing — previously bullets inherited Normal's
+    # paragraph spacing and line height, so lists couldn't be tightened.
+    import re
+
+    (tmp_repo / "_docx-theme.css").write_text(
+        "body { font-size: 10pt; line-height: 1.6; }\n"
+        "p { margin: 0 0 10pt 0; }\n"
+        "li { margin: 0 0 2pt 0; line-height: 1.2; }\n",
+        encoding="utf-8",
+    )
+    out = _build(tmp_repo, "- alpha\n- beta\n\n1. one\n2. two\n", {})
+    styles = _part(out, "word/styles.xml")
+    for sid in ("ListBullet", "ListNumber"):
+        block = re.search(rf'<w:style [^>]*w:styleId="{sid}".*?</w:style>', styles, re.S)
+        assert block, f"{sid} style missing"
+        spacing = block.group(0)
+        assert 'w:after="40"' in spacing  # 2pt
+        assert 'w:line="288"' in spacing  # 1.2 line height
