@@ -913,6 +913,8 @@ def _build_html(
     is_form: bool = False,
     header_logo_dpi: float | None = None,
     header_logo_max_mm: float | None = None,
+    page_margins_mm: tuple[float, float] = (25.0, 20.0),
+    theme_body_justify: bool = False,
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -926,7 +928,7 @@ def _build_html(
     )
 
     section_bar_style = _build_section_bar_style(full_config or {})
-    body_align_style = _build_body_align_style(full_config or {})
+    body_align_style = _build_body_align_style(full_config or {}, theme_body_justify)
     page_bar_html, page_bar_css = _build_page_header_bar_elements(
         page_header_bar,
         header_text=header_text,
@@ -934,6 +936,8 @@ def _build_html(
         header_logo_uri=header_logo_uri,
         header_logo_position=header_logo_position,
         logo_max_mm=header_logo_max_mm,
+        margin_left_mm=page_margins_mm[0],
+        margin_right_mm=page_margins_mm[1],
     )
 
     footer_style = _build_footer_style(footer_left, footer_center, footer_right)
@@ -1239,16 +1243,22 @@ def _apply_table_col_widths(html: str, config_weights: list[float] | None = None
     return html
 
 
-def _build_body_align_style(config: dict[str, Any]) -> str:
+def _build_body_align_style(config: dict[str, Any], theme_body_justify: bool = False) -> str:
     """Generate CSS for the ``body_text_align`` config key.
 
     Mirrors the docx builder, where the key sets the default paragraph
     alignment. Applied to the report-body container (not ``p`` directly) so
     per-section ``<div style="text-align: …">`` overrides still win through
     normal CSS inheritance — the same cascade order Word uses.
+
+    ``theme_body_justify`` is set when the *theme CSS* justifies the body and
+    no config key overrides it: cells still get the left-align guard (the docx
+    builder pins cells left under a justified Normal style — same rule here).
     """
     align = str(config.get("body_text_align", "")).strip().lower()
     if align not in ("justify", "left", "center", "right"):
+        if theme_body_justify:
+            return "<style>.report-body th, .report-body td { text-align: left; }</style>"
         return ""
     if align == "justify":
         # Justify never reaches into table cells — wrapped text in a narrow
@@ -1314,6 +1324,8 @@ def _build_page_header_bar_elements(
     header_logo_uri: str | None = None,
     header_logo_position: str = "right",
     logo_max_mm: float | None = None,
+    margin_left_mm: float = 25.0,
+    margin_right_mm: float = 20.0,
 ) -> tuple[str, str]:
     """Return (bar_html, bar_css) for the fixed page header bar.
 
@@ -1353,12 +1365,12 @@ def _build_page_header_bar_elements(
 .page-header-bar-fixed {{
   position: fixed;
   top: calc(-1 * ({height} + {padding_after}));
-  left: -25mm;
-  right: -20mm;
+  left: -{margin_left_mm}mm;
+  right: -{margin_right_mm}mm;
   height: {height};
   background: {color};
   z-index: 1000;
-  padding: 0 20mm 0 25mm;
+  padding: 0 {margin_right_mm}mm 0 {margin_left_mm}mm;
   box-sizing: border-box;
 }}
 /* WeasyPrint 68.x drops flex children inside position:fixed boxes, so the
@@ -1651,6 +1663,29 @@ def build(
 
     primary_color = mermaid_theme.get("primary") if mermaid_theme else None
 
+    # Theme-derived layout facts shared with the docx builder: the @page side
+    # margins (the header bar's full-bleed offsets must match them) and
+    # whether the theme justifies body text (cells get the left-align guard).
+    from ._assets import _page_geometry
+
+    page_margins_mm = (25.0, 20.0)
+    theme_body_justify = False
+    if css_path and css_path.exists():
+        try:
+            geom = _page_geometry(css_path.read_text(encoding="utf-8"))
+            page_margins_mm = (geom["left"], geom["right"])
+        except Exception:
+            pass
+        if not str(config.get("body_text_align", "")).strip():
+            try:
+                from ..docx_theme import parse_css_for_word
+
+                theme_body_justify = (
+                    parse_css_for_word(css_path).get("text_align_body") == "justify"
+                )
+            except Exception:
+                theme_body_justify = False
+
     html_body = _keep_heading_with_next(html_body)
     html = _build_html(
         title,
@@ -1677,6 +1712,8 @@ def build(
         header_logo_dpi=header_logo_dpi,
         # None = auto (70% of the bar height) unless header_logo_height is set.
         header_logo_max_mm=(header_logo_max_mm if header_logo_height_cfg is not None else None),
+        page_margins_mm=page_margins_mm,
+        theme_body_justify=theme_body_justify,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

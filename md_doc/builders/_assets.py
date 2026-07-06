@@ -117,3 +117,121 @@ def _drop_empty_table_headers(html: str) -> str:
     renders as a (theme-shaded) band in every format.
     """
     return _EMPTY_THEAD_RE.sub("", html)
+
+
+_PAGE_SIZES_MM = {
+    "a3": (297.0, 420.0),
+    "a4": (210.0, 297.0),
+    "a5": (148.0, 210.0),
+    "letter": (215.9, 279.4),
+    "legal": (215.9, 355.6),
+}
+# Default geometry (A4 + PDF theme margins), used when no @page is found.
+_DEFAULT_GEOMETRY = {
+    "w": 210.0,
+    "h": 297.0,
+    "top": 25.0,
+    "right": 20.0,
+    "bottom": 22.0,
+    "left": 25.0,
+}
+
+
+def _length_to_mm(token: str) -> float | None:
+    """Convert a CSS length (mm/cm/in/pt/px) to mm."""
+    m = re.match(r"^([\d.]+)\s*(mm|cm|in|pt|px)?$", token.strip())
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(2) or "mm"
+    return {
+        "mm": val,
+        "cm": val * 10,
+        "in": val * 25.4,
+        "pt": val * 25.4 / 72,
+        "px": val * 25.4 / 96,
+    }[unit]
+
+
+def _page_block_body(css_text: str) -> str | None:
+    """Return the declaration body of the first unnamed ``@page`` block.
+
+    Brace-aware: WeasyPrint themes nest margin boxes (``@top-right { … }``)
+    inside ``@page``, and a naive ``[^}]*`` match truncates at the first inner
+    ``}`` — silently dropping any ``margin``/``size`` declared after a nested
+    box (the PDF read them fine; Word fell back to defaults). Nested blocks
+    are stripped from the returned body.
+    """
+    m = re.search(r"@page\s*\{", css_text, re.IGNORECASE)
+    if not m:
+        return None
+    depth = 1
+    i = m.end()
+    while i < len(css_text) and depth:
+        if css_text[i] == "{":
+            depth += 1
+        elif css_text[i] == "}":
+            depth -= 1
+        i += 1
+    body = css_text[m.end() : i - 1]
+    return re.sub(r"@[^{}]*\{[^{}]*\}", "", body)
+
+
+def _page_geometry(css_text: str | None) -> dict[str, float]:
+    """Parse the ``@page { size; margin }`` from theme CSS into mm geometry.
+
+    Mirrors the PDF's page so docx uses the same paper size and margins (and
+    therefore the same text width → consistent pagination). Falls back to A4 +
+    the standard margins when absent.
+    """
+    geom = dict(_DEFAULT_GEOMETRY)
+    if not css_text:
+        return geom
+    body = _page_block_body(css_text)
+    if body is None:
+        return geom
+
+    size_m = re.search(r"size:\s*([^;]+);", body, re.IGNORECASE)
+    if size_m:
+        tokens = size_m.group(1).lower().split()
+        named = next((t for t in tokens if t in _PAGE_SIZES_MM), None)
+        if named:
+            w, h = _PAGE_SIZES_MM[named]
+            if "landscape" in tokens:
+                w, h = h, w
+            geom["w"], geom["h"] = w, h
+        else:
+            lengths: list[float] = [x for t in tokens if (x := _length_to_mm(t)) is not None]
+            if len(lengths) >= 2:
+                geom["w"], geom["h"] = lengths[0], lengths[1]
+
+    margin_m = re.search(r"margin:\s*([^;]+);", body, re.IGNORECASE)
+    if margin_m:
+        vals: list[float] = [
+            v for t in margin_m.group(1).split() if (v := _length_to_mm(t)) is not None
+        ]
+        if len(vals) == 1:
+            geom["top"] = geom["right"] = geom["bottom"] = geom["left"] = vals[0]
+        elif len(vals) == 2:
+            geom["top"] = geom["bottom"] = vals[0]
+            geom["right"] = geom["left"] = vals[1]
+        elif len(vals) == 3:
+            geom["top"], geom["right"], geom["bottom"] = vals[:3]
+            geom["left"] = vals[1]
+        elif len(vals) >= 4:
+            geom["top"], geom["right"], geom["bottom"], geom["left"] = vals[:4]
+
+    # Word-only knobs: how far the header/footer text sits from the page edge
+    # (Word's "header/footer from edge"; python-docx defaults to 12.7mm).
+    # Custom properties are valid CSS, so WeasyPrint ignores them harmlessly:
+    #   @page { --docx-header-distance: 8mm; --docx-footer-distance: 8mm; }
+    for prop, key in (
+        ("--docx-header-distance", "header_distance"),
+        ("--docx-footer-distance", "footer_distance"),
+    ):
+        dm = re.search(re.escape(prop) + r":\s*([^;]+);?", body, re.IGNORECASE)
+        if dm:
+            mm = _length_to_mm(dm.group(1).strip())
+            if mm is not None:
+                geom[key] = mm
+    return geom

@@ -41,6 +41,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   properties, so WeasyPrint ignores them and the PDF is unaffected.
 
 ### Fixed
+- **The PDF header bar now follows the theme's side margins.** The full-bleed
+  bar hardcoded the default 25/20mm left/right margins for its edge offsets
+  and content padding — a theme with different `@page` side margins got a bar
+  that overhung or fell short of the page edges and misaligned bar content.
+- **Theme-level justify no longer fissures PDF table cells.** The
+  justify-in-cells guard covered the `body_text_align` config key but not a
+  theme's `body { text-align: justify }` — PDF cells still inherited justify
+  while Word pinned them left. Both formats now agree for both sources.
 - **Word now reads `@page` margins declared after nested margin boxes.**
   WeasyPrint themes nest `@top-*`/`@bottom-*` boxes inside `@page`; a
   `margin`/`size` declared *after* a nested box was silently dropped by the
