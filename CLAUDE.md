@@ -172,7 +172,8 @@ pdf_theme: path/to/custom/_pdf-theme.css
                                # path is resolved relative to repo root or absolute
 dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
 body_text_align: justify      # default paragraph alignment for docx/dotx body text: justify | left | center | right
-table_col_widths: [30, 70]    # relative column widths for docx/dotx tables; must match column count or equal widths are used
+table_col_widths: [30, 70]    # relative column widths for tables (pdf/docx/dotx); must match column count or it is ignored
+                              # per-table override: <!-- col-widths: 30, 70 --> comment on the line before a table (all formats)
 ```
 
 **Slides (`pptx` output):**

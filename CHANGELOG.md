@@ -28,6 +28,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **`<!-- col-widths -->` comments now work in PDF output.** The per-table
+  column-width comment was honoured by the Word builders only; the PDF now
+  applies it to the next table with the same precedence as Word (comment >
+  `table_col_widths` config > untouched). The config key is also applied
+  per table with a column-count check — previously its CSS hit every table
+  regardless of shape, crushing the extra columns of a wider table.
+  `md-doc lint` warns when a comment's width count doesn't match the next
+  table's column count (both were silently ignored before).
 - **Page-level justify no longer reaches into table cells.** With
   `body_text_align: justify` (or a theme's `body { text-align: justify }`),
   wrapped cell text in narrow columns stretched into rivers of whitespace.

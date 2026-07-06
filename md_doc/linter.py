@@ -160,6 +160,88 @@ def _check_adjacent_tables(body: str, doc_path: Path, issues: list[LintIssue]) -
         in_table = True
 
 
+_COL_WIDTHS_LINT_RE = re.compile(r"<!--\s*col-widths:\s*([^>]*?)\s*-->", re.IGNORECASE)
+
+
+def _check_col_width_comments(body: str, doc_path: Path, issues: list[LintIssue]) -> None:
+    """Warn when a ``<!-- col-widths -->`` comment can't apply to its table.
+
+    The builders silently ignore a comment whose weight count doesn't match
+    the next table's column count (columns fall back to equal/config widths).
+    A comment with no table after it in the same file is skipped — the table
+    may live in an ``{% include %}`` template.
+    """
+
+    def _cell_count(row: str) -> int:
+        row = row.strip()
+        if row.startswith("|"):
+            row = row[1:]
+        if row.endswith("|"):
+            row = row[:-1]
+        return len(row.split("|"))
+
+    lines = body.split("\n")
+    for idx, line in enumerate(lines):
+        m = _COL_WIDTHS_LINT_RE.search(line)
+        if not m:
+            continue
+        lineno = idx + 1
+        try:
+            weights = [float(w) for w in m.group(1).split(",") if w.strip()]
+        except ValueError:
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=(
+                        f"col-widths comment at line {lineno} has non-numeric "
+                        f"widths ({m.group(1).strip()!r}) — it will be ignored"
+                    ),
+                    severity="warning",
+                )
+            )
+            continue
+        if not weights:
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=f"col-widths comment at line {lineno} has no widths — it will be ignored",
+                    severity="warning",
+                )
+            )
+            continue
+
+        # Find the next table in this file; a later col-widths comment
+        # supersedes this one, so stop looking if we hit one first.
+        j = idx + 1
+        while j < len(lines) and not ("|" in lines[j] and lines[j].strip()):
+            if _COL_WIDTHS_LINT_RE.search(lines[j]):
+                break
+            j += 1
+        if j >= len(lines) or not ("|" in lines[j] and lines[j].strip()):
+            continue  # table may come from an include — can't check here
+
+        # Column count = the widest row of the contiguous table block
+        # (that's how the builders size the grid).
+        ncols = 0
+        while j < len(lines) and "|" in lines[j] and lines[j].strip():
+            if not _TABLE_SEPARATOR_RE.match(lines[j]):
+                ncols = max(ncols, _cell_count(lines[j]))
+            j += 1
+        if ncols and len(weights) != ncols:
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=(
+                        f"col-widths comment at line {lineno} has "
+                        f"{len(weights)} width(s) but the next table has "
+                        f"{ncols} column(s) — the widths are ignored and the "
+                        f"columns fall back to equal/config widths"
+                    ),
+                    severity="warning",
+                )
+            )
+
+
 def _check_form_fields(
     body: str, config: dict[str, Any], doc_path: Path, issues: list[LintIssue]
 ) -> None:
@@ -377,6 +459,7 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     # 3d. Adjacent tables without a blank line (silently merge into one)
     # ------------------------------------------------------------------
     _check_adjacent_tables(body, doc_path, issues)
+    _check_col_width_comments(body, doc_path, issues)
 
     # ------------------------------------------------------------------
     # 4. {% include %} resolution
