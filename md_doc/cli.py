@@ -193,14 +193,36 @@ _BUILD_DEP_NAMES = (
 )
 
 
+_PIPELINE_MTIME: float | None = None
+
+
+def _pipeline_mtime() -> float:
+    """Newest mtime across the installed ``md_doc`` package (cached).
+
+    The pipeline code is a build input too: upgrading md-doc changes what the
+    builders produce, so existing outputs must count as stale — otherwise an
+    incremental build keeps saying "up to date" after an upgrade and the fixes
+    never reach the documents.
+    """
+    global _PIPELINE_MTIME
+    if _PIPELINE_MTIME is None:
+        try:
+            pkg = Path(__file__).resolve().parent
+            _PIPELINE_MTIME = max((p.stat().st_mtime for p in pkg.rglob("*.py")), default=0.0)
+        except Exception:
+            _PIPELINE_MTIME = 0.0
+    return _PIPELINE_MTIME
+
+
 def _newest_dep_mtime(doc_path: Path, repo_root: Path, extra: list[Path] | None = None) -> float:
     """Return the newest mtime among a document's build inputs.
 
     Inputs are the source ``.md`` plus, at every directory from *repo_root* down
     to the document, any ``_meta.yml``/theme/``_merge_fields.yml`` file and every
-    file under a ``templates/`` subdir (include fragments). Used to decide
-    whether an existing output is stale. Returns ``inf`` if nothing is found so
-    the caller always rebuilds.
+    file under a ``templates/`` subdir (include fragments) — and the installed
+    md_doc package itself (a pipeline upgrade invalidates outputs). Used to
+    decide whether an existing output is stale. Returns ``inf`` if nothing is
+    found so the caller always rebuilds.
     """
     deps: list[Path] = [doc_path]
     doc_dir = doc_path.parent
@@ -221,6 +243,7 @@ def _newest_dep_mtime(doc_path: Path, repo_root: Path, extra: list[Path] | None 
     if extra:
         deps.extend(extra)
     mtimes = [p.stat().st_mtime for p in deps if p.exists()]
+    mtimes.append(_pipeline_mtime())
     return max(mtimes) if mtimes else float("inf")
 
 

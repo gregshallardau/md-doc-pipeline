@@ -167,7 +167,9 @@ function M.build_workspace(bufnr)
     vim.notify("md-doc: cannot detect workspace root", vim.log.levels.ERROR)
     return
   end
-  runner.run({ "build", repo_root }, pipeline, bufnr, "󰆨 build workspace")
+  -- Full rebuild: an explicit "build the workspace" must regenerate every
+  -- output, not skip ones the incremental check considers fresh.
+  runner.run({ "build", repo_root, "--force" }, pipeline, bufnr, "󰆨 build workspace")
 end
 
 function M.lint_workspace(bufnr)

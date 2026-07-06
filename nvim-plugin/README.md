@@ -144,7 +144,7 @@ dismiss it.
 | `<leader>mr` | Toggle frontmatter resolution on/off |
 | `<leader>mb` | Build current file |
 | `<leader>ml` | Lint current file |
-| `<leader>mB` | Build workspace |
+| `<leader>mB` | Build workspace (full rebuild, `--force`) |
 | `<leader>mL` | Lint workspace |
 | `<leader>mg` | Go to source (open the file where the variable/include is defined) |
 | `<leader>mu` | Show files that include this file (quickfix list) |
@@ -212,7 +212,7 @@ Then from any `.md` file in the project:
 |---|---|
 | `<leader>mb` | `md-doc build <current file>` |
 | `<leader>ml` | `md-doc lint <current file>` |
-| `<leader>mB` | `md-doc build <workspace root>` |
+| `<leader>mB` | `md-doc build <workspace root> --force` |
 | `<leader>mL` | `md-doc lint <workspace root>` |
 
 Output streams live into the split pane. A notification fires on completion.
