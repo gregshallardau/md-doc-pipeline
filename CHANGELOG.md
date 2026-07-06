@@ -28,6 +28,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Adjacent tables no longer merge in Word.** OOXML treats consecutive
+  `w:tbl` elements as a single table, so two tables authored with a blank
+  line between them (e.g. an endorsement table followed by a sign/date table
+  from a separate `{% include %}`) fused into one block in docx/dotx output.
+  The builder now inserts a tiny spacer paragraph (2pt mark + 8pt after,
+  mirroring the PDF's `table + table` 10pt gap) between consecutive tables.
+- **Header-bar logos scale with the bar.** Page-header-bar logos were
+  hard-capped at 8mm in both formats, looking lost inside taller brand bands.
+  The default cap is now 70% of the bar height in PDF and Word alike;
+  `header_logo_height` still forces an exact size.
+- **PDF header-bar text no longer disappears, and the logo honours its
+  position.** WeasyPrint 68.x drops flex children inside `position: fixed`
+  boxes — `header_text` in a `page_header_bar` vanished and the logo ignored
+  `page_header_bar_logo_position`, landing centred. The bar now lays out with
+  table-cell slots (the same 35/30/35 grid as the Word header table).
 - **Upgrading md-doc now invalidates existing outputs.** The incremental
   build's freshness check covered the document's inputs (source, `_meta.yml`
   cascade, theme, templates) but not the pipeline itself — so after an

@@ -401,3 +401,45 @@ def test_keep_with_next_excludes_page_break_divs():
     result = _keep_heading_with_next(html)
     keep = result.split('<div class="keep-with-next">')[1].split("</div>")[0]
     assert "md-doc-page-break" not in keep
+
+
+def test_adjacent_tables_stay_separate(tmp_repo):
+    # OOXML merges consecutive w:tbl elements into ONE table — Word showed two
+    # authored tables (blank line between them) as a single merged block. The
+    # builder now inserts a tiny spacer paragraph between adjacent tables.
+    body = "| A | B |\n| --- | --- |\n| 1 | 2 |\n" "\n" "| C | D |\n| --- | --- |\n| 3 | 4 |\n"
+    out = _build(tmp_repo, body, {})
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    docbody = Document(str(out)).element.body
+    tags = [c.tag.replace(ns, "") for c in docbody]
+    first, second = [i for i, t in enumerate(tags) if t == "tbl"]
+    between = tags[first + 1 : second]
+    assert between == ["p"], f"expected one spacer paragraph, got {between}"
+    # The spacer is a 2pt paragraph mark, not a visible blank line.
+    spacer = docbody[first + 1]
+    sz = spacer.find(f"{ns}pPr/{ns}rPr/{ns}sz")
+    assert sz is not None and sz.get(f"{ns}val") == "4"
+    assert "".join(spacer.itertext()) == ""
+
+
+def test_three_adjacent_tables_two_spacers(tmp_repo):
+    body = "\n\n".join(f"| H{i} |\n| --- |\n| v{i} |" for i in range(3))
+    out = _build(tmp_repo, body, {})
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    tags = [c.tag.replace(ns, "") for c in Document(str(out)).element.body]
+    tbl_idx = [i for i, t in enumerate(tags) if t == "tbl"]
+    assert len(tbl_idx) == 3
+    for a, b in zip(tbl_idx, tbl_idx[1:]):
+        assert "p" in tags[a + 1 : b], "adjacent tables need a w:p between them"
+
+
+def test_single_table_gets_no_spacer(tmp_repo):
+    out = _build(tmp_repo, "Intro\n\n| A |\n| --- |\n| 1 |\n", {})
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    docbody = Document(str(out)).element.body
+    tags = [c.tag.replace(ns, "") for c in docbody]
+    tbl = tags.index("tbl")
+    # The block right before the table is the intro paragraph, not a spacer.
+    prev = docbody[tbl - 1]
+    assert "Intro" in "".join(prev.itertext())
+    assert prev.find(f"{ns}pPr/{ns}rPr/{ns}sz") is None
