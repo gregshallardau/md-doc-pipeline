@@ -443,3 +443,36 @@ def test_single_table_gets_no_spacer(tmp_repo):
     prev = docbody[tbl - 1]
     assert "Intro" in "".join(prev.itertext())
     assert prev.find(f"{ns}pPr/{ns}rPr/{ns}sz") is None
+
+
+def test_footer_never_inherits_justified_body(tmp_repo):
+    # A theme with body text-align: justify sets the Normal style to justify;
+    # the footer paragraph is positioned by tab stops and must stay explicitly
+    # left-aligned or Word stretches the slots across the page width.
+    (tmp_repo / "_docx-theme.css").write_text(
+        "body { font-family: Calibri; font-size: 10pt; text-align: justify; }\n",
+        encoding="utf-8",
+    )
+    out = _build(
+        tmp_repo,
+        "Body.\n",
+        {"footer_center": "Confidential", "header_text": "Hdr"},
+    )
+    import re
+
+    styles = _part(out, "word/styles.xml")
+    normal = re.search(r'<w:style [^>]*w:styleId="Normal".*?</w:style>', styles, re.S)
+    assert '<w:jc w:val="both"/>' in normal.group(0)  # precondition: theme applied
+    assert '<w:jc w:val="left"/>' in _part(out, "word/footer1.xml")
+    assert '<w:jc w:val="left"/>' in _part(out, "word/header1.xml")
+    assert '<w:jc w:val="both"/>' not in _part(out, "word/footer1.xml")
+
+
+def test_multiline_center_footer_retabs_to_center(tmp_repo):
+    # Continuation lines after a soft break must re-tab to their slot's stop —
+    # line 2 of a centre slot used to restart at the left margin.
+    out = _build(tmp_repo, "Body.\n", {"footer_center": "Line one\nLine two"})
+    footer = _part(out, "word/footer1.xml")
+    after_break = footer.split("<w:br/>", 1)[1]
+    before_line2 = after_break.split("Line two", 1)[0]
+    assert "<w:tab/>" in before_line2
