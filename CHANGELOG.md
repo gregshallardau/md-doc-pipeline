@@ -28,6 +28,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Header logos now render at the same size in PDF and Word.** The PDF drew
+  margin-box logos at raw pixel size (a high-resolution logo blew out the page
+  header) while Word forced every logo to 6mm — too small and inconsistent
+  across contexts. Shared rule everywhere now: natural size capped at **8mm**
+  tall, never upscaled; the new **`header_logo_height`** key forces an exact
+  height in both formats (PDF via computed `image-resolution`, Word via
+  matching picture extents). Bar and cover-bar logos follow the same
+  no-upscale rule.
 - **Tables from adjacent `{% include %}` templates no longer merge into one.**
   The renderer's `trim_blocks` joins fragments tightly, so two templates each
   containing a table butted together with no blank line — and markdown parsed

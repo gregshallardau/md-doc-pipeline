@@ -272,6 +272,7 @@ cover_stripe_width: "6mm"     # stripe width (default: "6mm")
 ```yaml
 header_logo: assets/logo.png  # logo image in page header (resolved doc dir → ancestors → repo root)
 header_logo_position: right   # left | center | right (default: right)
+header_logo_height: "10mm"    # exact logo height (default: intrinsic size capped at 8mm; same rule in PDF and Word)
 header_text: "Company Name"   # text in page header
 header_text_position: left    # left | center | right (default: left)
 footer_left: "Company Name"   # text in left footer slot (injected as CSS @bottom-left)

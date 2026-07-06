@@ -675,6 +675,39 @@ def _build_cover(
 """
 
 
+def _parse_mm(value: Any, default: float) -> float:
+    """Parse a '10mm'-style config value to mm (bare numbers are mm)."""
+    if value is None:
+        return default
+    try:
+        return float(re.sub(r"[^\d.]", "", str(value)) or default)
+    except ValueError:
+        return default
+
+
+def _logo_resolution_dpi(path: Path, target_mm: float, *, forced: bool = False) -> float | None:
+    """DPI that makes the image at *path* render *target_mm* tall.
+
+    WeasyPrint renders margin-box logos (``content: url(…)``) at intrinsic
+    pixel size (96dpi) and CSS height/max-height cannot constrain them — a
+    high-resolution logo blows out the page header. CSS ``image-resolution``
+    *is* honoured, so a computed DPI scales the logo exactly, at full quality.
+
+    Returns ``None`` when no scaling is needed (image already fits and no
+    explicit height was configured) or the image can't be read.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            intrinsic_mm = im.height / 96 * 25.4
+            if not forced and intrinsic_mm <= target_mm:
+                return None
+            return im.height / target_mm * 25.4
+    except Exception:
+        return None
+
+
 def _collect_form_field_meta(html_body: str) -> dict[str, dict[str, Any]]:
     """Collect per-field metadata WeasyPrint drops from the generated PDF.
 
@@ -877,6 +910,8 @@ def _build_html(
     primary_color: str | None = None,
     css_vars_style: str = "",
     is_form: bool = False,
+    header_logo_dpi: float | None = None,
+    header_logo_max_mm: float = 8.0,
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -886,6 +921,7 @@ def _build_html(
         header_text,
         header_text_position,
         page_header_bar=page_header_bar,
+        logo_dpi=header_logo_dpi,
     )
 
     section_bar_style = _build_section_bar_style(full_config or {})
@@ -897,6 +933,7 @@ def _build_html(
         header_text_position=header_text_position,
         header_logo_uri=header_logo_uri,
         header_logo_position=header_logo_position,
+        logo_max_mm=header_logo_max_mm,
     )
 
     footer_style = _build_footer_style(footer_left, footer_center, footer_right)
@@ -1040,6 +1077,7 @@ def _build_header_style(
     text: str | None,
     text_position: str,
     page_header_bar: dict[str, Any] | None = None,
+    logo_dpi: float | None = None,
 ) -> str:
     """Generate an inline <style> block for page header margin boxes."""
     rules: list[str] = []
@@ -1056,7 +1094,10 @@ def _build_header_style(
     else:
         if logo_uri:
             pos = _HEADER_POSITIONS.get(logo_position, "@top-right")
-            rules.append(f"  {pos} {{ content: url('{logo_uri}'); vertical-align: middle; }}")
+            # image-resolution scales the logo to the target height — CSS
+            # height/max-height cannot constrain margin-box content images.
+            res = f" image-resolution: {logo_dpi:.1f}dpi;" if logo_dpi else ""
+            rules.append(f"  {pos} {{ content: url('{logo_uri}'); vertical-align: middle;{res} }}")
             cover_overrides.append(f"  {pos} {{ content: none; }}")
 
         if text:
@@ -1213,6 +1254,7 @@ def _build_page_header_bar_elements(
     header_text_position: str = "left",
     header_logo_uri: str | None = None,
     header_logo_position: str = "right",
+    logo_max_mm: float = 8.0,
 ) -> tuple[str, str]:
     """Return (bar_html, bar_css) for the fixed page header bar.
 
@@ -1264,7 +1306,7 @@ def _build_page_header_bar_elements(
   font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 }}
 .page-header-bar-fixed .phb-logo {{
-  max-height: 8mm;
+  max-height: {logo_max_mm}mm;
 }}
 </style>"""
 
@@ -1443,6 +1485,15 @@ def build(
     header_logo_path = _resolve_logo(config.get("header_logo"), repo_root, doc_path)
     header_logo_uri = header_logo_path.as_uri() if header_logo_path else None
     header_logo_position: str = config.get("header_logo_position", "right")
+    # Header logos render at min(intrinsic, 8mm) tall by default;
+    # header_logo_height forces an exact height. Same rule as the docx builder.
+    header_logo_height_cfg = config.get("header_logo_height")
+    header_logo_max_mm = _parse_mm(header_logo_height_cfg, 8.0)
+    header_logo_dpi: float | None = None
+    if header_logo_path:
+        header_logo_dpi = _logo_resolution_dpi(
+            header_logo_path, header_logo_max_mm, forced=header_logo_height_cfg is not None
+        )
     header_text: str | None = config.get("header_text")
     header_text_position: str = config.get("header_text_position", "left")
 
@@ -1532,6 +1583,8 @@ def build(
         primary_color=primary_color,
         css_vars_style=_build_css_vars_style(config, repo_root, doc_path),
         is_form=is_form,
+        header_logo_dpi=header_logo_dpi,
+        header_logo_max_mm=header_logo_max_mm,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

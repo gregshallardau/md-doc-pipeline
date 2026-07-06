@@ -110,6 +110,7 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         # headers & footers
         "header_logo",
         "header_logo_position",
+        "header_logo_height",
         "header_text",
         "header_text_position",
         "footer_left",

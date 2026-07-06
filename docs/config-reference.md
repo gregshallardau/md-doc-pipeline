@@ -487,6 +487,7 @@ header_text_position: left
 |-----|------|---------|
 | `header_logo` | string | — (no logo) |
 | `header_logo_position` | string | `"right"` — values: `left`, `center`, `right` |
+| `header_logo_height` | string | *(intrinsic, ≤8mm)* | Exact header-logo height (e.g. `"10mm"`). Default renders the logo at its natural size capped at 8mm tall — identical rule in PDF and Word, so the logo matches across formats. |
 | `header_text` | string | — (no text) |
 | `header_text_position` | string | `"left"` — values: `left`, `center`, `right` |
 
