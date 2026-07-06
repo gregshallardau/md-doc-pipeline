@@ -172,7 +172,8 @@ pdf_theme: path/to/custom/_pdf-theme.css
                                # path is resolved relative to repo root or absolute
 dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
 body_text_align: justify      # default paragraph alignment for docx/dotx body text: justify | left | center | right
-table_col_widths: [30, 70]    # relative column widths for docx/dotx tables; must match column count or equal widths are used
+table_col_widths: [30, 70]    # relative column widths for tables (pdf/docx/dotx); must match column count or it is ignored
+                              # per-table override: <!-- col-widths: 30, 70 --> comment on the line before a table (all formats)
 ```
 
 **Slides (`pptx` output):**
@@ -337,6 +338,36 @@ Export workflow:
 3. Use `--tag TAGNAME` to filter by tags
 4. Outputs go to `vault/Exports/` by default, or `-o /path/` to override
 5. Use `--format pdf|docx|dotx` to force a single format (default: per-document)
+
+### Headerless tables
+
+Markdown pipe tables require a header row. To render a table **without** a
+header band (e.g. a signature block), make every header cell empty — the
+builders drop the all-empty header row in every format:
+
+```markdown
+| | |
+| --- | --- |
+| Greg Shallard | [[signed_date]] |
+```
+
+### Word header/footer geometry
+
+Word's header/footer distance from the page edge (default 12.7mm) can be set
+from the theme CSS `@page` block — custom properties, so WeasyPrint ignores
+them and the PDF is unaffected. Put them in `_docx-theme.css` (or the shared
+theme):
+
+```css
+@page {
+  margin: 24mm 20mm 20mm 25mm;
+  --docx-header-distance: 8mm;   /* header text starts 8mm from the top edge */
+  --docx-footer-distance: 6mm;   /* footer sits 6mm from the bottom edge */
+}
+```
+
+Header/footer paragraphs never inherit the theme's body line-height or
+paragraph spacing (a 1.6 line height would triple the container height).
 
 ### Footer rendering (docx/dotx)
 

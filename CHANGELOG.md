@@ -26,8 +26,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     links same-named fields), and `?[…]` without `pdf_forms: true`.
   - Signature fields render as a clean rule (was a dark filled bar) and stay
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
+- **Headerless tables.** An all-empty markdown header row (`| | |`) now
+  renders as a table without a header band in every format — markdown
+  requires a header row syntactically, so this is the opt-out idiom
+  (previously the empty row still rendered as a theme-shaded band).
+- **Word header/footer distance from CSS.** `@page { --docx-header-distance:
+  8mm; --docx-footer-distance: 6mm; }` in the Word theme cascade sets Word's
+  header/footer-from-edge (python-docx defaulted both to 12.7mm). Custom
+  properties, so WeasyPrint ignores them and the PDF is unaffected.
 
 ### Fixed
+- **Word header/footer containers no longer inherit body typography.** The
+  header/footer paragraphs picked up the theme's body line-height and
+  paragraph spacing from the Normal style — a 1.6 line height + 10pt
+  space-after turned a 6pt footer line into a ~30pt-tall container. Both are
+  pinned to single spacing with zero before/after.
+- **`<!-- col-widths -->` comments now work in PDF output.** The per-table
+  column-width comment was honoured by the Word builders only; the PDF now
+  applies it to the next table with the same precedence as Word (comment >
+  `table_col_widths` config > untouched). The config key is also applied
+  per table with a column-count check — previously its CSS hit every table
+  regardless of shape, crushing the extra columns of a wider table.
+  `md-doc lint` warns when a comment's width count doesn't match the next
+  table's column count (both were silently ignored before).
+- **Page-level justify no longer reaches into table cells.** With
+  `body_text_align: justify` (or a theme's `body { text-align: justify }`),
+  wrapped cell text in narrow columns stretched into rivers of whitespace.
+  Table cells now default to left in both PDF and Word when the page-level
+  alignment is justify; a column's own markdown alignment (`:--:` / `--:`),
+  a `<div style="text-align: …">` wrapper, and left/center/right
+  `body_text_align` values still cascade into cells as before.
 - **Word footers/headers no longer inherit justified body text.** A theme
   with `body { text-align: justify }` sets Word's *Normal* style to justify,
   and the footer/header paragraphs (positioned by left/centre/right tab

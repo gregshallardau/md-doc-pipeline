@@ -255,3 +255,92 @@ class TestCssVars:
     def test_no_css_vars_emits_nothing(self, tmp_repo):
         assert self._style(tmp_repo, None) == ""
         assert self._style(tmp_repo, {}) == ""
+
+
+class TestBodyAlignTableCells:
+    def test_justify_excludes_table_cells(self):
+        from md_doc.builders.pdf import _build_body_align_style
+
+        style = _build_body_align_style({"body_text_align": "justify"})
+        assert ".report-body { text-align: justify; }" in style
+        assert ".report-body th, .report-body td { text-align: left; }" in style
+
+    def test_other_alignments_cascade_into_cells(self):
+        from md_doc.builders.pdf import _build_body_align_style
+
+        style = _build_body_align_style({"body_text_align": "center"})
+        assert "td" not in style
+
+
+class TestApplyTableColWidths:
+    def _html(self, md_text: str) -> str:
+        import markdown
+
+        return markdown.markdown(md_text, extensions=["tables"])
+
+    def test_comment_binds_to_next_table(self):
+        from md_doc.builders.pdf import _apply_table_col_widths
+
+        html = self._html("| A | B |\n| --- | --- |\n| 1 | 2 |")
+        html = "<!-- col-widths: 25, 75 -->\n" + html
+        out = _apply_table_col_widths(html)
+        assert 'style="width: 25.0000%;"' in out
+        assert 'style="width: 75.0000%;"' in out
+        assert "table-layout: fixed" in out
+
+    def test_comment_beats_config(self):
+        from md_doc.builders.pdf import _apply_table_col_widths
+
+        html = "<!-- col-widths: 10, 90 -->\n" + self._html("| A | B |\n| --- | --- |\n| 1 | 2 |")
+        out = _apply_table_col_widths(html, [50.0, 50.0])
+        assert "width: 10.0000%" in out and "width: 90.0000%" in out
+        assert "width: 50.0000%" not in out
+
+    def test_config_applies_to_matching_tables_only(self):
+        from md_doc.builders.pdf import _apply_table_col_widths
+
+        two = self._html("| A | B |\n| --- | --- |\n| 1 | 2 |")
+        three = self._html("| X | Y | Z |\n| --- | --- | --- |\n| 1 | 2 | 3 |")
+        out = _apply_table_col_widths(two + three, [30.0, 70.0])
+        assert "width: 30.0000%" in out and "width: 70.0000%" in out
+        # the 3-column table is untouched — no fixed layout forced onto it
+        assert out.count("table-layout: fixed") == 1
+
+    def test_mismatched_comment_is_ignored(self):
+        from md_doc.builders.pdf import _apply_table_col_widths
+
+        html = "<!-- col-widths: 30, 70 -->\n" + self._html(
+            "| X | Y | Z |\n| --- | --- | --- |\n| 1 | 2 | 3 |"
+        )
+        out = _apply_table_col_widths(html)
+        assert "width:" not in out and "table-layout" not in out
+
+    def test_classed_tables_are_left_alone(self):
+        from md_doc.builders.pdf import _apply_table_col_widths
+
+        html = '<table class="field-box"><tr><td>a</td><td>b</td></tr></table>'
+        out = _apply_table_col_widths(html, [30.0, 70.0])
+        assert out == html
+
+    def test_column_alignment_style_is_preserved(self):
+        from md_doc.builders.pdf import _apply_table_col_widths
+
+        html = "<!-- col-widths: 40, 60 -->\n" + self._html("| L | C |\n| --- | :---: |\n| a | b |")
+        out = _apply_table_col_widths(html)
+        assert "width: 60.0000%; text-align: center;" in out
+
+
+class TestDropEmptyTableHeaders:
+    def test_all_empty_thead_removed(self):
+        from md_doc.builders._assets import _drop_empty_table_headers
+
+        html = (
+            "<table><thead>\n<tr>\n<th></th>\n<th></th>\n</tr>\n</thead><tbody>...</tbody></table>"
+        )
+        assert "<thead>" not in _drop_empty_table_headers(html)
+
+    def test_populated_thead_kept(self):
+        from md_doc.builders._assets import _drop_empty_table_headers
+
+        html = "<table><thead>\n<tr>\n<th>A</th>\n<th></th>\n</tr>\n</thead></table>"
+        assert "<thead>" in _drop_empty_table_headers(html)

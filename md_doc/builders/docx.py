@@ -54,6 +54,7 @@ from ..docx_theme import (
 )
 from .pdf import _inject_appendix_breaks, _inject_page_breaks
 from ._assets import (
+    _drop_empty_table_headers,
     _EMU_PER_PX,
     _MERMAID_IMG_RE,
     _render_mermaid_to_images,
@@ -1436,8 +1437,17 @@ class _DocxBuilder(HTMLParser):
                 # through the div > body_text_align cascade (Word table cells
                 # don't inherit document-level alignment the way body text does).
                 word_align = self._effective_alignment(cell_align)
+                if cell_align is None and word_align == WD_ALIGN_PARAGRAPH.JUSTIFY:
+                    # Page-level justify never reaches into cells: wrapped text
+                    # in a narrow column stretches into rivers of whitespace.
+                    # A cell/column's own text-align: justify still applies.
+                    word_align = WD_ALIGN_PARAGRAPH.LEFT
                 if cell_align is None and is_header:
                     word_align = None  # headers keep Word's default unless explicit
+                if word_align is None and self._theme.get("text_align_body") == "justify":
+                    # A theme with body { text-align: justify } justifies the
+                    # Normal style — cells would inherit it, so pin them left.
+                    word_align = WD_ALIGN_PARAGRAPH.LEFT
                 if word_align is not None:
                     para.alignment = word_align
 
@@ -1584,6 +1594,20 @@ def _page_geometry(css_text: str | None) -> dict[str, float]:
             geom["left"] = vals[1]
         elif len(vals) >= 4:
             geom["top"], geom["right"], geom["bottom"], geom["left"] = vals[:4]
+
+    # Word-only knobs: how far the header/footer text sits from the page edge
+    # (Word's "header/footer from edge"; python-docx defaults to 12.7mm).
+    # Custom properties are valid CSS, so WeasyPrint ignores them harmlessly:
+    #   @page { --docx-header-distance: 8mm; --docx-footer-distance: 8mm; }
+    for prop, key in (
+        ("--docx-header-distance", "header_distance"),
+        ("--docx-footer-distance", "footer_distance"),
+    ):
+        dm = re.search(re.escape(prop) + r":\s*([^;]+);?", body, re.IGNORECASE)
+        if dm:
+            mm = _length_to_mm(dm.group(1).strip())
+            if mm is not None:
+                geom[key] = mm
     return geom
 
 
@@ -1597,6 +1621,10 @@ def _setup_page(doc: Document, geometry: dict[str, float] | None = None) -> None
     section.right_margin = Mm(g["right"])
     section.bottom_margin = Mm(g["bottom"])
     section.left_margin = Mm(g["left"])
+    if "header_distance" in g:
+        section.header_distance = Mm(g["header_distance"])
+    if "footer_distance" in g:
+        section.footer_distance = Mm(g["footer_distance"])
 
 
 # ---------------------------------------------------------------------------
@@ -2623,6 +2651,12 @@ def _add_footer(
     # body text-align: justify stretched the footer across the full width
     # instead of centring the middle slot.
     para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    # Never inherit the theme's body line-height/paragraph spacing either —
+    # a 1.6 line height + 10pt space-after turns a 6pt footer line into a
+    # ~30pt-tall header/footer container.
+    para.paragraph_format.space_before = Pt(0)
+    para.paragraph_format.space_after = Pt(0)
+    para.paragraph_format.line_spacing = 1.0
 
     from docx.enum.text import WD_TAB_ALIGNMENT
 
@@ -2690,6 +2724,12 @@ def _add_plain_header(
     # Tab stops position the slots — never inherit the Normal style's
     # alignment (a justified body theme would stretch the header line).
     para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    # Never inherit the theme's body line-height/paragraph spacing either —
+    # a 1.6 line height + 10pt space-after turns a 6pt footer line into a
+    # ~30pt-tall header/footer container.
+    para.paragraph_format.space_before = Pt(0)
+    para.paragraph_format.space_after = Pt(0)
+    para.paragraph_format.line_spacing = 1.0
     from docx.enum.text import WD_TAB_ALIGNMENT
 
     tabs = para.paragraph_format.tab_stops
@@ -2812,6 +2852,7 @@ def build(
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html = md_engine.convert(body)
+    html = _drop_empty_table_headers(html)
 
     # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF
     # uses so diagram colours match across formats. Falls back to leaving the
@@ -2834,7 +2875,22 @@ def build(
     doc = Document()
     # Match the PDF's paper size + margins (parsed from the theme's @page) so
     # both formats share the same text width and break at the same points.
-    _setup_page(doc, _page_geometry(css_text))
+    geometry = _page_geometry(css_text)
+    # The Word-only --docx-header/footer-distance props live in whichever CSS
+    # the Word theme cascade uses (_docx-theme.css if present) — overlay them.
+    if doc_path is not None and repo_root is not None:
+        try:
+            from ..docx_theme import find_docx_theme_css
+
+            word_css = find_docx_theme_css(doc_path, repo_root, config)
+            if word_css is not None:
+                word_geom = _page_geometry(word_css.read_text(encoding="utf-8"))
+                for key in ("header_distance", "footer_distance"):
+                    if key in word_geom:
+                        geometry[key] = word_geom[key]
+        except Exception:
+            pass
+    _setup_page(doc, geometry)
 
     props = doc.core_properties
     if is_dotx:

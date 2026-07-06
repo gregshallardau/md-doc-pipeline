@@ -35,6 +35,7 @@ import markdown  # noqa: E402
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
+from ._assets import _drop_empty_table_headers  # noqa: E402
 
 # Markdown extensions to enable
 _MD_EXTENSIONS = [
@@ -925,7 +926,6 @@ def _build_html(
     )
 
     section_bar_style = _build_section_bar_style(full_config or {})
-    table_col_widths_style = _build_table_col_widths_style(full_config or {})
     body_align_style = _build_body_align_style(full_config or {})
     page_bar_html, page_bar_css = _build_page_header_bar_elements(
         page_header_bar,
@@ -965,7 +965,6 @@ def _build_html(
   {header_style}
   {footer_style}
   {section_bar_style}
-  {table_col_widths_style}
   {body_align_style}
   {cover_support_style}
   {_FORM_SUPPORT_CSS if is_form else ""}
@@ -1163,29 +1162,81 @@ def _build_section_bar_style(config: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _build_table_col_widths_style(config: dict[str, Any]) -> str:
-    """Generate CSS column widths from the ``table_col_widths`` config key.
+_COL_WIDTHS_COMMENT_RE = re.compile(r"<!--\s*col-widths:\s*([\d.,\s]+?)\s*-->", re.IGNORECASE)
 
-    Mirrors the docx builder so the same ``table_col_widths: [30, 70]`` config
-    produces matching column proportions in PDF and Word. Applied to tables
-    whose column index falls within the weight list.
+
+def _apply_table_col_widths(html: str, config_weights: list[float] | None = None) -> str:
+    """Size table columns like the docx builder: comment > config > untouched.
+
+    A ``<!-- col-widths: 30, 70 -->`` comment binds to the next ``<table>``
+    after it (the last comment before a table wins); *config_weights* (the
+    ``table_col_widths`` key) covers every other markdown table. Either source
+    is ignored for a table whose column count doesn't match — same silent
+    fallback as Word. Widths become inline percentage styles on the first-row
+    cells under ``table-layout: fixed``. Tables the builder generates with a
+    class of their own (``field-box``/``field-row`` form grids) are left alone.
     """
-    raw = config.get("table_col_widths")
-    if not (isinstance(raw, list) and raw and all(isinstance(v, (int, float)) for v in raw)):
-        return ""
-    weights = [float(v) for v in raw]
-    total = sum(weights)
-    if total <= 0:
-        return ""
-    lines = ["<style>", ".report-body table { table-layout: fixed; width: 100%; }"]
-    for i, w in enumerate(weights, start=1):
-        pct = w / total * 100
-        lines.append(
-            f".report-body table th:nth-child({i}), "
-            f".report-body table td:nth-child({i}) {{ width: {pct:.4f}%; }}"
-        )
-    lines.append("</style>")
-    return "\n".join(lines)
+    targets: dict[int, list[float]] = {}
+    for m in _COL_WIDTHS_COMMENT_RE.finditer(html):
+        try:
+            weights = [float(w) for w in m.group(1).split(",") if w.strip()]
+        except ValueError:
+            continue
+        if not weights or sum(weights) <= 0:
+            continue
+        tpos = html.find("<table", m.end())
+        if tpos != -1:
+            targets[tpos] = weights
+
+    if config_weights and sum(config_weights) > 0:
+        for m in re.finditer(r"<table[\s>]", html):
+            targets.setdefault(m.start(), list(config_weights))
+
+    # Rewrite from the last table backwards so earlier offsets stay valid.
+    for tpos in sorted(targets, reverse=True):
+        weights = targets[tpos]
+        open_end = html.find(">", tpos)
+        table_end = html.find("</table>", tpos)
+        if open_end == -1 or table_end == -1 or open_end > table_end:
+            continue
+        open_tag = html[tpos : open_end + 1]
+        if "class=" in open_tag:
+            continue  # form grids (field-box/field-row) manage their own widths
+        seg = html[open_end + 1 : table_end]
+        row_m = re.search(r"<tr[^>]*>.*?</tr>", seg, re.DOTALL)
+        if not row_m:
+            continue
+        row = row_m.group(0)
+        cells = list(re.finditer(r"<t[hd][^>]*>", row))
+        if len(cells) != len(weights):
+            continue  # count mismatch — ignored, same as the docx builder
+
+        total = sum(weights)
+        parts: list[str] = []
+        last = 0
+        for cell_m, w in zip(cells, weights):
+            parts.append(row[last : cell_m.start()])
+            tag = cell_m.group(0)
+            width_decl = f"width: {w / total * 100:.4f}%;"
+            if 'style="' in tag:
+                tag = tag.replace('style="', f'style="{width_decl} ', 1)
+            else:
+                tag = tag[:-1] + f' style="{width_decl}">'
+            parts.append(tag)
+            last = cell_m.end()
+        parts.append(row[last:])
+        new_row = "".join(parts)
+
+        layout_decl = "table-layout: fixed; width: 100%;"
+        if 'style="' in open_tag:
+            new_open = open_tag.replace('style="', f'style="{layout_decl} ', 1)
+        else:
+            new_open = open_tag[:-1] + f' style="{layout_decl}">'
+
+        new_seg = seg[: row_m.start()] + new_row + seg[row_m.end() :]
+        html = html[:tpos] + new_open + new_seg + html[table_end:]
+
+    return html
 
 
 def _build_body_align_style(config: dict[str, Any]) -> str:
@@ -1199,6 +1250,14 @@ def _build_body_align_style(config: dict[str, Any]) -> str:
     align = str(config.get("body_text_align", "")).strip().lower()
     if align not in ("justify", "left", "center", "right"):
         return ""
+    if align == "justify":
+        # Justify never reaches into table cells — wrapped text in a narrow
+        # column stretches into rivers of whitespace (same rule as the docx
+        # builder). Markdown column alignment (inline style) still wins.
+        return (
+            "<style>.report-body { text-align: justify; }\n"
+            ".report-body th, .report-body td { text-align: left; }</style>"
+        )
     return f"<style>.report-body {{ text-align: {align}; }}</style>"
 
 
@@ -1564,6 +1623,18 @@ def build(
 
     md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
     html_body = md_engine.convert(body)
+    html_body = _drop_empty_table_headers(html_body)
+
+    # Column widths: <!-- col-widths --> comments and the table_col_widths
+    # config key, applied per table with the same precedence as the docx
+    # builder (comment > config; ignored on column-count mismatch).
+    raw_col_widths = config.get("table_col_widths")
+    config_col_weights: list[float] | None = None
+    if isinstance(raw_col_widths, list) and all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw_col_widths
+    ):
+        config_col_weights = [float(v) for v in raw_col_widths]
+    html_body = _apply_table_col_widths(html_body, config_col_weights)
 
     css_path = _resolve_css(config, repo_root, doc_path=doc_path)
 

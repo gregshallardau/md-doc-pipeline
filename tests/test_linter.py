@@ -294,3 +294,46 @@ class TestLintCommand:
         make_doc(doc)
         result = CliRunner().invoke(main, ["lint"])
         assert result.exit_code == 0
+
+
+class TestColWidthsCommentLint:
+    def _lint(self, tmp_path, body: str):
+        from md_doc.linter import lint_file
+
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        doc = tmp_path / "d.md"
+        doc.write_text(f"---\ntitle: T\n---\n\n{body}", encoding="utf-8")
+        return [i.message for i in lint_file(doc, repo_root=tmp_path)]
+
+    def test_count_mismatch_warns(self, tmp_path):
+        msgs = self._lint(
+            tmp_path,
+            "<!-- col-widths: 30, 70 -->\n| X | Y | Z |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n",
+        )
+        assert any("2 width(s)" in m and "3 column(s)" in m for m in msgs)
+
+    def test_matching_comment_is_silent(self, tmp_path):
+        msgs = self._lint(
+            tmp_path,
+            "<!-- col-widths: 30, 70 -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+        )
+        assert not any("col-widths" in m for m in msgs)
+
+    def test_comment_before_include_is_silent(self, tmp_path):
+        # The table lives in a template — the linter can't count its columns.
+        (tmp_path / "templates").mkdir(exist_ok=True)
+        (tmp_path / "templates" / "t.md").write_text(
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n", encoding="utf-8"
+        )
+        msgs = self._lint(
+            tmp_path,
+            '<!-- col-widths: 30, 70 -->\n{% include "templates/t.md" %}\n',
+        )
+        assert not any("col-widths" in m for m in msgs)
+
+    def test_non_numeric_widths_warn(self, tmp_path):
+        msgs = self._lint(
+            tmp_path,
+            "<!-- col-widths: wide, narrow -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+        )
+        assert any("non-numeric" in m for m in msgs)
