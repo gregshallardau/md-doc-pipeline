@@ -1436,8 +1436,17 @@ class _DocxBuilder(HTMLParser):
                 # through the div > body_text_align cascade (Word table cells
                 # don't inherit document-level alignment the way body text does).
                 word_align = self._effective_alignment(cell_align)
+                if cell_align is None and word_align == WD_ALIGN_PARAGRAPH.JUSTIFY:
+                    # Page-level justify never reaches into cells: wrapped text
+                    # in a narrow column stretches into rivers of whitespace.
+                    # A cell/column's own text-align: justify still applies.
+                    word_align = WD_ALIGN_PARAGRAPH.LEFT
                 if cell_align is None and is_header:
                     word_align = None  # headers keep Word's default unless explicit
+                if word_align is None and self._theme.get("text_align_body") == "justify":
+                    # A theme with body { text-align: justify } justifies the
+                    # Normal style — cells would inherit it, so pin them left.
+                    word_align = WD_ALIGN_PARAGRAPH.LEFT
                 if word_align is not None:
                     para.alignment = word_align
 

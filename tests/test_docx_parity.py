@@ -476,3 +476,34 @@ def test_multiline_center_footer_retabs_to_center(tmp_repo):
     after_break = footer.split("<w:br/>", 1)[1]
     before_line2 = after_break.split("Line two", 1)[0]
     assert "<w:tab/>" in before_line2
+
+
+def test_page_justify_never_reaches_table_cells(tmp_repo):
+    # body_text_align: justify stretched wrapped cell text into rivers of
+    # whitespace in narrow columns. Cells now pin to left; body text stays
+    # justified; explicit markdown column alignment still wins.
+    import re
+
+    body = "Body.\n\n| H | C |\n| --- | :---: |\n| wrapped text | x |\n"
+    out = _build(tmp_repo, body, {"body_text_align": "justify"})
+    xml = _part(out, "word/document.xml")
+    before_tbl, tbl = xml.split("<w:tbl>", 1)
+    assert '<w:jc w:val="both"/>' in before_tbl  # body paragraph justified
+    cell_jcs = re.findall(r'<w:jc w:val="(\w+)"/>', tbl)
+    assert "both" not in cell_jcs
+    assert "center" in cell_jcs  # :---: column alignment still applies
+    assert "left" in cell_jcs
+
+
+def test_theme_justify_never_reaches_table_cells(tmp_repo):
+    # A theme with body { text-align: justify } justifies Word's Normal style;
+    # cell paragraphs would inherit it, so they are pinned left explicitly.
+    import re
+
+    (tmp_repo / "_docx-theme.css").write_text(
+        "body { font-size: 10pt; text-align: justify; }\n", encoding="utf-8"
+    )
+    out = _build(tmp_repo, "| A | B |\n| --- | --- |\n| 1 | 2 |\n", {})
+    tbl = _part(out, "word/document.xml").split("<w:tbl>", 1)[1]
+    cell_jcs = re.findall(r'<w:jc w:val="(\w+)"/>', tbl)
+    assert cell_jcs and set(cell_jcs) == {"left"}

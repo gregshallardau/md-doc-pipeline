@@ -28,6 +28,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     on one page. Example: `examples/blueshift/clients/stormfront-inc/liability-application.md`.
 
 ### Fixed
+- **Page-level justify no longer reaches into table cells.** With
+  `body_text_align: justify` (or a theme's `body { text-align: justify }`),
+  wrapped cell text in narrow columns stretched into rivers of whitespace.
+  Table cells now default to left in both PDF and Word when the page-level
+  alignment is justify; a column's own markdown alignment (`:--:` / `--:`),
+  a `<div style="text-align: …">` wrapper, and left/center/right
+  `body_text_align` values still cascade into cells as before.
 - **Word footers/headers no longer inherit justified body text.** A theme
   with `body { text-align: justify }` sets Word's *Normal* style to justify,
   and the footer/header paragraphs (positioned by left/centre/right tab

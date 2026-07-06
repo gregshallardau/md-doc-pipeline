@@ -255,3 +255,18 @@ class TestCssVars:
     def test_no_css_vars_emits_nothing(self, tmp_repo):
         assert self._style(tmp_repo, None) == ""
         assert self._style(tmp_repo, {}) == ""
+
+
+class TestBodyAlignTableCells:
+    def test_justify_excludes_table_cells(self):
+        from md_doc.builders.pdf import _build_body_align_style
+
+        style = _build_body_align_style({"body_text_align": "justify"})
+        assert ".report-body { text-align: justify; }" in style
+        assert ".report-body th, .report-body td { text-align: left; }" in style
+
+    def test_other_alignments_cascade_into_cells(self):
+        from md_doc.builders.pdf import _build_body_align_style
+
+        style = _build_body_align_style({"body_text_align": "center"})
+        assert "td" not in style

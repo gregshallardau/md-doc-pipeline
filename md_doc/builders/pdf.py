@@ -1199,6 +1199,14 @@ def _build_body_align_style(config: dict[str, Any]) -> str:
     align = str(config.get("body_text_align", "")).strip().lower()
     if align not in ("justify", "left", "center", "right"):
         return ""
+    if align == "justify":
+        # Justify never reaches into table cells — wrapped text in a narrow
+        # column stretches into rivers of whitespace (same rule as the docx
+        # builder). Markdown column alignment (inline style) still wins.
+        return (
+            "<style>.report-body { text-align: justify; }\n"
+            ".report-body th, .report-body td { text-align: left; }</style>"
+        )
     return f"<style>.report-body {{ text-align: {align}; }}</style>"
 
 
