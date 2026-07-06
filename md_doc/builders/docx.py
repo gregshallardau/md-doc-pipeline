@@ -1258,6 +1258,36 @@ class _DocxBuilder(HTMLParser):
     # Table rendering
     # ------------------------------------------------------------------
 
+    def _add_table_spacer_if_needed(self) -> None:
+        """Insert a tiny paragraph when the previous body block is a table.
+
+        OOXML treats consecutive ``w:tbl`` elements as ONE table — Word
+        visually merges them no matter how they were authored. A ``w:p``
+        between them keeps the tables distinct; sized to mirror the PDF's
+        ``table + table { margin-top: 10pt }`` gap (2pt line + 8pt after).
+        """
+        last_block = None
+        for child in reversed(list(self.doc.element.body)):
+            if child.tag == qn("w:sectPr"):
+                continue
+            last_block = child
+            break
+        if last_block is None or not last_block.tag.endswith("}tbl"):
+            return
+
+        spacer = self.doc.add_paragraph()
+        fmt = spacer.paragraph_format
+        fmt.space_before = Pt(0)
+        fmt.space_after = Pt(8)
+        # An empty paragraph is as tall as its paragraph mark — shrink it to 2pt
+        # so the spacer reads as a gap, not a blank line.
+        pPr = spacer._p.get_or_add_pPr()
+        rPr = OxmlElement("w:rPr")
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), "4")  # half-points: 2pt
+        rPr.append(sz)
+        pPr.append(rPr)
+
     def _flush_table(self) -> None:
         rows = self._table_rows
         if not rows:
@@ -1266,6 +1296,7 @@ class _DocxBuilder(HTMLParser):
         if max_cols == 0:
             return
 
+        self._add_table_spacer_if_needed()
         table = self.doc.add_table(rows=len(rows), cols=max_cols)
         try:
             table.style = "Table Normal"
@@ -2220,8 +2251,9 @@ def _add_page_header_bar(
 
     Mirrors the PDF's ``.page-header-bar-fixed``: a full-bleed bar at the
     physical page top (the PDF positions it with negative margin offsets),
-    8pt regular text, logos capped at 8mm, content aligned with the page
-    margins, and the content area starting ``height + padding`` below the top.
+    8pt regular text, logos capped at 70% of the bar height, content aligned
+    with the page margins, and the content area starting ``height + padding``
+    below the top.
     """
     if not config.get("page_header_bar"):
         return
@@ -2360,10 +2392,10 @@ def _add_page_header_bar(
         "center": row.cells[1].paragraphs[0],
         "right": row.cells[2].paragraphs[0],
     }
-    # PDF: .phb-logo max-height 8mm (or header_logo_height). Intrinsically
-    # smaller logos keep their natural size — never upscaled.
+    # PDF: .phb-logo max-height = 70% of the bar height (or header_logo_height).
+    # Intrinsically smaller logos keep their natural size — never upscaled.
     logo_forced = _parse_mm_cfg(config.get("header_logo_height"))
-    logo_cap = min(height_mm * 0.7, 8.0) if logo_forced is None else logo_forced
+    logo_cap = height_mm * 0.7 if logo_forced is None else logo_forced
 
     if header_text:
         para = slot_paras.get(text_position, slot_paras["left"])

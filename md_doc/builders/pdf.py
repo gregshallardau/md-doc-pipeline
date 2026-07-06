@@ -911,7 +911,7 @@ def _build_html(
     css_vars_style: str = "",
     is_form: bool = False,
     header_logo_dpi: float | None = None,
-    header_logo_max_mm: float = 8.0,
+    header_logo_max_mm: float | None = None,
 ) -> str:
     css_uri = css_path.as_uri()
 
@@ -1254,7 +1254,7 @@ def _build_page_header_bar_elements(
     header_text_position: str = "left",
     header_logo_uri: str | None = None,
     header_logo_position: str = "right",
-    logo_max_mm: float = 8.0,
+    logo_max_mm: float | None = None,
 ) -> tuple[str, str]:
     """Return (bar_html, bar_css) for the fixed page header bar.
 
@@ -1268,6 +1268,11 @@ def _build_page_header_bar_elements(
     color = _safe_css_color(bar_cfg.get("color"), "#2563eb")
     text_color = _safe_css_color(bar_cfg.get("text_color"), "#ffffff")
     height = bar_cfg.get("height", "12mm")
+
+    # Default logo cap scales with the bar: 70% of its height (matches the
+    # docx builder). ``header_logo_height`` passes an explicit value instead.
+    if logo_max_mm is None:
+        logo_max_mm = _parse_mm(height, 12.0) * 0.7
 
     padding_after = bar_cfg.get("padding", "6mm")
 
@@ -1294,12 +1299,25 @@ def _build_page_header_bar_elements(
   height: {height};
   background: {color};
   z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   padding: 0 20mm 0 25mm;
   box-sizing: border-box;
 }}
+/* WeasyPrint 68.x drops flex children inside position:fixed boxes, so the
+   left/center/right slots use a table row instead (same 35/30/35 grid as the
+   docx builder's header table). */
+.page-header-bar-fixed .phb-row {{
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  height: 100%;
+}}
+.page-header-bar-fixed .phb-slot {{
+  display: table-cell;
+  vertical-align: middle;
+}}
+.page-header-bar-fixed .phb-slot-left {{ text-align: left; width: 35%; }}
+.page-header-bar-fixed .phb-slot-center {{ text-align: center; width: 30%; }}
+.page-header-bar-fixed .phb-slot-right {{ text-align: right; width: 35%; }}
 .page-header-bar-fixed .phb-text {{
   font-size: 8pt;
   color: {text_color};
@@ -1307,6 +1325,7 @@ def _build_page_header_bar_elements(
 }}
 .page-header-bar-fixed .phb-logo {{
   max-height: {logo_max_mm}mm;
+  vertical-align: middle;
 }}
 </style>"""
 
@@ -1337,12 +1356,13 @@ def _build_page_header_bar_elements(
         if uri:
             slots.get(pos, center_parts).append(f'<img class="phb-logo" src="{uri}">')
 
-    left_html = "".join(left_parts) if left_parts else "<span></span>"
-    center_html = "".join(center_parts) if center_parts else ""
-    right_html = "".join(right_parts) if right_parts else "<span></span>"
-
-    mid_section = f'<span class="phb-center">{center_html}</span>' if center_html else ""
-    html = f'<div class="page-header-bar-fixed">{left_html}{mid_section}{right_html}</div>'
+    html = (
+        '<div class="page-header-bar-fixed"><div class="phb-row">'
+        f'<div class="phb-slot phb-slot-left">{"".join(left_parts)}</div>'
+        f'<div class="phb-slot phb-slot-center">{"".join(center_parts)}</div>'
+        f'<div class="phb-slot phb-slot-right">{"".join(right_parts)}</div>'
+        "</div></div>"
+    )
 
     return html, css
 
@@ -1584,7 +1604,8 @@ def build(
         css_vars_style=_build_css_vars_style(config, repo_root, doc_path),
         is_form=is_form,
         header_logo_dpi=header_logo_dpi,
-        header_logo_max_mm=header_logo_max_mm,
+        # None = auto (70% of the bar height) unless header_logo_height is set.
+        header_logo_max_mm=(header_logo_max_mm if header_logo_height_cfg is not None else None),
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
