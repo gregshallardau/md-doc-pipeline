@@ -550,3 +550,43 @@ def test_header_footer_distance_from_css(tmp_repo):
     footer = int(re.search(r'w:footer="(\d+)"', pgmar).group(1))
     assert round(header / 56.7) == 8
     assert round(footer / 56.7) == 6
+
+
+def test_list_spacing_from_theme_li_rules(tmp_repo):
+    # li { margin / line-height } in the theme CSS controls Word's List
+    # Bullet/Number style spacing — previously bullets inherited Normal's
+    # paragraph spacing and line height, so lists couldn't be tightened.
+    import re
+
+    (tmp_repo / "_docx-theme.css").write_text(
+        "body { font-size: 10pt; line-height: 1.6; }\n"
+        "p { margin: 0 0 10pt 0; }\n"
+        "li { margin: 0 0 2pt 0; line-height: 1.2; }\n",
+        encoding="utf-8",
+    )
+    out = _build(tmp_repo, "- alpha\n- beta\n\n1. one\n2. two\n", {})
+    styles = _part(out, "word/styles.xml")
+    for sid in ("ListBullet", "ListNumber"):
+        block = re.search(rf'<w:style [^>]*w:styleId="{sid}".*?</w:style>', styles, re.S)
+        assert block, f"{sid} style missing"
+        spacing = block.group(0)
+        assert 'w:after="40"' in spacing  # 2pt
+        assert 'w:line="288"' in spacing  # 1.2 line height
+
+
+def test_page_geometry_survives_nested_margin_boxes():
+    # WeasyPrint themes nest @top-*/@bottom-* boxes inside @page; margins
+    # declared after a nested box were silently dropped in Word (the naive
+    # regex truncated at the first inner brace) — the PDF read them fine.
+    from md_doc.builders.docx import _page_geometry
+
+    css = (
+        "@page {\n  size: A4;\n"
+        '  @top-right { content: url("logo.png"); }\n'
+        '  @bottom-center { content: "Page " counter(page); }\n'
+        "  margin: 25mm 20mm 20mm 25mm;\n"
+        "  --docx-footer-distance: 6mm;\n}\n"
+    )
+    g = _page_geometry(css)
+    assert (g["top"], g["right"], g["bottom"], g["left"]) == (25.0, 20.0, 20.0, 25.0)
+    assert g.get("footer_distance") == 6.0

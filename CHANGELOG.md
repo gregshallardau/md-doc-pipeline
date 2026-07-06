@@ -30,12 +30,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   renders as a table without a header band in every format — markdown
   requires a header row syntactically, so this is the opt-out idiom
   (previously the empty row still rendered as a theme-shaded band).
+- **List spacing from CSS in Word.** `li { margin / line-height }` in the
+  theme now sets Word's *List Bullet*/*List Number* style spacing — the same
+  rules the PDF already reads, so tight lists can be tuned once for both
+  formats (previously bullets inherited Normal's paragraph spacing and line
+  height and couldn't be tightened).
 - **Word header/footer distance from CSS.** `@page { --docx-header-distance:
   8mm; --docx-footer-distance: 6mm; }` in the Word theme cascade sets Word's
   header/footer-from-edge (python-docx defaulted both to 12.7mm). Custom
   properties, so WeasyPrint ignores them and the PDF is unaffected.
 
 ### Fixed
+- **Word now reads `@page` margins declared after nested margin boxes.**
+  WeasyPrint themes nest `@top-*`/`@bottom-*` boxes inside `@page`; a
+  `margin`/`size` declared *after* a nested box was silently dropped by the
+  Word geometry parser (it truncated at the first inner brace) and Word fell
+  back to the default 25/20/22/25mm margins while the PDF honoured the theme.
 - **Word header/footer containers no longer inherit body typography.** The
   header/footer paragraphs picked up the theme's body line-height and
   paragraph spacing from the Normal style — a 1.6 line height + 10pt

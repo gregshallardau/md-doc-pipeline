@@ -1550,6 +1550,30 @@ def _length_to_mm(token: str) -> float | None:
     }[unit]
 
 
+def _page_block_body(css_text: str) -> str | None:
+    """Return the declaration body of the first unnamed ``@page`` block.
+
+    Brace-aware: WeasyPrint themes nest margin boxes (``@top-right { … }``)
+    inside ``@page``, and a naive ``[^}]*`` match truncates at the first inner
+    ``}`` — silently dropping any ``margin``/``size`` declared after a nested
+    box (the PDF read them fine; Word fell back to defaults). Nested blocks
+    are stripped from the returned body.
+    """
+    m = re.search(r"@page\s*\{", css_text, re.IGNORECASE)
+    if not m:
+        return None
+    depth = 1
+    i = m.end()
+    while i < len(css_text) and depth:
+        if css_text[i] == "{":
+            depth += 1
+        elif css_text[i] == "}":
+            depth -= 1
+        i += 1
+    body = css_text[m.end() : i - 1]
+    return re.sub(r"@[^{}]*\{[^{}]*\}", "", body)
+
+
 def _page_geometry(css_text: str | None) -> dict[str, float]:
     """Parse the ``@page { size; margin }`` from theme CSS into mm geometry.
 
@@ -1560,10 +1584,9 @@ def _page_geometry(css_text: str | None) -> dict[str, float]:
     geom = dict(_DEFAULT_GEOMETRY)
     if not css_text:
         return geom
-    block = re.search(r"@page\s*\{([^}]*)\}", css_text, re.IGNORECASE)
-    if not block:
+    body = _page_block_body(css_text)
+    if body is None:
         return geom
-    body = block.group(1)
 
     size_m = re.search(r"size:\s*([^;]+);", body, re.IGNORECASE)
     if size_m:
