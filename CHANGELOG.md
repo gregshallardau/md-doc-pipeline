@@ -41,6 +41,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   properties, so WeasyPrint ignores them and the PDF is unaffected.
 
 ### Fixed
+- **Word now reads `@page` margins declared after nested margin boxes.**
+  WeasyPrint themes nest `@top-*`/`@bottom-*` boxes inside `@page`; a
+  `margin`/`size` declared *after* a nested box was silently dropped by the
+  Word geometry parser (it truncated at the first inner brace) and Word fell
+  back to the default 25/20/22/25mm margins while the PDF honoured the theme.
 - **Word header/footer containers no longer inherit body typography.** The
   header/footer paragraphs picked up the theme's body line-height and
   paragraph spacing from the Normal style — a 1.6 line height + 10pt

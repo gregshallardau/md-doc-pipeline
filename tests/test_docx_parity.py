@@ -572,3 +572,21 @@ def test_list_spacing_from_theme_li_rules(tmp_repo):
         spacing = block.group(0)
         assert 'w:after="40"' in spacing  # 2pt
         assert 'w:line="288"' in spacing  # 1.2 line height
+
+
+def test_page_geometry_survives_nested_margin_boxes():
+    # WeasyPrint themes nest @top-*/@bottom-* boxes inside @page; margins
+    # declared after a nested box were silently dropped in Word (the naive
+    # regex truncated at the first inner brace) — the PDF read them fine.
+    from md_doc.builders.docx import _page_geometry
+
+    css = (
+        "@page {\n  size: A4;\n"
+        '  @top-right { content: url("logo.png"); }\n'
+        '  @bottom-center { content: "Page " counter(page); }\n'
+        "  margin: 25mm 20mm 20mm 25mm;\n"
+        "  --docx-footer-distance: 6mm;\n}\n"
+    )
+    g = _page_geometry(css)
+    assert (g["top"], g["right"], g["bottom"], g["left"]) == (25.0, 20.0, 20.0, 25.0)
+    assert g.get("footer_distance") == 6.0
