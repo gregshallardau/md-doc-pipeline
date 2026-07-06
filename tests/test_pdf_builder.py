@@ -344,3 +344,55 @@ class TestDropEmptyTableHeaders:
 
         html = "<table><thead>\n<tr>\n<th>A</th>\n<th></th>\n</tr>\n</thead></table>"
         assert "<thead>" in _drop_empty_table_headers(html)
+
+
+class TestHeaderBarFollowsThemeMargins:
+    def _html(self, tmp_path, config, theme_css):
+        pytest.importorskip("weasyprint")
+        from unittest.mock import MagicMock, patch
+
+        from md_doc.builders.pdf import build
+
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        (tmp_path / "_pdf-theme.css").write_text(theme_css, encoding="utf-8")
+        doc = tmp_path / "d.md"
+        doc.write_text("# T\n\nBody.\n", encoding="utf-8")
+        with patch("md_doc.builders.pdf.weasyprint") as wp:
+            wp.HTML.return_value = MagicMock()
+            build(
+                "# T\n\nBody.\n",
+                {"title": "T", **config},
+                tmp_path / "d.pdf",
+                doc_path=doc,
+                repo_root=tmp_path,
+            )
+            return wp.HTML.call_args.kwargs["string"]
+
+    def test_bar_offsets_follow_theme_margins(self, tmp_path):
+        # The full-bleed bar hardcoded the default 25/20mm side margins —
+        # any theme with different margins got a misaligned bar.
+        html = self._html(
+            tmp_path,
+            {"page_header_bar": True},
+            "@page { size: A4; margin: 20mm 15mm 20mm 30mm; }\nbody { font-size: 10pt; }\n",
+        )
+        assert "left: -30.0mm" in html and "right: -15.0mm" in html
+        assert "padding: 0 15.0mm 0 30.0mm" in html
+
+    def test_theme_justify_gets_cell_guard(self, tmp_path):
+        # A theme's body { text-align: justify } (no config key) leaked into
+        # PDF table cells while Word pinned them left — parity gap.
+        html = self._html(
+            tmp_path,
+            {},
+            "@page { size: A4; margin: 25mm; }\nbody { font-size: 10pt; text-align: justify; }\n",
+        )
+        assert ".report-body th, .report-body td { text-align: left; }" in html
+
+    def test_no_guard_without_justify(self, tmp_path):
+        html = self._html(
+            tmp_path,
+            {},
+            "@page { size: A4; margin: 25mm; }\nbody { font-size: 10pt; }\n",
+        )
+        assert ".report-body th, .report-body td" not in html

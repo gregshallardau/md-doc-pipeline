@@ -35,12 +35,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rules the PDF already reads, so tight lists can be tuned once for both
   formats (previously bullets inherited Normal's paragraph spacing and line
   height and couldn't be tightened).
+- **Brand defaults from theme CSS (`--mddoc-*` custom properties).** The
+  look-related config keys (header-bar colour/height/padding, cover bar and
+  stripe sizes, cover footer colour, section bar colours, header logo height)
+  can now be set once in the theme CSS — `:root { --mddoc-header-bar-color:
+  #002a5b; … }` — instead of the base `_meta.yml`. YAML keys still win at any
+  cascade level, so per-folder/per-document overrides work unchanged. Feature
+  toggles and content stay YAML-only by design.
 - **Word header/footer distance from CSS.** `@page { --docx-header-distance:
   8mm; --docx-footer-distance: 6mm; }` in the Word theme cascade sets Word's
   header/footer-from-edge (python-docx defaulted both to 12.7mm). Custom
   properties, so WeasyPrint ignores them and the PDF is unaffected.
 
 ### Fixed
+- **The PDF header bar now follows the theme's side margins.** The full-bleed
+  bar hardcoded the default 25/20mm left/right margins for its edge offsets
+  and content padding — a theme with different `@page` side margins got a bar
+  that overhung or fell short of the page edges and misaligned bar content.
+- **Theme-level justify no longer fissures PDF table cells.** The
+  justify-in-cells guard covered the `body_text_align` config key but not a
+  theme's `body { text-align: justify }` — PDF cells still inherited justify
+  while Word pinned them left. Both formats now agree for both sources.
 - **Word now reads `@page` margins declared after nested margin boxes.**
   WeasyPrint themes nest `@top-*`/`@bottom-*` boxes inside `@page`; a
   `margin`/`size` declared *after* a nested box was silently dropped by the
