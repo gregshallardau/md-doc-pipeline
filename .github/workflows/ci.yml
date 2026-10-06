@@ -45,6 +45,16 @@ jobs:
       - name: Test — pytest (with coverage gate)
         run: uv run pytest tests/ --tb=short
 
+  nvim:
+    name: Neovim plugin tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Neovim
+        run: sudo apt-get update && sudo apt-get install -y neovim
+      - name: Test plugin
+        run: nvim --headless -u NONE -c "lua dofile('nvim-plugin/tests/run.lua')" +qa!
+
   package:
     name: Build & install smoke test
     runs-on: ubuntu-latest

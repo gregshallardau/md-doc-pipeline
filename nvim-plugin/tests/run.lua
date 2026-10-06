@@ -55,6 +55,7 @@ end
 dofile(repo_root .. "/nvim-plugin/tests/test_parser.lua")
 dofile(repo_root .. "/nvim-plugin/tests/test_cascade.lua")
 dofile(repo_root .. "/nvim-plugin/tests/test_resolve.lua")
+dofile(repo_root .. "/nvim-plugin/tests/test_build.lua")
 
 io.write("\n────────────────────────────────────\n")
 io.write(pass_count .. " passed, " .. fail_count .. " failed\n")
