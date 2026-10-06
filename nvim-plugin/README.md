@@ -17,6 +17,21 @@ marker).
 
 ## Installation
 
+Prepare the pipeline environment before installing the Neovim plugin:
+
+```bash
+git clone https://github.com/gregshallardau/md-doc-pipeline.git ~/md-doc-pipeline
+cd ~/md-doc-pipeline
+uv venv
+uv sync --no-dev
+uv run --no-dev md-doc --version
+```
+
+The plugin runs `uv run` in this checkout, so activation is optional. For
+interactive CLI commands use `source .venv/bin/activate` (Linux/macOS) or
+`.\.venv\Scripts\Activate.ps1` (PowerShell). Configure `.md-doc.yml` with the
+checkout's path as described below.
+
 ### lazy.nvim (recommended)
 
 ```lua

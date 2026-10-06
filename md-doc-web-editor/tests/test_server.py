@@ -192,3 +192,34 @@ class TestProgrammatic:
         f.write_text("x")
         with pytest.raises(ValueError, match="not a directory"):
             create_app(f)
+
+
+class TestBuildEnvironment:
+    def test_build_uses_editor_python_not_path(self, client, workspace, monkeypatch):
+        import subprocess
+        import sys
+        from pathlib import Path
+        from md_doc_web_editor import server
+
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            out = Path(command[command.index("--output") + 1]) / "doc.docx"
+            out.write_bytes(b"fake docx")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        monkeypatch.setattr(server.subprocess, "run", run)
+        monkeypatch.setenv("PATH", "")
+        result = client.post("/api/build", json={"path": "products/nova/doc.md", "format": "docx"})
+        assert result.status_code == 200, result.text
+        assert calls[0][:3] == [sys.executable, "-m", "md_doc"]
+        assert client.get("/api/build/" + result.json()["token"]).content == b"fake docx"
+
+    def test_real_word_build_without_cli_on_path(self, client, monkeypatch):
+        monkeypatch.setenv("PATH", "")
+        result = client.post("/api/build", json={"path": "products/nova/doc.md", "format": "docx"})
+        assert result.status_code == 200, result.text
+        response = client.get("/api/build/" + result.json()["token"])
+        assert response.status_code == 200
+        assert response.content.startswith(b"PK")

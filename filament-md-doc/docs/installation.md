@@ -86,6 +86,22 @@ public function panel(Panel $panel): Panel
 
 `workspacePath()` must be an absolute path that contains your `.md`, `_meta.yml`, and CSS theme files. All file reads/writes are sandboxed to this directory.
 
+## Python build environment
+
+Install the pipeline for the Build PDF/DOCX buttons:
+
+```bash
+git clone https://github.com/gregshallardau/md-doc-pipeline.git /opt/md-doc
+cd /opt/md-doc
+uv venv
+uv sync --no-dev
+.venv/bin/md-doc --version
+```
+
+Set `MD_DOC_BIN` to `/opt/md-doc/.venv/bin/md-doc` below. PHP uses this absolute
+path without activating the environment. See [build integration](building.md)
+for Windows paths and interactive activation.
+
 ## 6. Configure environment
 
 Add to `.env` (only the first line is required):

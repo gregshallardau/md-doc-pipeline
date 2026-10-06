@@ -31,19 +31,19 @@ jobs:
             libgdk-pixbuf2.0-0 libcairo2 libffi-dev shared-mime-info
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --group editor
 
       - name: Lint — ruff
-        run: uv run ruff check .
+        run: uv run --group editor ruff check .
 
       - name: Lint — black
-        run: uv run black --check .
+        run: uv run --group editor black --check .
 
       - name: Type check — mypy
-        run: uv run mypy md_doc/
+        run: uv run --group editor mypy md_doc/
 
       - name: Test — pytest (with coverage gate)
-        run: uv run pytest tests/ --tb=short
+        run: uv run --group editor pytest tests/ md-doc-web-editor/tests/ --tb=short
 
   package:
     name: Build & install smoke test
@@ -68,6 +68,11 @@ jobs:
           /tmp/smoke/bin/md-doc --version
           # doctor may warn about optional extras / system libs; that's fine here.
           /tmp/smoke/bin/md-doc doctor || true
+      - name: Build & install editor wheel and test real server startup
+        run: |
+          uv build --directory md-doc-web-editor --out-dir /tmp/editor-dist
+          /tmp/smoke/bin/pip install /tmp/editor-dist/*.whl
+          /tmp/smoke/bin/python md-doc-web-editor/tests/smoke_installed.py
 
   audit:
     name: Dependency audit

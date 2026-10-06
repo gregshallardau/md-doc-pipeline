@@ -449,6 +449,6 @@ PDF generation requires system libraries (`libpango`, `libgdk-pixbuf`, Cairo). O
 ### Optional package extras
 
 ```bash
-pip install "md-doc-pipeline[azure]"   # azure-storage-file-share
-pip install "md-doc-pipeline[s3]"      # boto3
+uv sync --extra azure   # azure-storage-file-share
+uv sync --extra s3      # boto3
 ```

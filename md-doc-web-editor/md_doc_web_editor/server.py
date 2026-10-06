@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import secrets
-import shutil
+import sys
 import subprocess
 import tempfile
 import time
@@ -179,11 +179,12 @@ def create_app(workspace: Path) -> FastAPI:
         tmp_dir = Path(tempfile.gettempdir()) / "md-doc-edit-builds" / token
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        bin_path = shutil.which("md-doc") or "md-doc"
         try:
             proc = subprocess.run(
                 [
-                    bin_path,
+                    sys.executable,
+                    "-m",
+                    "md_doc",
                     "build",
                     str(full),
                     "--output",
@@ -200,7 +201,7 @@ def create_app(workspace: Path) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=500,
-                detail=f"md-doc CLI not on PATH: {exc}",
+                detail=f"Could not launch pipeline with editor Python: {exc}",
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="build timed out") from exc

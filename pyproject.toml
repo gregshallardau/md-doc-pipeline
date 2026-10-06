@@ -43,6 +43,7 @@ md-doc = "md_doc.cli:main"
 packages = ["md_doc"]
 
 [dependency-groups]
+editor = ["md-doc-web-editor", "httpx>=0.27"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
@@ -54,6 +55,9 @@ dev = [
     "types-markdown>=3.10.2.20260408",
 ]
 
+[tool.uv.sources]
+md-doc-web-editor = { path = "md-doc-web-editor", editable = true }
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -64,7 +68,7 @@ target-version = ["py311"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=md_doc --cov-report=term-missing --cov-fail-under=70"
+addopts = "--import-mode=importlib --cov=md_doc --cov-report=term-missing --cov-fail-under=70"
 
 [tool.mypy]
 python_version = "3.11"
