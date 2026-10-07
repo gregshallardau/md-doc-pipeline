@@ -151,8 +151,26 @@ local function get_pipeline(bufnr)
   return runner.find_pipeline(repo_root), doc_path, repo_root
 end
 
+-- Builds consume disk files; never launch with edits the CLI cannot see.
+local function save_for_build(bufnr, workspace_root)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(buf)
+    local in_workspace = workspace_root and name:sub(1, #workspace_root + 1) == workspace_root .. "/"
+    if (buf == bufnr or in_workspace) and vim.api.nvim_buf_is_loaded(buf)
+        and vim.bo[buf].buftype == "" and vim.bo[buf].modified then
+      local ok, err = pcall(vim.api.nvim_buf_call, buf, function() vim.cmd("update") end)
+      if not ok or vim.bo[buf].modified then
+        vim.notify("md-doc: save failed; build cancelled: " .. tostring(err or name), vim.log.levels.ERROR)
+        return false
+      end
+    end
+  end
+  return true
+end
+
 function M.build_file(bufnr)
   local pipeline, doc_path = get_pipeline(bufnr)
+  if pipeline and not save_for_build(bufnr) then return end
   runner.run({ "build", doc_path }, pipeline, bufnr, "󰆨 build: " .. vim.fn.fnamemodify(doc_path, ":t"))
 end
 
@@ -167,6 +185,7 @@ function M.build_workspace(bufnr)
     vim.notify("md-doc: cannot detect workspace root", vim.log.levels.ERROR)
     return
   end
+  if pipeline and not save_for_build(bufnr, repo_root) then return end
   -- Full rebuild: an explicit "build the workspace" must regenerate every
   -- output, not skip ones the incremental check considers fresh.
   runner.run({ "build", repo_root, "--force" }, pipeline, bufnr, "󰆨 build workspace")

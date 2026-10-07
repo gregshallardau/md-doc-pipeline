@@ -35,7 +35,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-import markdown
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -414,6 +413,7 @@ def _render_cell_html(
     write_text: Any,
     *,
     bold_override: bool = False,
+    insert_math: Any = None,
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
@@ -444,6 +444,8 @@ def _render_cell_html(
             elif tag == "a":
                 self._href = dict(attrs).get("href") or ""
                 self._link_text = ""
+            elif tag == "img" and insert_math is not None:
+                insert_math(paragraph, dict(attrs).get("src") or "")
             elif tag == "br":
                 br_run = paragraph.add_run()
                 br_run._r.append(OxmlElement("w:br"))
@@ -502,6 +504,7 @@ class _DocxBuilder(HTMLParser):
         table_col_widths: list[float] | None = None,
         *,
         mermaid_images: list[tuple[bytes, int, int]] | None = None,
+        math_equations: list[Any] | None = None,
         doc_path: Path | None = None,
         repo_root: Path | None = None,
         section_bar: dict[str, Any] | None = None,
@@ -514,6 +517,7 @@ class _DocxBuilder(HTMLParser):
         self._body_text_align = body_text_align  # default alignment for Normal paragraphs
         self._table_col_widths = table_col_widths  # e.g. [30, 70] — relative column widths
         self._mermaid_images = mermaid_images or []
+        self._math_equations = math_equations or []
         self._doc_path = doc_path
         self._repo_root = repo_root
         self._section_bar = section_bar  # None or parsed section_bar config
@@ -994,7 +998,11 @@ class _DocxBuilder(HTMLParser):
             self._last_was_br = True
 
         elif tag == "img":
-            self._embed_image(dict(attrs))
+            src = dict(attrs).get("src") or ""
+            if src.startswith("math://"):
+                self._insert_math(self._current_para(), src)
+            else:
+                self._embed_image(dict(attrs))
 
         elif tag == "hr":
             self._paragraph = self.doc.add_paragraph()
@@ -1188,6 +1196,14 @@ class _DocxBuilder(HTMLParser):
     def _text_width_emu(self) -> int:
         section = self.doc.sections[0]
         return int(section.page_width - section.left_margin - section.right_margin)
+
+    def _insert_math(self, paragraph: Any, src: str) -> None:
+        if not src.startswith("math://"):
+            return
+        from copy import deepcopy
+
+        equation = deepcopy(self._math_equations[int(src[7:])])
+        paragraph._p.append(equation)
 
     def _embed_image(self, attrs: dict[str, str | None]) -> None:
         """Embed an <img> as a picture: a mermaid:// reference or a file asset."""
@@ -1433,7 +1449,12 @@ class _DocxBuilder(HTMLParser):
                 para.paragraph_format.space_after = Pt(0)
 
                 _render_cell_html(
-                    para, cell_html.strip(), self._theme, self._write_text, bold_override=is_header
+                    para,
+                    cell_html.strip(),
+                    self._theme,
+                    self._write_text,
+                    bold_override=is_header,
+                    insert_math=self._insert_math,
                 )
 
                 # Apply alignment — the cell's own text-align (markdown column
@@ -2771,8 +2792,9 @@ def build(
     else:
         body = _strip_form_fields_for_docx(body)
 
-    md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
-    html = md_engine.convert(body)
+    from ..math import markdown_html, render_math
+
+    html, math_equations = render_math(markdown_html(body, _MD_EXTENSIONS), word=True)
     html = _drop_empty_table_headers(html)
 
     # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF
@@ -2862,6 +2884,7 @@ def build(
         body_text_align=body_text_align,
         table_col_widths=table_col_widths,
         mermaid_images=mermaid_images,
+        math_equations=math_equations,
         doc_path=doc_path,
         repo_root=repo_root,
         section_bar=section_bar,

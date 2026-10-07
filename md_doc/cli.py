@@ -157,7 +157,7 @@ def _resolve_output_path(
     Compute output file path.
 
     If output_dir is given and flat=False (CLI --output), mirror the source tree under it.
-    If output_dir is given and flat=True (config output_dir), place the file directly in
+    If output_dir is given and flat=True, place the file directly in
     output_dir without mirroring the source tree.
     Otherwise, write output alongside the source file.
 
@@ -284,7 +284,7 @@ def _build_document(
         if cfg_out:
             cfg_out_path = Path(str(cfg_out)).expanduser()
             effective_output = (
-                (root / cfg_out_path).resolve()
+                (cascade_root / cfg_out_path).resolve()
                 if not cfg_out_path.is_absolute()
                 else cfg_out_path.resolve()
             )
@@ -297,7 +297,7 @@ def _build_document(
         ext = (
             "-form.pdf" if (format_name == "pdf" and config.get("pdf_forms")) else f".{format_name}"
         )
-        out_path = _resolve_output_path(doc_path, root, effective_output, ext)
+        out_path = _resolve_output_path(doc_path, cascade_root, effective_output, ext)
         try:
             out_path = _apply_filename_override(out_path, config, format_name)
         except Exception as exc:
