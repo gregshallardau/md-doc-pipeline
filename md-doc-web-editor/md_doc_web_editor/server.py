@@ -112,6 +112,21 @@ def create_app(workspace: Path) -> FastAPI:
     app.state.builds = builds
     app.state.build_root = build_root
 
+    @app.middleware("http")
+    async def local_resources_only(request, call_next):
+        response = await call_next(request)
+        # Never load CDN scripts, remote fonts, images, frames or API resources.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; "
+            "frame-src 'self' blob:; object-src 'none'; base-uri 'none'; "
+            "form-action 'self'"
+        )
+        response.headers["X-DNS-Prefetch-Control"] = "off"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
     # ── Path safety ───────────────────────────────────────────────────────────
 
     def _safe_path(rel: str) -> Path:

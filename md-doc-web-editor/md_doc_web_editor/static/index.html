@@ -43,15 +43,17 @@
 </div>
 
 <!-- marked.js (markdown → HTML for the live preview) -->
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="/static/vendor/marked-17.0.5/marked.umd.js"></script>
 
 <!-- Monaco loader -->
 <script>
-    window.mdDocMonacoBaseUrl = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs";
+    window.mdDocMonacoBaseUrl = "/static/vendor/monaco-editor-0.52.2/min/vs";
 </script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+<script src="/static/vendor/monaco-editor-0.52.2/min/vs/loader.js"></script>
 <script>
-    require.config({ paths: { vs: window.mdDocMonacoBaseUrl } });
+    if (typeof require === "function") {
+        require.config({ paths: { vs: window.mdDocMonacoBaseUrl } });
+    }
 </script>
 
 <!-- md-doc tokenizers + editor -->

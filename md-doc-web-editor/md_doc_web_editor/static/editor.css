@@ -284,3 +284,14 @@ html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, Bl
     border-radius: 3px;
 }
 .md-doc-btn-sm:hover { background: #eff6ff; }
+
+.md-doc-local-editor {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding: 12px;
+    border: 0;
+    resize: none;
+    font: 13px/1.5 monospace;
+    tab-size: 2;
+}

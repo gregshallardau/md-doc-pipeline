@@ -47,11 +47,12 @@ uv venv
 uv sync --group editor
 
 # Launch from the project environment without activating it
-uv run --group editor md-doc-edit serve workspace/ --no-browser
+uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser
 ```
 
-Open http://127.0.0.1:8765/. Keep `--group editor` on `uv run` commands:
-`uv run` synchronizes the environment and otherwise removes the optional editor.
+Open http://127.0.0.1:8765/. `--offline --no-sync` uses the installed environment
+without resolving or downloading dependencies. Include `--group editor` when
+explicitly syncing again to retain the optional editor.
 Omit `--no-browser` to launch a browser automatically.
 
 If you prefer activated commands, after the sync use:
@@ -72,9 +73,9 @@ In Windows Command Prompt, activate with `.venv\Scripts\activate.bat`.
 Other launch options (from the repository root):
 
 ```bash
-uv run --group editor md-doc-edit serve .
-uv run --group editor md-doc-edit serve workspace/ --port 9000
-uv run --group editor md-doc-edit serve workspace/ --host 0.0.0.0
+uv run --offline --no-sync md-doc-edit serve .
+uv run --offline --no-sync md-doc-edit serve workspace/ --port 9000
+uv run --offline --no-sync md-doc-edit serve workspace/ --host 0.0.0.0
 ```
 
 For an existing virtual environment or an offline source deployment:
@@ -119,20 +120,55 @@ The SPA is the only client, but the API is plain JSON if you want to script agai
 | GET | `/api/includes?path=...` | `{% include "..." %}` references and their resolved paths |
 | POST | `/api/build` | Run `md-doc build`: body `{path, format}` returns `{token, filename, format}` |
 | GET | `/api/build/{token}` | Stream the built artefact (PDF/DOCX) |
-| GET | `/static/...` | JS / CSS assets (Monaco loaded from a CDN by default) |
+| GET | `/static/...` | Bundled JS / CSS / fonts / Monaco workers (all local) |
 
 All file paths are workspace-relative; `..` traversal is rejected with HTTP 400.
 
 ---
 
-## Behind a proxy / no internet
+## Offline operation
 
-Monaco and marked are loaded from jsDelivr by default. To self-host:
+All browser dependencies are shipped with the editor: Monaco 0.52.2 and
+marked 17.0.5, with their licenses in `static/vendor/`. No CDN, telemetry,
+remote fonts or update checks are needed while editing or exporting.
+A Content Security Policy restricts browser resources to the local server;
+PDF rendering rejects network URLs (including remote CSS, fonts and images)
+and network file shares before fetching them. Put document assets in local
+files. Remote resources are omitted; hyperlinks in exports remain links and
+are not fetched during export. Preview links cannot navigate to external sites.
 
-1. `npm install monaco-editor marked` in the editor's `static/vendor/` dir (or wherever you serve from)
-2. Edit `static/index.html` and replace the two CDN script tags with the local paths
+Install once while online, from the repository root:
 
-This is the same pattern as the Filament plugin's `MD_DOC_MONACO_URL` env var; the SPA is small enough that you can just edit the HTML directly. (A future env var is on the wishlist.)
+```bash
+uv venv  # skip if .venv already exists
+uv sync --group editor
+```
+
+Then launch without dependency resolution or downloads:
+
+```bash
+# Linux / macOS
+.venv/bin/md-doc-edit serve workspace/ --no-browser
+```
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\md-doc-edit.exe serve workspace/ --no-browser
+```
+
+Alternatively, `uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser`
+uses the existing environment without syncing. Open http://127.0.0.1:8765/.
+The server defaults to loopback. Keep it there for local use.
+
+If packaged Monaco assets are missing, a local text editor preserves basic
+editing, saving and preview without fetching a replacement. Properly installed
+packages include Monaco and its workers, languages and font assets.
+
+Offline operation applies to the local editor and exports. Explicit remote
+storage commands such as `md-doc sync` are separate online operations; do not
+use those in a no-network environment. OS/browser background traffic is outside
+the application's control; workplace network policy remains the outer boundary.
+
 
 ---
 

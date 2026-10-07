@@ -34,13 +34,22 @@
     }
 
     function isolatedPreview(target, html, css) {
+        // CSP blocks resources, but not link/refresh navigation inside a frame.
+        const content = document.createElement("template");
+        content.innerHTML = html;
+        content.content.querySelectorAll("a, area").forEach(link => {
+            link.removeAttribute("href");
+            link.removeAttribute("xlink:href");
+        });
+        content.content.querySelectorAll("meta, base").forEach(node => node.remove());
+        html = content.innerHTML;
         const frame = document.createElement("iframe");
         frame.title = "Markdown preview";
         frame.setAttribute("sandbox", "");
         frame.style.cssText = "width:100%;height:100%;min-height:500px;border:0;background:white";
         frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8">'
             + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; font-src data:; base-uri \'none\'; form-action \'none\'">'
-            + '<style>' + (css || '') + '</style></head><body>' + html + '</body></html>';
+            + '<style>' + (css || '').replace(/</g, "\\3c ") + '</style></head><body>' + html + '</body></html>';
         target.replaceChildren(frame);
     }
 
@@ -148,7 +157,7 @@
 
             if (state.editor) {
                 const model = state.editor.getModel();
-                if (model) monaco.editor.setModelLanguage(model, lang);
+                if (model && window.monaco) monaco.editor.setModelLanguage(model, lang);
                 state.editor.setValue(data.content);
             }
 
@@ -409,6 +418,10 @@
     }
 
     function bootMonaco() {
+        if (typeof require !== "function") {
+            bootLocalEditor();
+            return;
+        }
         require(["vs/editor/editor.main"], function () {
             if (typeof registerMdDocLanguages === "function") {
                 registerMdDocLanguages(monaco);
@@ -424,6 +437,7 @@
                 scrollBeyondLastLine: false,
                 automaticLayout: true,
                 tabSize: 2,
+                links: false,
             });
             state.editor.onDidChangeModelContent(debouncedPreview);
             renderPreview();
@@ -432,7 +446,34 @@
                 monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
                 () => saveFile()
             );
+        }, bootLocalEditor);
+    }
+
+    function bootLocalEditor() {
+        const textarea = document.createElement("textarea");
+        textarea.className = "md-doc-local-editor";
+        textarea.setAttribute("aria-label", "Document source");
+        textarea.spellcheck = false;
+        textarea.value = state.savedContent;
+        document.getElementById("md-doc-monaco").replaceChildren(textarea);
+        state.editor = {
+            getValue: () => textarea.value,
+            setValue: value => { textarea.value = value; debouncedPreview(); },
+            getModel: () => null,
+        };
+        textarea.addEventListener("input", debouncedPreview);
+        textarea.addEventListener("keydown", event => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+                event.preventDefault();
+                saveFile();
+            }
+            if (event.key === "Tab") {
+                event.preventDefault();
+                textarea.setRangeText("  ", textarea.selectionStart, textarea.selectionEnd, "end");
+                debouncedPreview();
+            }
         });
+        renderPreview();
     }
 
     document.addEventListener("DOMContentLoaded", () => {

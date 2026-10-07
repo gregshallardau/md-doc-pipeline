@@ -27,6 +27,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 logging.getLogger("weasyprint").setLevel(logging.ERROR)
 logging.getLogger("fonttools").setLevel(logging.ERROR)
@@ -36,6 +37,20 @@ import weasyprint  # noqa: E402
 from ..config import coerce_bool  # noqa: E402
 from ._cover import footer_band_geometry  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
+
+
+def _local_url_fetcher(url: str, *args: Any, **kwargs: Any) -> Any:
+    """Allow embedded data and local files only, before any network I/O.
+
+    WeasyPrint applies this to images, stylesheets, fonts and nested SVG assets.
+    Remote and UNC resources are omitted rather than fetched.
+    """
+    parsed = urlsplit(url)
+    path = unquote(parsed.path).replace("\\", "/")
+    if parsed.scheme not in {"file", "data"} or parsed.netloc or path.startswith("//"):
+        raise ValueError(f"External resource blocked: {parsed.scheme or 'relative'} URL")
+    return weasyprint.default_url_fetcher(url, *args, **kwargs)
+
 
 # Markdown extensions to enable
 _MD_EXTENSIONS = [
@@ -1779,4 +1794,5 @@ def build(
     weasyprint.HTML(
         string=html,
         base_url=str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
+        url_fetcher=_local_url_fetcher,
     ).write_pdf(str(out_path), **wp_kwargs)
