@@ -60,12 +60,12 @@ From the repository root, install the editor in the same `.venv`:
 ```bash
 uv venv  # skip if .venv already exists
 uv sync --group editor
-uv run --group editor md-doc-edit serve workspace/ --no-browser
+uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser
 ```
 
-Open http://127.0.0.1:8765/. Always include `--group editor` when launching
-through `uv run`; otherwise uv removes the editor while syncing. Activation
-is optional with `uv run`. For activated commands: `source .venv/bin/activate`
+Open http://127.0.0.1:8765/. `--offline --no-sync` launches the installed
+environment without dependency downloads or syncing. If you choose to sync
+again, include `--group editor` to retain the editor. Activation is optional. For activated commands: `source .venv/bin/activate`
 (Linux/macOS), `.\.venv\Scripts\Activate.ps1` (PowerShell), or
 `.venv\Scripts\activate.bat` (Command Prompt), then run
 `md-doc-edit serve workspace/`. See the [editor guide](md-doc-web-editor/README.md) for details.

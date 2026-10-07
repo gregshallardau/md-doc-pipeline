@@ -71,6 +71,11 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Browser interaction and sandbox regressions
         run: node tests/browser/editor.cjs
+      - uses: astral-sh/setup-uv@v7
+      - name: Install local editor for offline browser checks
+        run: uv sync --group editor
+      - name: Offline editor with bundled Monaco and blocked external requests
+        run: node tests/browser/offline.cjs
 
   export-parity:
     name: Rendered Word/PDF parity

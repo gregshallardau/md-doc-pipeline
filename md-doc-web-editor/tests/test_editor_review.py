@@ -66,3 +66,21 @@ def test_expiration_deletes_artifact_and_token(tmp_path, monkeypatch):
         assert client.get("/api/build/expired").status_code == 404
         assert not directory.exists()
         assert app.state.builds == {}
+
+
+def test_local_assets_and_network_policy(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        page = client.get("/")
+        assert "https://cdn" not in page.text
+        assert "connect-src 'self'" in page.headers["content-security-policy"]
+        assert page.headers["x-dns-prefetch-control"] == "off"
+        for asset in (
+            "vendor/marked-17.0.5/marked.umd.js",
+            "vendor/monaco-editor-0.52.2/min/vs/loader.js",
+            "vendor/monaco-editor-0.52.2/min/vs/editor/editor.main.js",
+            "vendor/monaco-editor-0.52.2/min/vs/base/worker/workerMain.js",
+            "vendor/monaco-editor-0.52.2/min/vs/base/browser/ui/codicons/codicon/codicon.ttf",
+        ):
+            result = client.get("/static/" + asset)
+            assert result.status_code == 200, asset
+            assert result.content

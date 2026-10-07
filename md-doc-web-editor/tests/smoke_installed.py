@@ -54,8 +54,16 @@ def main():
                         time.sleep(0.1)
                 else:
                     raise RuntimeError("Editor did not become ready")
-                with urlopen(url + "/static/editor.js") as response:
-                    assert response.status == 200
+                for asset in (
+                    "editor.js",
+                    "vendor/marked-17.0.5/marked.umd.js",
+                    "vendor/monaco-editor-0.52.2/min/vs/loader.js",
+                    "vendor/monaco-editor-0.52.2/min/vs/editor/editor.main.js",
+                    "vendor/monaco-editor-0.52.2/min/vs/base/worker/workerMain.js",
+                ):
+                    with urlopen(url + "/static/" + asset) as response:
+                        assert response.status == 200
+                        assert response.read()
                 with urlopen(url + "/api/tree") as response:
                     assert json.load(response)["workspace"] == str(workspace)
                 request = Request(
