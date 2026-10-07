@@ -21,6 +21,8 @@
         themeCss: "",
         themeSource: null,
         previewTimer: null,
+        savedContent: "",
+        openRequest: 0,
     };
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -29,6 +31,17 @@
         if (fileType === "css") return "css";
         if (fileType === "meta") return "mddoc-yaml";
         return "mddoc-markdown";
+    }
+
+    function isolatedPreview(target, html, css) {
+        const frame = document.createElement("iframe");
+        frame.title = "Markdown preview";
+        frame.setAttribute("sandbox", "");
+        frame.style.cssText = "width:100%;height:100%;min-height:500px;border:0;background:white";
+        frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8">'
+            + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; font-src data:; base-uri \'none\'; form-action \'none\'">'
+            + '<style>' + (css || '') + '</style></head><body>' + html + '</body></html>';
+        target.replaceChildren(frame);
     }
 
     function stripFrontmatter(content) {
@@ -111,9 +124,24 @@
 
     // ── File operations ──────────────────────────────────────────────────────
 
+    function isDirty() {
+        return state.currentPath && state.editor && state.editor.getValue() !== state.savedContent;
+    }
+
+    window.addEventListener("beforeunload", (event) => {
+        if (isDirty()) { event.preventDefault(); event.returnValue = ""; }
+    });
+
     async function openFile(path) {
+        if (isDirty() && !window.confirm("Discard unsaved changes and open another file?")) return;
+        const previousContent = state.editor ? state.editor.getValue() : "";
+        const request = ++state.openRequest;
         try {
             const data = await api("/api/file?path=" + encodeURIComponent(path));
+            if (request !== state.openRequest) return;
+            if (state.editor && state.editor.getValue() !== previousContent && isDirty()
+                && !window.confirm("The document changed while loading. Discard those edits?")) return;
+            state.savedContent = data.content;
             state.currentPath = data.path;
             state.currentType = data.type;
             const lang = detectLanguage(data.type);
@@ -140,6 +168,8 @@
 
     async function saveFile() {
         if (!state.currentPath || !state.editor) return;
+        const path = state.currentPath;
+        const content = state.editor.getValue();
         const btn = document.getElementById("md-doc-save-btn");
         btn.disabled = true;
         btn.textContent = "Saving…";
@@ -148,10 +178,11 @@
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    path: state.currentPath,
-                    content: state.editor.getValue(),
+                    path,
+                    content,
                 }),
             });
+            if (state.currentPath === path) state.savedContent = content;
             btn.textContent = "Saved ✓";
             setTimeout(() => {
                 btn.textContent = "Save";
@@ -169,13 +200,16 @@
 
     async function refreshDerived() {
         if (!state.currentPath) return;
-        const path = encodeURIComponent(state.currentPath);
+        const currentPath = state.currentPath;
+        const request = state.openRequest;
+        const path = encodeURIComponent(currentPath);
         try {
             const [cfg, css, inc] = await Promise.all([
                 api("/api/config?path=" + path),
                 api("/api/css?path=" + path),
                 api("/api/includes?path=" + path),
             ]);
+            if (state.currentPath !== currentPath || request !== state.openRequest) return;
             state.mergedConfig = cfg.merged || {};
             state.themeCss = css.css || "";
             state.themeSource = css.source || null;
@@ -279,8 +313,7 @@
         const body = stripFrontmatter(content);
         let html = marked.parse(body);
         html = substituteVars(html, state.mergedConfig);
-        const styleTag = state.themeCss ? `<style>${state.themeCss}</style>` : "";
-        target.innerHTML = styleTag + html;
+        isolatedPreview(target, html, state.themeCss);
     }
 
     function debouncedPreview() {
@@ -292,6 +325,9 @@
 
     async function runBuild(format) {
         if (!state.currentPath || state.currentType !== "md") return;
+        const path = state.currentPath;
+        const content = state.editor.getValue();
+        const request = state.openRequest;
         const btnId = format === "pdf" ? "md-doc-build-pdf-btn" : "md-doc-build-docx-btn";
         const btn = document.getElementById(btnId);
         const originalText = btn.textContent;
@@ -306,17 +342,19 @@
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    path: state.currentPath,
-                    content: state.editor.getValue(),
+                    path,
+                    content,
                 }),
             });
 
+            if (state.currentPath === path) state.savedContent = content;
             const result = await api("/api/build", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ path: state.currentPath, format }),
+                body: JSON.stringify({ path, format }),
             });
 
+            if (request !== state.openRequest || state.currentPath !== path) return;
             const url = "/api/build/" + result.token;
             if (format === "pdf") {
                 // Show inline in the preview pane
@@ -332,6 +370,7 @@
             // Make sure the Preview tab is active so the user sees the result
             switchTab("preview");
         } catch (err) {
+            if (request !== state.openRequest || state.currentPath !== path) return;
             target.innerHTML =
                 `<p style="color:#dc2626;font-size:0.85rem;padding:1rem;white-space:pre-wrap">Build failed: ${escapeHtml(err.message)}</p>`;
         } finally {
@@ -376,8 +415,8 @@
             }
             const container = document.getElementById("md-doc-monaco");
             state.editor = monaco.editor.create(container, {
-                value: "",
-                language: "mddoc-markdown",
+                value: state.savedContent,
+                language: detectLanguage(state.currentType),
                 theme: "mddoc-light",
                 fontSize: 13,
                 minimap: { enabled: false },
@@ -387,6 +426,7 @@
                 tabSize: 2,
             });
             state.editor.onDidChangeModelContent(debouncedPreview);
+            renderPreview();
             // Cmd/Ctrl-S to save
             state.editor.addCommand(
                 monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,

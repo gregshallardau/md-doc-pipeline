@@ -76,7 +76,7 @@ class TestPdf:
         html = self._html(tmp_repo, {"page_header_bar": True})
         assert "background: #002a5b" in html
         assert "height: 24mm" in html
-        assert "margin-top: calc(24mm + 8mm)" in html
+        assert "margin-top: calc(0mm + 24mm + 8mm)" in html
 
     def test_yaml_override_wins(self, tmp_repo):
         html = self._html(tmp_repo, {"page_header_bar": True, "page_header_bar_color": "#ff0000"})

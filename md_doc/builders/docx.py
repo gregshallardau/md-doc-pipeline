@@ -35,7 +35,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-import markdown
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -414,6 +413,8 @@ def _render_cell_html(
     write_text: Any,
     *,
     bold_override: bool = False,
+    insert_math: Any = None,
+    insert_image: Any = None,
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
@@ -444,6 +445,12 @@ def _render_cell_html(
             elif tag == "a":
                 self._href = dict(attrs).get("href") or ""
                 self._link_text = ""
+            elif tag == "img":
+                src = dict(attrs).get("src") or ""
+                if src.startswith("math://") and insert_math is not None:
+                    insert_math(paragraph, src)
+                elif insert_image is not None:
+                    insert_image(dict(attrs), paragraph)
             elif tag == "br":
                 br_run = paragraph.add_run()
                 br_run._r.append(OxmlElement("w:br"))
@@ -502,6 +509,7 @@ class _DocxBuilder(HTMLParser):
         table_col_widths: list[float] | None = None,
         *,
         mermaid_images: list[tuple[bytes, int, int]] | None = None,
+        math_equations: list[Any] | None = None,
         doc_path: Path | None = None,
         repo_root: Path | None = None,
         section_bar: dict[str, Any] | None = None,
@@ -514,6 +522,7 @@ class _DocxBuilder(HTMLParser):
         self._body_text_align = body_text_align  # default alignment for Normal paragraphs
         self._table_col_widths = table_col_widths  # e.g. [30, 70] — relative column widths
         self._mermaid_images = mermaid_images or []
+        self._math_equations = math_equations or []
         self._doc_path = doc_path
         self._repo_root = repo_root
         self._section_bar = section_bar  # None or parsed section_bar config
@@ -688,12 +697,17 @@ class _DocxBuilder(HTMLParser):
     # ------------------------------------------------------------------
 
     def _new_para(self, style: str = "Normal") -> None:
+        after_table = len(self.doc._element.body) > 1 and self.doc._element.body[-2].tag == qn(
+            "w:tbl"
+        )
         self._paragraph = self.doc.add_paragraph(style=style)
+        if after_table and self._theme.get("table_space_after"):
+            self._paragraph.paragraph_format.space_before = Pt(self._theme["table_space_after"])
         self._run = None
 
     def _current_para(self) -> Any:
         if self._paragraph is None:
-            self._paragraph = self.doc.add_paragraph()
+            self._new_para()
         return self._paragraph
 
     def _style_inline_run(
@@ -994,7 +1008,11 @@ class _DocxBuilder(HTMLParser):
             self._last_was_br = True
 
         elif tag == "img":
-            self._embed_image(dict(attrs))
+            src = dict(attrs).get("src") or ""
+            if src.startswith("math://"):
+                self._insert_math(self._current_para(), src)
+            else:
+                self._embed_image(dict(attrs))
 
         elif tag == "hr":
             self._paragraph = self.doc.add_paragraph()
@@ -1189,10 +1207,16 @@ class _DocxBuilder(HTMLParser):
         section = self.doc.sections[0]
         return int(section.page_width - section.left_margin - section.right_margin)
 
-    def _embed_image(self, attrs: dict[str, str | None]) -> None:
-        """Embed an <img> as a picture: a mermaid:// reference or a file asset."""
-        if self._in_cell:
+    def _insert_math(self, paragraph: Any, src: str) -> None:
+        if not src.startswith("math://"):
             return
+        from copy import deepcopy
+
+        equation = deepcopy(self._math_equations[int(src[7:])])
+        paragraph._p.append(equation)
+
+    def _embed_image(self, attrs: dict[str, str | None], paragraph: Any = None) -> None:
+        """Embed an <img> as a picture: a mermaid:// reference or a file asset."""
         src = attrs.get("src") or ""
         text_width = self._text_width_emu()
 
@@ -1212,7 +1236,9 @@ class _DocxBuilder(HTMLParser):
                 # Unresolved image — fall back to alt text so nothing is silently lost.
                 alt = attrs.get("alt")
                 if alt:
-                    self._write_text(self._current_para(), str(alt))
+                    self._write_text(
+                        paragraph if paragraph is not None else self._current_para(), str(alt)
+                    )
                 logger.warning("docx: could not resolve image %r — skipped.", src)
                 return
             stream = str(path)
@@ -1226,10 +1252,13 @@ class _DocxBuilder(HTMLParser):
 
         width = text_width if native_w_emu is None else min(native_w_emu, text_width)
 
-        para = self.doc.add_paragraph()
-        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        para.paragraph_format.space_before = Pt(6)
-        para.paragraph_format.space_after = Pt(6)
+        para = paragraph if paragraph is not None else self._current_para()
+        if paragraph is None:
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            # Reuse the surrounding Markdown paragraph; an extra empty
+            # paragraph before the picture shifts Word away from PDF layout.
+        # Inline pictures must be allowed to expand the line box.
+        para.paragraph_format.line_spacing = 1.0
         run = para.add_run()
         try:
             run.add_picture(stream, width=Emu(width))
@@ -1433,7 +1462,13 @@ class _DocxBuilder(HTMLParser):
                 para.paragraph_format.space_after = Pt(0)
 
                 _render_cell_html(
-                    para, cell_html.strip(), self._theme, self._write_text, bold_override=is_header
+                    para,
+                    cell_html.strip(),
+                    self._theme,
+                    self._write_text,
+                    bold_override=is_header,
+                    insert_math=self._insert_math,
+                    insert_image=self._embed_image,
                 )
 
                 # Apply alignment — the cell's own text-align (markdown column
@@ -1570,6 +1605,7 @@ def _tiny_spacer(doc: Document) -> Any:
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(0)
     _set_para_mark_size(p)
+    p.paragraph_format.line_spacing = Pt(1)
     return p
 
 
@@ -1594,7 +1630,10 @@ def _add_floating_table(
     bleeds into the margins via a negative table indent — used where the PDF
     also lays the element out in flow (e.g. the bottom cover bar).
     """
-    table = doc.add_table(rows=1, cols=1)
+    try:
+        table = doc.add_table(rows=1, cols=1)
+    except TypeError:  # Header/footer containers require an explicit width.
+        table = doc.add_table(rows=1, cols=1, width=Emu(width_twips * 635))
     try:
         table.style = "Table Normal"
     except KeyError:
@@ -1693,6 +1732,7 @@ def _add_floating_table(
     p0.paragraph_format.space_before = Pt(0)
     p0.paragraph_format.space_after = Pt(0)
     _set_para_mark_size(p0)
+    p0.paragraph_format.line_spacing = Pt(1)
 
     return table
 
@@ -1709,6 +1749,41 @@ def _set_cell_margins_mm(cell: Any, top: float, right: float, bottom: float, lef
         mar.set(qn("w:type"), "dxa")
         tcMar.append(mar)
     tcPr.append(tcMar)
+
+
+def _anchor_cover_picture(shape: Any, x_mm: float, y_mm: float) -> None:
+    """Position a decorative picture against physical page coordinates."""
+    inline = shape._inline
+    anchor = OxmlElement("wp:anchor")
+    for key, value in {
+        "distT": "0",
+        "distB": "0",
+        "distL": "0",
+        "distR": "0",
+        "simplePos": "0",
+        "relativeHeight": "0",
+        "behindDoc": "1",
+        "locked": "0",
+        "layoutInCell": "1",
+        "allowOverlap": "1",
+    }.items():
+        anchor.set(key, value)
+    simple = OxmlElement("wp:simplePos")
+    simple.set("x", "0")
+    simple.set("y", "0")
+    anchor.append(simple)
+    for axis, position in (("H", int(Mm(x_mm))), ("V", int(Mm(y_mm)))):
+        pos = OxmlElement(f"wp:position{axis}")
+        pos.set("relativeFrom", "page")
+        offset = OxmlElement("wp:posOffset")
+        offset.text = str(position)
+        pos.append(offset)
+        anchor.append(pos)
+    anchor.append(inline.find(qn("wp:extent")))
+    anchor.append(OxmlElement("wp:wrapNone"))
+    for tag in ("wp:docPr", "wp:cNvGraphicFramePr", "a:graphic"):
+        anchor.append(inline.find(qn(tag)))
+    inline.getparent().replace(inline, anchor)
 
 
 def _add_docx_cover_page(
@@ -1808,7 +1883,8 @@ def _add_docx_cover_page(
     #    .cover-content in .cover-bar-wrapper with the primary background).
     container: Any = doc
     first_space_before_pt = 0.0
-    base_indent_l_mm, base_indent_r_mm = 3.0, 10.0  # 28mm/30mm padding vs 25mm/20mm margins
+    base_indent_l_mm = 28.0 - section.left_margin / 36000
+    base_indent_r_mm = 30.0 - section.right_margin / 36000
     avail_mm = text_width_mm - base_indent_l_mm - base_indent_r_mm
     if text_on_bar and has_top_bar:
         wrap_tbl = _add_floating_table(
@@ -1844,6 +1920,7 @@ def _add_docx_cover_page(
         p.alignment = para_align
         p.paragraph_format.space_before = Pt(space_before)
         p.paragraph_format.space_after = Pt(space_after)
+        _set_para_mark_size(p)
         if base_indent_l_mm:
             p.paragraph_format.left_indent = Mm(base_indent_l_mm)
         if base_indent_r_mm:
@@ -1881,8 +1958,9 @@ def _add_docx_cover_page(
     # 4. Cover label (e.g. "REPORT") — small uppercase accent, tracked out.
     #    PDF: .cover-label { 8.5pt / 700 / letter-spacing 2.5pt / 10mm below }.
     if label:
-        lp = _cover_para(pending_space_before, 28)  # 10mm ≈ 28pt below
+        lp = _cover_para(pending_space_before, Mm(10).pt)  # 10mm ≈ 28pt below
         pending_space_before = 0.0
+        lp.paragraph_format.line_spacing = Pt(8.5 * 1.2)
         run = lp.add_run(label.upper())
         run.bold = True
         run.font.size = Pt(8.5)
@@ -1899,8 +1977,9 @@ def _add_docx_cover_page(
     # 5. Title — large bold run in $primary using the body font (NOT the
     #    built-in serif "Title" style, which looks nothing like the PDF).
     #    PDF: .cover-title { 24pt / 700 / 8mm below }.
-    title_para = _cover_para(pending_space_before, 23)  # 8mm ≈ 23pt below
+    title_para = _cover_para(pending_space_before, Mm(8).pt)  # 8mm ≈ 23pt below
     pending_space_before = 0.0
+    title_para.paragraph_format.line_spacing = Pt(24 * 1.2)
     trun = title_para.add_run(title or "Document")
     trun.bold = True
     trun.font.size = Pt(24)
@@ -1913,8 +1992,9 @@ def _add_docx_cover_page(
     #    A bottom-bordered empty paragraph, indented from the far side so the
     #    rule is 40mm wide rather than full-width.
     if show_divider:
-        dp = _cover_para(0, 23)  # 8mm below
+        dp = _cover_para(0, Mm(7.5).pt)  # 8mm below
         _set_para_mark_size(dp)
+        dp.paragraph_format.line_spacing = Pt(0.1)
         gap_mm = max(0.0, avail_mm - 40.0)
         if para_align == WD_ALIGN_PARAGRAPH.RIGHT:
             dp.paragraph_format.left_indent = Mm(base_indent_l_mm + gap_mm)
@@ -1936,7 +2016,8 @@ def _add_docx_cover_page(
     # 7. Author / date metadata — bold body-coloured label + muted value, no
     #    colons (matches the PDF's "<strong>Prepared by</strong> {author}").
     def _meta_line(bold_label: str, value: str) -> None:
-        mp = _cover_para(0, 4)
+        mp = _cover_para(0, 0)
+        mp.paragraph_format.line_spacing = Pt(10.5 * 1.8)
         lbl = mp.add_run(f"{bold_label} ")
         lbl.bold = True
         lbl.font.size = Pt(10.5)
@@ -1956,33 +2037,29 @@ def _add_docx_cover_page(
     if date_str:
         _meta_line("Date", date_str)
 
-    # 8. Bottom bar — laid out in flow after the content, exactly where the
-    #    PDF places .cover-bar-bottom (after .cover-content's 20mm bottom
-    #    padding). An in-flow full-bleed band also avoids LibreOffice's
-    #    clipping of floating tables near the page bottom.
+    # 8. A page-anchored drawing avoids office clipping/repositioning of
+    # floating tables below the body area. Cover text stays editable.
     if has_bottom_bar:
-        gap = _tiny_spacer(doc)
-        gap.paragraph_format.space_before = Pt(20 * 72 / 25.4)  # 20mm padding-bottom
-        left_margin_twips = round(section.left_margin / 635)
-        bottom_tbl = _add_floating_table(
-            doc,
-            width_twips=page_twips,
-            height_mm=bar_bot_h,
-            fill=bar_color,
-            inline_indent_twips=-left_margin_twips,
-        )
+        from PIL import Image
+
+        band = BytesIO()
+        Image.new("RGB", (1, 1), f"#{bar_color}").save(band, format="PNG")
+        band.seek(0)
+        paragraph = section.first_page_footer.paragraphs[0]
+        paragraph.paragraph_format.line_spacing = Pt(1)
+        shape = paragraph.add_run().add_picture(band, width=Mm(page_w_mm), height=Mm(bar_bot_h))
+        _anchor_cover_picture(shape, 0, page_h_mm - bar_bot_h)
         if bar_logo_path:
-            # The PDF places cover_bar_logo inside the bottom bar, right-aligned
-            # with the content edge.
-            bp = bottom_tbl.rows[0].cells[0].paragraphs[0]
-            bp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            bp.paragraph_format.right_indent = section.right_margin
             try:
-                h = _logo_height_mm(bar_logo_path, min(bar_bot_h * 0.7, 8.0))
-                bp.add_run().add_picture(str(bar_logo_path), height=Mm(h))
+                logo_h = _logo_height_mm(bar_logo_path, min(bar_bot_h * 0.7, 8.0))
+                logo = paragraph.add_run().add_picture(str(bar_logo_path), height=Mm(logo_h))
+                _anchor_cover_picture(
+                    logo,
+                    page_w_mm - 30 - logo.width / 36000,
+                    page_h_mm - bar_bot_h + (bar_bot_h - logo_h) / 2,
+                )
             except Exception as exc:
                 logger.warning("docx cover bar logo embed failed: %s", exc)
-        _tiny_spacer(doc)
 
     # 9. Footer (confidentiality notice) — a text frame positioned so its text
     #    sits ~14mm from the physical page bottom, spanning the PDF cover
@@ -1994,7 +2071,7 @@ def _add_docx_cover_page(
         pPr = fp._p.get_or_add_pPr()
         framePr = OxmlElement("w:framePr")
         frame_w_mm = max(10.0, page_w_mm - 28.0 - 20.0)
-        frame_top_mm = max(0.0, page_h_mm - 14.0 - 7.0)  # ≈ rule + padding + one 8pt line
+        frame_top_mm = max(0.0, page_h_mm - 14.0 - 9.4)  # ≈ rule + padding + one 8pt line
         framePr.set(qn("w:w"), str(round(frame_w_mm * _TWIPS_PER_MM)))
         framePr.set(qn("w:h"), "0")
         framePr.set(qn("w:hRule"), "auto")
@@ -2199,6 +2276,7 @@ def _add_page_header_bar(
     text_color_hex = str(config.get("page_header_bar_text_color", "#ffffff")).lstrip("#")
     height_mm = _cfg_mm(config.get("page_header_bar_height"), 12.0)
     gap_mm = _cfg_mm(config.get("page_header_bar_padding"), 6.0)
+    offset_mm = max(0.0, _cfg_mm(config.get("page_header_bar_offset"), 0.0))
     header_text = config.get("header_text", "")
     text_position = str(config.get("header_text_position", "left")).lower()
 
@@ -2211,8 +2289,8 @@ def _add_page_header_bar(
 
     # The PDF bar starts at the physical page top and content begins
     # height + padding below it (@page { margin-top: calc(h + p) }).
-    section.header_distance = Mm(0)
-    section.top_margin = Mm(height_mm + gap_mm)
+    section.header_distance = Mm(offset_mm)
+    section.top_margin = Mm(offset_mm + height_mm + gap_mm)
 
     header = section.header
     header.is_linked_to_previous = False
@@ -2320,6 +2398,7 @@ def _add_page_header_bar(
         para.paragraph_format.space_before = Pt(0)
         para.paragraph_format.space_after = Pt(0)
         _set_para_mark_size(para)
+        para.paragraph_format.line_spacing = 1.0
     # Align outer-cell content with the page margins.
     _set_cell_margins_mm(row.cells[0], top=0, right=0, bottom=0, left=section.left_margin / 36000)
     _set_cell_margins_mm(row.cells[2], top=0, right=section.right_margin / 36000, bottom=0, left=0)
@@ -2771,8 +2850,9 @@ def build(
     else:
         body = _strip_form_fields_for_docx(body)
 
-    md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
-    html = md_engine.convert(body)
+    from ..math import markdown_html, render_math
+
+    html, math_equations = render_math(markdown_html(body, _MD_EXTENSIONS), word=True)
     html = _drop_empty_table_headers(html)
 
     # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF
@@ -2862,6 +2942,7 @@ def build(
         body_text_align=body_text_align,
         table_col_widths=table_col_widths,
         mermaid_images=mermaid_images,
+        math_equations=math_equations,
         doc_path=doc_path,
         repo_root=repo_root,
         section_bar=section_bar,

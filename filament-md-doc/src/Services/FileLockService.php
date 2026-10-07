@@ -4,10 +4,27 @@ namespace MdDoc\FilamentMdDoc\Services;
 
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use MdDoc\FilamentMdDoc\Models\FileLock;
 
 class FileLockService
 {
+    /** Hold the database row lock across the write so an expired owner cannot race a new owner. */
+    public function withLock(string $path, ?string $key, callable $write): void
+    {
+        if (!$key) {
+            throw new RuntimeException('No editing lock — reload the document before saving.');
+        }
+        DB::transaction(function () use ($path, $key, $write) {
+            $lock = FileLock::where('file_path', $path)->lockForUpdate()->first();
+            if (!$lock || !hash_equals($lock->lock_key, $key) || $lock->expires_at <= now()) {
+                throw new RuntimeException('Editing lock expired — document was not saved.');
+            }
+            $write();
+        });
+    }
+
     /**
      * Try to acquire a lock on the given file path.
      *

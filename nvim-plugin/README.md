@@ -263,3 +263,8 @@ a plain Markdown file and the plugin stays inactive.
 **K conflicts with LSP hover in other buffers**
 - The keymap is buffer-local and only set when the plugin activates on an md-doc
   `.md` file. It does not affect other buffers.
+
+Build current file saves the current buffer first. Build workspace saves all
+modified file buffers inside the workspace, including config and template
+files, before launching the CLI. A save failure cancels the build and reports
+an error. Files outside the workspace are left alone.

@@ -31,3 +31,8 @@ workspace/
 AGENTS.md
 GEMINI.md
 /_pdf-theme.css
+
+# Incremental dependency state and browser test dependencies
+.*.md-doc-state
+node_modules/
+parity-artifacts/

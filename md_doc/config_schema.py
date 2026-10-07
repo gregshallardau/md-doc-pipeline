@@ -122,6 +122,7 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "page_header_bar_text_color",
         "page_header_bar_height",
         "page_header_bar_padding",
+        "page_header_bar_offset",
         "page_header_bar_logo",
         "page_header_bar_logo_position",
         "page_header_bar_logos",

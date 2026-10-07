@@ -1,0 +1,9 @@
+@page { size: A4; margin: 30mm 20mm 20mm 20mm; }
+body { margin: 0; padding: 0; font-family: 'DejaVu Sans'; font-size: 11pt; line-height: 1.25; }
+p { margin: 0 0 4mm; }
+.running-date { display: none; }
+.md-doc-page-break { break-after: page; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 4mm; }
+th { background: #087f5b; color: white; padding: 2mm; text-align: left; }
+td { padding: 2mm; border-bottom: 0.3mm solid #888888; }
+p > img:only-child { display: block; margin: 0 auto; }

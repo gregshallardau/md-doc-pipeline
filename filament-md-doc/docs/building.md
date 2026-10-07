@@ -149,5 +149,10 @@ Common failures and fixes are in [troubleshooting](troubleshooting.md#build-fail
 ## Security notes
 
 - The token is a 40-char random string — sufficiently large to prevent guessing for the 30-min TTL window
-- The build URL has no extra auth check — it relies on the Filament panel's middleware (which is applied to all routes loaded via `loadRoutesFrom`). Don't expose the build URL outside your panel's auth scope
-- Built files persist on disk until your cleanup job runs. If your documents are sensitive, either reduce `MD_DOC_BUILD_TTL`, encrypt the build directory, or implement a custom cleanup
+- Build tokens act as bearer credentials. `loadRoutesFrom` does not automatically apply panel middleware; the host application must protect these routes with its authentication policy.
+- Failed builds are removed immediately. Expired files are pruned on requests and by a registered five-minute Laravel scheduled task. Run the host application's scheduler (`php artisan schedule:run` every minute) to clean idle installations.
+
+Save and Build send the current Monaco content directly. Every write requires a valid
+editing lock and holds its database row lock through the write; reload or request
+editing again if the lock has expired. Live HTML previews use sandboxed frames and
+do not load external assets.

@@ -168,3 +168,16 @@ Reads/writes are sandboxed: the server resolves every `?path=` against the works
 ## License
 
 MIT
+
+## Save and preview behavior
+
+Switching files prompts before discarding unsaved changes; closing the tab also
+warns when edits are unsaved. A build uses the file and content selected when the
+button was clicked, even if another file is opened while the build runs.
+
+HTML previews use sandboxed frames with scripts, forms and network resources
+blocked. Theme CSS is confined to the frame. Use the PDF/Word build for final
+asset and math rendering. Failed builds are removed immediately; expired builds
+are swept every minute and remaining builds are removed on graceful shutdown.
+Abandoned server directories are recovered on the next startup after the timeout
+and token retention period have passed.

@@ -15,6 +15,17 @@
         return 'mddoc-markdown';
     }
 
+    function isolatedPreview(target, html, css) {
+        const frame = document.createElement("iframe");
+        frame.title = "Markdown preview";
+        frame.setAttribute("sandbox", "");
+        frame.style.cssText = "width:100%;height:100%;min-height:500px;border:0;background:white";
+        frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8">'
+            + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; font-src data:; base-uri \'none\'; form-action \'none\'">'
+            + '<style>' + (css || '') + '</style></head><body>' + html + '</body></html>';
+        target.replaceChildren(frame);
+    }
+
     function stripFrontmatter(content) {
         const trimmed = content.trimStart();
         if (!trimmed.startsWith('---')) return content;
@@ -44,8 +55,7 @@
         let html = marked.parse(body);
         html = substituteVars(html, config);
 
-        const styleTag = css ? `<style>${css}</style>` : '';
-        preview.innerHTML = styleTag + html;
+        isolatedPreview(preview, html, css);
     }
 
     // ── Debounce ──────────────────────────────────────────────────────────────
@@ -161,11 +171,11 @@
         const container = document.getElementById('md-doc-monaco');
         if (!container) return;
 
-        const initialContent = window.mdDocInitialContent || '';
-        const fileType       = window.mdDocFileType || 'md';
-        const language       = detectLanguage(fileType);
-
+        if (window.mdDocEditor) return;
         require(['vs/editor/editor.main'], function () {
+            if (window.mdDocEditor) return;
+            const initialContent = window.mdDocInitialContent || '';
+            const language = detectLanguage(window.mdDocFileType || 'md');
             // Register md-doc custom languages + theme (defined in tokenizers.js)
             if (typeof registerMdDocLanguages === 'function') {
                 registerMdDocLanguages(monaco);
@@ -192,15 +202,16 @@
             renderPreview(initialContent, window.mdDocConfig, window.mdDocCss);
 
             // Live preview: debounced on content change
-            const debouncedUpdate = debounce(function (value) {
+            const debouncedUpdate = debounce(function (value, path) {
+                if (path !== window.mdDocPath) return;
                 renderPreview(value, window.mdDocConfig, window.mdDocCss);
 
                 // Notify Livewire so it can refresh config/CSS/includes panels
-                window.Livewire.dispatch('editor-content-changed', { content: value });
+                window.Livewire.dispatch('editor-content-changed', { content: value, path });
             }, DEBOUNCE_MS);
 
             editor.onDidChangeModelContent(function () {
-                debouncedUpdate(editor.getValue());
+                debouncedUpdate(editor.getValue(), window.mdDocPath);
             });
 
             // Store reference for Livewire-triggered updates
@@ -268,7 +279,9 @@
 
     // ── Livewire event: file loaded / saved — update Monaco model ─────────────
     document.addEventListener('livewire:init', function () {
-        Livewire.on('file-loaded', function ({ content, fileType, mergedConfig, resolvedCss, lockKey, isReadOnly }) {
+        Livewire.on('file-loaded', function ({ path, content, fileType, mergedConfig, resolvedCss, lockKey, isReadOnly }) {
+            window.mdDocPath = path;
+            window.mdDocInitialContent = content || "";
             window.mdDocConfig   = mergedConfig  || {};
             window.mdDocCss      = resolvedCss   || '';
             window.mdDocFileType = fileType;

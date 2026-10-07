@@ -45,6 +45,58 @@ jobs:
       - name: Test — pytest (with coverage gate)
         run: uv run --group editor pytest tests/ md-doc-web-editor/tests/ --tb=short
 
+  nvim:
+    name: Neovim plugin tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Neovim
+        run: sudo apt-get update && sudo apt-get install -y neovim
+      - name: Test plugin
+        run: nvim --headless -u NONE -c "lua dofile('nvim-plugin/tests/run.lua')" +qa!
+
+  editor-clients:
+    name: Browser and PHP editor regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: PHP syntax and service regressions
+        run: |
+          find filament-md-doc/src -name '*.php' -exec php -l {} \;
+          php filament-md-doc/tests/regression.php
+      - name: Install browser test dependencies
+        working-directory: tests/browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Browser interaction and sandbox regressions
+        run: node tests/browser/editor.cjs
+
+  export-parity:
+    name: Rendered Word/PDF parity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install office renderer and fixed fixture fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer fonts-dejavu-core libpango-1.0-0 libpangoft2-1.0-0
+      - name: Install locked test dependencies
+        run: uv sync --frozen --python 3.12 --group dev --group parity
+      - name: Compare actual rendered exports
+        env:
+          MD_DOC_PARITY: "1"
+          MD_DOC_PARITY_ARTIFACTS: parity-artifacts
+        run: uv run --frozen --group parity pytest tests/parity --no-cov --tb=short
+      - name: Retain exports, measurements and visual differences
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: word-pdf-parity
+          path: parity-artifacts/
+          if-no-files-found: error
+
   package:
     name: Build & install smoke test
     runs-on: ubuntu-latest

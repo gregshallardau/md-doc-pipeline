@@ -31,7 +31,6 @@ from typing import Any
 logging.getLogger("weasyprint").setLevel(logging.ERROR)
 logging.getLogger("fonttools").setLevel(logging.ERROR)
 
-import markdown  # noqa: E402
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
@@ -656,9 +655,9 @@ def _build_cover(
         bottom_section = f"""\
     <div class="cover-bar cover-bar-bottom cover-bar-footer" style="height: {bar_bottom_height};">
       <div class="cover-bar-decor"></div>
-      {footer_inner}
       {bar_logo_html}
-    </div>"""
+    </div>
+    {footer_inner}"""
     elif has_bottom_bar and bar_logo_html:
         bottom_section = f"""\
     <div class="cover-bar cover-bar-bottom" style="height: {bar_bottom_height};">
@@ -678,12 +677,10 @@ def _build_cover(
 
 def _parse_mm(value: Any, default: float) -> float:
     """Parse a '10mm'-style config value to mm (bare numbers are mm)."""
-    if value is None:
-        return default
-    try:
-        return float(re.sub(r"[^\d.]", "", str(value)) or default)
-    except ValueError:
-        return default
+    from ._assets import _length_to_mm
+
+    parsed = _length_to_mm(str(value)) if value is not None else None
+    return parsed if parsed is not None else default
 
 
 def _logo_resolution_dpi(path: Path, target_mm: float, *, forced: bool = False) -> float | None:
@@ -914,6 +911,7 @@ def _build_html(
     header_logo_dpi: float | None = None,
     header_logo_max_mm: float | None = None,
     page_margins_mm: tuple[float, float] = (25.0, 20.0),
+    page_size_mm: tuple[float, float] = (210.0, 297.0),
     theme_body_justify: bool = False,
 ) -> str:
     css_uri = css_path.as_uri()
@@ -944,13 +942,35 @@ def _build_html(
 
     cover_html = ""
     cover_support_style = ""
+    cover_base_style = ""
     if cover_page:
+        from ..theme import generate_default_theme
+
+        defaults = generate_default_theme()
+        cover_rules = defaults[
+            defaults.index(".cover {") : defaults.index(
+                "/* ============================================\n   HEADINGS"
+            )
+        ]
+        cover_page_rules = defaults[
+            defaults.index("@page cover {") : defaults.index(
+                "/* ============================================\n   BASE"
+            )
+        ]
+        cover_base_style = (
+            f"<style>html, body {{ margin: 0; padding: 0; }}{cover_page_rules}{cover_rules}</style>"
+        )
         cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri, primary_color=primary_color)}"
         # Behaviour classes the cover HTML emits (cover_text_align,
         # cover_footer_line) — injected here rather than relying on the theme
         # file so pre-existing generated themes honour these config keys too.
         cover_support_style = (
             "<style>\n"
+            ".cover-label { line-height: 1.2; }\n"
+            ".cover-logo { max-width: 50mm; max-height: 20mm; margin-bottom: 4mm; }\n"
+            ".cover-bar-logo { position: absolute; right: 30mm; top: 50%; transform: translateY(-50%); max-height: 70%; max-width: 50mm; }\n"
+            ".cover-bar-bottom { position: absolute; bottom: 0; left: 0; }\n"
+            f".cover {{ width: {page_size_mm[0]}mm; height: {page_size_mm[1]}mm; }}\n"
             ".cover-align-right { text-align: right; }\n"
             ".cover-align-right .cover-divider { margin-left: auto; }\n"
             ".cover-align-center { text-align: center; }\n"
@@ -964,6 +984,7 @@ def _build_html(
 <head>
   <meta charset="utf-8">
   <title>{_escape_html(title)}</title>
+  {cover_base_style}
   <link rel="stylesheet" href="{css_uri}">
   {_BASE_FIXES_CSS}
   {header_style}
@@ -977,9 +998,9 @@ def _build_html(
 </head>
 <body>
 {cover_html}
+  {page_bar_html}
   <!-- REPORT BODY -->
   <div class="report-body">
-    {page_bar_html}
     <span class="running-date">{_escape_html(date_str)}</span>
     {html_body}
   </div>
@@ -1346,6 +1367,7 @@ def _build_page_header_bar_elements(
         logo_max_mm = _parse_mm(height, 12.0) * 0.7
 
     padding_after = bar_cfg.get("padding", "6mm")
+    offset_mm = max(0.0, _parse_mm(bar_cfg.get("offset", "0mm"), 0.0))
 
     show_footer_line = bar_cfg.get("footer_line", False)
     footer_border_css = ""
@@ -1357,7 +1379,7 @@ def _build_page_header_bar_elements(
 
     css = f"""<style>
 @page {{
-  margin-top: calc({height} + {padding_after});{footer_border_css}
+  margin-top: calc({offset_mm:g}mm + {height} + {padding_after});{footer_border_css}
 }}
 @page cover {{
   margin-top: 0;
@@ -1380,10 +1402,13 @@ def _build_page_header_bar_elements(
   display: table;
   table-layout: fixed;
   width: 100%;
-  height: 100%;
+  height: {height};
 }}
 .page-header-bar-fixed .phb-slot {{
   display: table-cell;
+  height: {height};
+  font-size: 8pt;
+  line-height: 1;
   vertical-align: middle;
 }}
 .page-header-bar-fixed .phb-slot-left {{ text-align: left; width: 35%; }}
@@ -1392,7 +1417,7 @@ def _build_page_header_bar_elements(
 .page-header-bar-fixed .phb-text {{
   font-size: 8pt;
   color: {text_color};
-  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-family: inherit;
 }}
 .page-header-bar-fixed .phb-logo {{
   max-height: {logo_max_mm}mm;
@@ -1626,6 +1651,7 @@ def build(
             "text_color": config.get("page_header_bar_text_color", "#ffffff"),
             "height": config.get("page_header_bar_height", "12mm"),
             "padding": config.get("page_header_bar_padding", "6mm"),
+            "offset": config.get("page_header_bar_offset", "0mm"),
             "logos": phb_logos,
         }
         # The more-specific page_header_bar_logo wins over header_logo inside
@@ -1644,8 +1670,9 @@ def build(
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(body, is_form)
 
-    md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
-    html_body = md_engine.convert(body)
+    from ..math import markdown_html, render_math
+
+    html_body, _ = render_math(markdown_html(body, _MD_EXTENSIONS))
     html_body = _drop_empty_table_headers(html_body)
 
     # Column widths: <!-- col-widths --> comments and the table_col_widths
@@ -1678,11 +1705,13 @@ def build(
     from ._assets import _page_geometry
 
     page_margins_mm = (25.0, 20.0)
+    page_size_mm = (210.0, 297.0)
     theme_body_justify = False
     if css_text:
         try:
             geom = _page_geometry(css_text)
             page_margins_mm = (geom["left"], geom["right"])
+            page_size_mm = (geom["w"], geom["h"])
         except Exception:
             pass
         if not str(config.get("body_text_align", "")).strip():
@@ -1722,6 +1751,7 @@ def build(
         # None = auto (70% of the bar height) unless header_logo_height is set.
         header_logo_max_mm=(header_logo_max_mm if header_logo_height_cfg is not None else None),
         page_margins_mm=page_margins_mm,
+        page_size_mm=page_size_mm,
         theme_body_justify=theme_body_justify,
     )
 
@@ -1733,6 +1763,7 @@ def build(
         field_meta = _collect_form_field_meta(html_body)
         if field_meta:
             wp_kwargs["finisher"] = _make_forms_finisher(field_meta)
-    weasyprint.HTML(string=html, base_url=str(out_path.parent)).write_pdf(
-        str(out_path), **wp_kwargs
-    )
+    weasyprint.HTML(
+        string=html,
+        base_url=str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
+    ).write_pdf(str(out_path), **wp_kwargs)
