@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- LaTeX math in PDF (static SVG) and DOCX/DOTX (editable Office Math),
+  including inline, display and table-cell equations.
+- Regression tests for equation rendering, output routing and Neovim build
+  saves; Neovim plugin tests now run in CI.
+
+### Fixed
+- Output paths use the detected project root consistently for single-file,
+  subfolder and workspace builds, including relative `output_dir` settings.
+- Neovim saves the current file before building it and all modified workspace
+  file buffers before a workspace build; save failures cancel the build.
+
 ## [Unreleased]
 
 ### Added

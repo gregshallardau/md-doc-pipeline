@@ -31,7 +31,6 @@ from typing import Any
 logging.getLogger("weasyprint").setLevel(logging.ERROR)
 logging.getLogger("fonttools").setLevel(logging.ERROR)
 
-import markdown  # noqa: E402
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
@@ -1644,8 +1643,9 @@ def build(
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(body, is_form)
 
-    md_engine = markdown.Markdown(extensions=_MD_EXTENSIONS)
-    html_body = md_engine.convert(body)
+    from ..math import markdown_html, render_math
+
+    html_body, _ = render_math(markdown_html(body, _MD_EXTENSIONS))
     html_body = _drop_empty_table_headers(html_body)
 
     # Column widths: <!-- col-widths --> comments and the table_col_widths

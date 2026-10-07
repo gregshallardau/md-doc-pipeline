@@ -472,3 +472,23 @@ want a page boundary that doesn't follow the document's heading structure.
 5. **Images are auto-sized.** Use standard Markdown image syntax: `![alt](path/to/image.png)`.
 6. **Tables avoid page breaks.** Tables, code blocks, and blockquotes won't split across pages when possible.
 7. **Test themes with a short document first.** Build a one-page sample to check colours and spacing before applying to a long report.
+
+## LaTeX equations
+
+PDF, DOCX and DOTX builds support inline `$x^2$` (or `\(x^2\)`) and display
+math in `$$ ... $$` (or `\[ ... \]`) blocks:
+
+```markdown
+The result is $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$.
+
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+```
+
+PDF equations are embedded SVGs; Word equations are native, editable Office
+Math objects, including equations in table cells. Code blocks, inline code,
+and escaped dollar signs stay literal. No TeX installation or JavaScript is
+needed. This supports LaTeX **math expressions**, not full LaTeX documents,
+external packages or custom macros. Conversion failures stop the build with
+the equation in the error message. PPTX math is not supported.
