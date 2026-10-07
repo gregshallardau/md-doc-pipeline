@@ -99,3 +99,33 @@ def test_labels_are_xml_escaped_in_output():
     svg = m.render_pie_svg(m.parse_pie('pie\n"A & B" : 100'))
     assert "A &amp; B" in svg
     assert "A & B" not in svg
+
+
+def test_sequence_arrows_do_not_become_participant_names():
+    diagram = m.parse_sequence("sequenceDiagram\nAlice->>Bob: Request\nBob-->>Alice: Reply")
+    assert diagram.participants == ["Alice", "Bob"]
+    assert [(message.src, message.dst, message.arrow) for message in diagram.messages] == [
+        ("Alice", "Bob", "->>"),
+        ("Bob", "Alice", "-->>"),
+    ]
+
+
+def test_gauge_wrapper_rasterizes_for_word():
+    pytest.importorskip("cairosvg")
+    from md_doc.builders._assets import _svg_to_png
+
+    result = _svg_to_png(m.render_to_svg("gauge\nvalue 42\nmax 100"))
+    assert result is not None and result[0].startswith(b"\x89PNG")
+
+
+def test_office_diagram_preserves_pdf_sizing():
+    from md_doc.builders._assets import _render_mermaid_to_images
+
+    full, images = _render_mermaid_to_images(
+        '<pre><code class="language-mermaid">flowchart LR\n A --&gt; B</code></pre>', None
+    )
+    assert images and 'width="100%"' in full
+    gauge, images = _render_mermaid_to_images(
+        '<pre><code class="language-mermaid">gauge\n value 42</code></pre>', None
+    )
+    assert images and 'width="280"' in gauge

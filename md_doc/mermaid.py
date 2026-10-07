@@ -613,7 +613,7 @@ def parse_pie(source: str) -> PieChart:
 # Sequence diagram parser
 # ---------------------------------------------------------------------------
 
-_SEQ_MSG_RE = re.compile(r"^(\S+)\s*(-->>|--?>|--?>?>|->>|->)\s*(\S+)\s*:\s*(.*)$")
+_SEQ_MSG_RE = re.compile(r"^(\S+?)\s*(-->>|->>|-->|->)\s*(\S+)\s*:\s*(.*)$")
 
 _SEQ_NOTE_RE = re.compile(r"^Note\s+(left|right|over)\s+(?:of\s+)?(.+?):\s*(.+)$", re.IGNORECASE)
 

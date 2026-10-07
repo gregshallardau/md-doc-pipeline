@@ -98,22 +98,27 @@ def near(actual: list[float], expected: list[float], tolerance_mm: float, label:
 
 
 @pytest.mark.parametrize(
-    "orientation,offset,width,height",
+    "orientation,offset,width,height,fallback",
     [
-        ("portrait", 20, 210, 297),
-        ("landscape", 0, 297, 210),
+        ("portrait", 20, 210, 297, False),
+        ("portrait", 20, 210, 297, True),
+        ("landscape", 0, 297, 210, False),
     ],
 )
-def test_rendered_word_pdf_layout(tmp_path, orientation, offset, width, height):
+def test_rendered_word_pdf_layout(tmp_path, orientation, offset, width, height, fallback):
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     assert soffice, "Parity is enabled but LibreOffice is missing (do not silently skip CI)"
-    artifacts = (
-        Path(os.environ.get("MD_DOC_PARITY_ARTIFACTS", str(tmp_path / "artifacts"))) / orientation
-    )
+    name = orientation + ("-fallback" if fallback else "")
+    artifacts = Path(os.environ.get("MD_DOC_PARITY_ARTIFACTS", str(tmp_path / "artifacts"))) / name
     artifacts.mkdir(parents=True, exist_ok=True)
     document = tmp_path / "layout.md"
     document.write_text((FIXTURES / "layout.md").read_text())
     css = (FIXTURES / "theme.css").read_text().replace("size: A4;", f"size: A4 {orientation};")
+    if fallback:
+        css = css.replace(
+            "font-family: 'DejaVu Sans'",
+            "font-family: 'Missing Parity Font', 'DejaVu Sans', sans-serif",
+        )
     (tmp_path / "_theme.css").write_text(css)
     Image.new("RGB", (48, 48), MARKER).save(tmp_path / "marker.png", dpi=(96, 96))
     config = {
@@ -193,28 +198,33 @@ def test_rendered_word_pdf_layout(tmp_path, orientation, offset, width, height):
 
 
 @pytest.mark.parametrize(
-    "orientation,title,custom",
+    "orientation,title,custom,on_bar",
     [
-        ("portrait", "COVER TITLE", False),
+        ("portrait", "COVER TITLE", False, False),
+        ("portrait", "COVER TITLE", False, True),
         (
             "portrait",
             "A deterministic long title that wraps across several lines on the cover",
             False,
+            False,
         ),
-        ("landscape", "COVER TITLE", False),
+        ("landscape", "COVER TITLE", False, False),
         (
             "landscape",
             "A deterministic long title that wraps across several lines on the cover",
             True,
+            False,
         ),
     ],
 )
-def test_rendered_cover(tmp_path, orientation, title, custom):
+def test_rendered_cover(tmp_path, orientation, title, custom, on_bar):
     from md_doc.theme import generate_default_theme
 
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     assert soffice, "Enabled cover parity requires LibreOffice"
     name = f"cover-{orientation}-{'long' if len(title) > 20 else 'short'}"
+    if on_bar:
+        name += "-on-bar"
     artifacts = Path(os.environ.get("MD_DOC_PARITY_ARTIFACTS", str(tmp_path / "artifacts"))) / name
     artifacts.mkdir(parents=True, exist_ok=True)
     css = (
@@ -235,8 +245,13 @@ def test_rendered_cover(tmp_path, orientation, title, custom):
         "page_header_bar": True,
         "header_text": "BODYHEADER",
         "page_header_bar_color": "#115395",
-        "cover_stripe": True,
         "cover_bar_position": "both",
+        "cover_text_on_bar": on_bar,
+        "cover_bar_height": "100mm" if on_bar else "10mm",
+        "cover_stripe": not on_bar,
+        "cover_footer_color": "white" if on_bar else "#7f8c9a",
+        "cover_footer_line": not on_bar,
+        "cover_bar_bottom_height": "15mm" if on_bar else "10mm",
     }
     build_pdf(
         document.read_text(),
@@ -283,6 +298,8 @@ def test_rendered_cover(tmp_path, orientation, title, custom):
         for start, end in ((0, 10), (height - 10, height)):
             crop = band[round(start * DPI / 25.4) : round(end * DPI / 25.4)]
             assert crop.mean() > 0.97, "Cover bands must cover the full physical page width"
+        if on_bar:
+            continue
         stripe = color_mask(images[0], (46, 134, 193))
         stripe[:, round(20 * DPI / 25.4) :] = False
         near(
@@ -300,4 +317,24 @@ def test_rendered_cover(tmp_path, orientation, title, custom):
             word_pages[0]["words_mm"][text][:2],
             1.5,
             f"Cover {text}",
+        )
+
+    if on_bar:
+        # Compare the physical extent of the dark wrapper, not just its text.
+        for image in (pdf_images[0], word_images[0]):
+            band = color_mask(image, (27, 79, 114))
+            band[round((height - 20) * DPI / 25.4) :] = False
+            assert mask_box(band)[3] >= 100
+        a, b = [color_mask(image, (27, 79, 114)) for image in (pdf_images[0], word_images[0])]
+        a[round((height - 20) * DPI / 25.4) :] = False
+        b[round((height - 20) * DPI / 25.4) :] = False
+        near(mask_box(a), mask_box(b), 1.5, "Cover text bar extent")
+
+        for page in (pdf_pages[0], word_pages[0]):
+            assert height - 15 < page["words_mm"]["Confidential"][1] < height - 2
+        near(
+            pdf_pages[0]["words_mm"]["Confidential"][:2],
+            word_pages[0]["words_mm"]["Confidential"][:2],
+            1.5,
+            "White footer in bottom band",
         )

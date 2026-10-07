@@ -31,6 +31,11 @@ def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
     except Exception:
         return None
 
+    # Some chart renderers wrap the SVG in an HTML sizing div.
+    svg_match = re.search(r"<svg\b.*?</svg>", svg, re.DOTALL)
+    if svg_match:
+        svg = svg_match.group(0)
+
     m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
     if m:
         vb_w, vb_h = float(m.group(1)), float(m.group(2))
@@ -74,7 +79,10 @@ def _render_mermaid_to_images(
             return m.group(0)  # leave original code block
         images.append(png)
         idx = len(images) - 1
-        return f'<p><img src="mermaid://{idx}"></p>'
+        # SVG diagrams fill their containing block in PDF; preserve that sizing
+        # rather than treating viewBox coordinates as natural raster pixels.
+        width = "280" if "max-width:280px" in svg else "100%"
+        return f'<p><img src="mermaid://{idx}" width="{width}"></p>'
 
     return _MERMAID_BLOCK_RE.sub(_replace, html), images
 

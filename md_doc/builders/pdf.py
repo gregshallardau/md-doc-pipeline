@@ -34,6 +34,7 @@ logging.getLogger("fonttools").setLevel(logging.ERROR)
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
+from ._cover import footer_band_geometry  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 
 # Markdown extensions to enable
@@ -200,11 +201,11 @@ def _field_to_html(field_spec: str) -> str:
     """Convert a single ?[type: name, ...] spec to HTML."""
     field_spec = field_spec.strip()
 
+    submit = re.fullmatch(r"submit(?:(?:\s*:\s*|\s+)(.*))?", field_spec, re.IGNORECASE)
+    if submit:
+        label = (submit.group(1) or "").strip() or "Submit"
+        return f'<input type="submit" value="{_escape_html(label)}">'
     if ":" not in field_spec:
-        if field_spec.lower().startswith("submit"):
-            parts = field_spec.split(None, 1)
-            label = parts[1] if len(parts) > 1 else "Submit"
-            return f'<input type="submit" value="{_escape_html(label)}">'
         return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
     type_part, rest = field_spec.split(":", 1)
@@ -617,7 +618,11 @@ def _build_cover(
 
     text_on_bar_class = " cover-text-on-bar" if text_on_bar else ""
     footer_line_class = " cover-footer-no-line" if not show_footer_line else ""
-    footer_color_style = f' style="color: {footer_color};"' if footer_color else ""
+    footer_styles = [f"color: {footer_color};"] if footer_color else []
+    band_footer = footer_band_geometry(cover_cfg, _parse_mm(bar_bottom_height, 10.0))
+    if band_footer:
+        footer_styles.append(f"bottom: {band_footer[0]}mm; line-height: 13.2pt;")
+    footer_color_style = ' style="' + " ".join(footer_styles) + '"' if footer_styles else ""
     footer_inner = (
         f'<div class="cover-footer{footer_line_class}"{footer_color_style}>{_escape_html(footer_text)}</div>'
         if show_footer
@@ -807,7 +812,10 @@ def _make_forms_finisher(field_meta: dict[str, dict[str, Any]]):
 _BASE_FIXES_CSS = (
     "<style>\n"
     ".report-body > h1:first-of-type { page-break-before: auto; }\n"
+    ".report-body h1[data-md-doc-first-heading] { page-break-before: auto; break-before: auto; }\n"
+    ".running-date { display: block; position: absolute; visibility: hidden; width: 0; height: 0; overflow: hidden; }\n"
     ".report-body table + table { margin-top: 10pt; }\n"
+    ".report-body .md-doc-page-break + h1, .report-body .md-doc-page-break + .keep-with-next h1 { page-break-before: auto; break-before: auto; }\n"
     "</style>"
 )
 
@@ -967,7 +975,9 @@ def _build_html(
         cover_support_style = (
             "<style>\n"
             ".cover-label { line-height: 1.2; }\n"
-            ".cover-logo { max-width: 50mm; max-height: 20mm; margin-bottom: 4mm; }\n"
+            ".cover-text-on-bar .cover-label, .cover-text-on-bar .cover-title, .cover-text-on-bar .cover-meta, .cover-text-on-bar .cover-meta strong { color: white; }\n"
+            ".cover-text-on-bar .cover-divider { border-top-color: white; }\n"
+            ".cover-logo { display: inline-block; max-width: 50mm; max-height: 20mm; margin: 0 0 4mm; }\n"
             ".cover-bar-logo { position: absolute; right: 30mm; top: 50%; transform: translateY(-50%); max-height: 70%; max-width: 50mm; }\n"
             ".cover-bar-bottom { position: absolute; bottom: 0; left: 0; }\n"
             f".cover {{ width: {page_size_mm[0]}mm; height: {page_size_mm[1]}mm; }}\n"
@@ -1674,6 +1684,9 @@ def build(
 
     html_body, _ = render_math(markdown_html(body, _MD_EXTENSIONS))
     html_body = _drop_empty_table_headers(html_body)
+    # Mark before keep-with-next wrappers are inserted; direct-child selectors
+    # otherwise miss a leading heading after an included letterhead.
+    html_body = re.sub(r"<h1\b", '<h1 data-md-doc-first-heading="true"', html_body, count=1)
 
     # Column widths: <!-- col-widths --> comments and the table_col_widths
     # config key, applied per table with the same precedence as the docx
