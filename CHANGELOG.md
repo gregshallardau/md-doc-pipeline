@@ -17,6 +17,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subfolder and workspace builds, including relative `output_dir` settings.
 - Neovim saves the current file before building it and all modified workspace
   file buffers before a workspace build; save failures cancel the build.
+- Editor declares its required pipeline dependency and installs alongside the
+  local pipeline through `uv sync --group editor`.
+- Editor builds use its own Python environment instead of finding a potentially
+  missing or unrelated `md-doc` executable on PATH.
+- Install guides include explicit uv virtual environment setup, activation
+  commands and source-checkout installs that do not require a PyPI release.
+- CI covers editor tests and startup from installed wheels, including a real
+  Word build with an empty PATH.
 
 ## [Unreleased]
 

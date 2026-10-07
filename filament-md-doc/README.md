@@ -34,6 +34,10 @@ A [Filament v5](https://filamentphp.com) plugin that turns the [md-doc-pipeline]
 
 ## Quick start
 
+For Python builds, create a `.venv` using `uv venv` and `uv sync --no-dev` in
+the pipeline checkout, then set `MD_DOC_BIN` to its absolute executable path.
+See [installation](docs/installation.md) for complete setup.
+
 ```bash
 # 1. In your Laravel 12 + Filament v5 app:
 composer require md-doc/filament-md-doc

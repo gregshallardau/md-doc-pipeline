@@ -1,6 +1,6 @@
 # md-doc-web-editor
 
-A self-contained browser editor for [md-doc-pipeline](https://github.com/gregshallardau/md-doc-pipeline) workspaces. Distributed as a separate Python package so it can be installed independently — `pip install md-doc-web-editor`, then `md-doc-edit serve workspace/`.
+A self-contained browser editor for [md-doc-pipeline](https://github.com/gregshallardau/md-doc-pipeline) workspaces. The editor and pipeline must be installed in the same virtual environment. Use the source-checkout instructions below; they do not rely on either package being published to PyPI.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -37,22 +37,58 @@ No database, no auth, no Laravel — just a single Python process, a static SPA,
 
 ## Quick start
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+ first.
+Run these commands from the repository root:
+
 ```bash
-# Install the editor (depends on FastAPI + uvicorn) and md-doc-pipeline
-pip install fastapi 'uvicorn[standard]' md-doc-pipeline
-pip install -e ./md-doc-web-editor       # while developing
-# OR (when published)
-# pip install md-doc-web-editor
+git clone https://github.com/gregshallardau/md-doc-pipeline.git
+cd md-doc-pipeline
+uv venv
+uv sync --group editor
 
-# Launch — auto-opens a browser tab on http://127.0.0.1:8765
-md-doc-edit serve workspace/
-
-# Other paths and ports
-md-doc-edit serve .                          # whole repo
-md-doc-edit serve docs/ --port 9000          # different port
-md-doc-edit serve workspace/ --no-browser    # don't auto-open
-md-doc-edit serve workspace/ --host 0.0.0.0  # expose on network
+# Launch from the project environment without activating it
+uv run --group editor md-doc-edit serve workspace/ --no-browser
 ```
+
+Open http://127.0.0.1:8765/. Keep `--group editor` on `uv run` commands:
+`uv run` synchronizes the environment and otherwise removes the optional editor.
+Omit `--no-browser` to launch a browser automatically.
+
+If you prefer activated commands, after the sync use:
+
+```bash
+# Linux / macOS
+source .venv/bin/activate
+md-doc-edit serve workspace/
+```
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+md-doc-edit serve workspace/
+```
+
+In Windows Command Prompt, activate with `.venv\Scripts\activate.bat`.
+Other launch options (from the repository root):
+
+```bash
+uv run --group editor md-doc-edit serve .
+uv run --group editor md-doc-edit serve workspace/ --port 9000
+uv run --group editor md-doc-edit serve workspace/ --host 0.0.0.0
+```
+
+For an existing virtual environment or an offline source deployment:
+
+```bash
+uv venv
+uv pip install --python .venv/bin/python -e . -e ./md-doc-web-editor
+.venv/bin/md-doc-edit serve workspace/ --no-browser
+```
+
+On Windows replace `.venv/bin/python` with `.venv/Scripts/python.exe` and
+`.venv/bin/md-doc-edit` with `.venv/Scripts/md-doc-edit.exe`. Packages still
+need network access or a populated local package cache at install time.
+
 
 ---
 
@@ -64,7 +100,7 @@ md-doc-edit serve workspace/ --host 0.0.0.0  # expose on network
 | md-doc-pipeline | latest | core library + `md-doc` CLI for builds |
 | FastAPI | 0.110+ | server framework |
 | uvicorn | 0.27+ | ASGI server |
-| `md-doc` CLI on PATH | optional | only needed for the **Build PDF/DOCX** buttons |
+| Pipeline in editor environment | required | imported at startup; builds use that environment’s Python |
 
 ---
 

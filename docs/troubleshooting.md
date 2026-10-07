@@ -40,7 +40,7 @@ Rasterizing diagrams for Word needs the optional `cairosvg` dependency (which in
 turn needs `libcairo2`):
 
 ```bash
-pip install "md-doc-pipeline[mermaid]"   # + libcairo2 on Linux
+uv sync --extra mermaid   # + libcairo2 on Linux
 ```
 
 Without it, diagrams still work in PDF; in Word they fall back to a code block
@@ -51,8 +51,8 @@ rather than breaking the build. PDF diagrams never require `cairosvg`.
 Install the matching extra:
 
 ```bash
-pip install "md-doc-pipeline[s3]"      # boto3
-pip install "md-doc-pipeline[azure]"   # azure-storage-file-share
+uv sync --extra s3      # boto3
+uv sync --extra azure   # azure-storage-file-share
 ```
 
 Credentials come from the standard chains (env vars, `~/.aws/credentials`,

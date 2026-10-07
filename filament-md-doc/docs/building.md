@@ -8,28 +8,23 @@ This is **separate** from the live HTML preview, which is rendered client-side b
 
 ## Prerequisites
 
-You need the `md-doc` CLI installed and reachable from the PHP process. Two common options:
-
-### Option A — system-wide install
-
-```bash
-pip install md-doc-pipeline
-which md-doc
-# /usr/local/bin/md-doc
-```
-
-Then the default config (`md_doc_bin = 'md-doc'`) just works.
-
-### Option B — virtualenv install (recommended for production)
+Install the Python pipeline in a dedicated virtual environment and point PHP
+at its absolute CLI path. From a source checkout (no PyPI release required):
 
 ```bash
+git clone https://github.com/gregshallardau/md-doc-pipeline.git /opt/md-doc
 cd /opt/md-doc
-python -m venv .venv
-.venv/bin/pip install md-doc-pipeline
+uv venv
+uv sync --no-dev
 .venv/bin/md-doc --version
 ```
 
-Set the absolute path in `.env`:
+Activation is optional when using the absolute executable. For interactive
+commands use `source .venv/bin/activate` on Linux/macOS or
+`.\.venv\Scripts\Activate.ps1` in Windows PowerShell. On Windows the CLI is
+`.venv/Scripts/md-doc.exe`.
+
+Set the absolute path in Laravel's `.env` so PHP does not depend on shell activation:
 
 ```env
 MD_DOC_BIN=/opt/md-doc/.venv/bin/md-doc

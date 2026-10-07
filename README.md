@@ -53,6 +53,24 @@ source .venv/bin/activate  # on Windows: .venv\Scripts\activate
 uv sync --group dev
 ```
 
+### Browser editor
+
+From the repository root, install the editor in the same `.venv`:
+
+```bash
+uv venv  # skip if .venv already exists
+uv sync --group editor
+uv run --group editor md-doc-edit serve workspace/ --no-browser
+```
+
+Open http://127.0.0.1:8765/. Always include `--group editor` when launching
+through `uv run`; otherwise uv removes the editor while syncing. Activation
+is optional with `uv run`. For activated commands: `source .venv/bin/activate`
+(Linux/macOS), `.\.venv\Scripts\Activate.ps1` (PowerShell), or
+`.venv\Scripts\activate.bat` (Command Prompt), then run
+`md-doc-edit serve workspace/`. See the [editor guide](md-doc-web-editor/README.md) for details.
+
+
 ---
 
 ## Repo layout
