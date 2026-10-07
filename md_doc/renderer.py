@@ -40,13 +40,19 @@ class _MarkdownLoader(BaseLoader):
     5. Any additional ``search_dirs`` supplied by the caller
     """
 
-    def __init__(self, search_dirs: list[Path]) -> None:
-        self._dirs: list[Path] = [Path(d) for d in search_dirs]
+    def __init__(self, search_dirs: list[Path], allowed_roots: list[Path] | None = None) -> None:
+        roots = [p.resolve() for p in (allowed_roots or search_dirs)]
+        self._roots = roots
+        self._dirs = [
+            Path(d).resolve()
+            for d in search_dirs
+            if any(Path(d).resolve().is_relative_to(r) for r in roots)
+        ]
 
     def get_source(self, environment: Environment, template: str) -> tuple[str, str, Any]:
         for directory in self._dirs:
-            candidate = directory / template
-            if candidate.is_file():
+            candidate = (directory / template).resolve()
+            if any(candidate.is_relative_to(root) for root in self._roots) and candidate.is_file():
                 source = candidate.read_text(encoding="utf-8").rstrip() + "\n"
                 mtime = candidate.stat().st_mtime
                 return source, str(candidate), lambda: candidate.stat().st_mtime == mtime
@@ -164,7 +170,7 @@ def render(
     if extra_search_dirs:
         search_dirs = search_dirs + [Path(d) for d in extra_search_dirs]
 
-    loader = _MarkdownLoader(search_dirs)
+    loader = _MarkdownLoader(search_dirs, [repo_root] + list(extra_search_dirs or []))
 
     undefined_cls = StrictUndefined if strict else Undefined
     # SandboxedEnvironment blocks access to unsafe attributes/dunders so a

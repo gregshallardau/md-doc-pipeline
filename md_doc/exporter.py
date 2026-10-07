@@ -106,7 +106,7 @@ def stage_files(
     for src, fm in files:
         real_src = src.resolve()
         # Security: skip a source that is a symlink pointing outside the tree.
-        if root is not None and src.is_symlink():
+        if root is not None:
             try:
                 real_src.relative_to(root)
             except ValueError:
@@ -114,10 +114,15 @@ def stage_files(
                 continue
 
         name = src.name
-        if name in seen_names:
+        if name.casefold() in seen_names:
             parent_name = src.parent.name.replace(" ", "-").lower()
             name = f"{parent_name}--{name}"
-        seen_names.add(name)
+        base = Path(name)
+        counter = 2
+        while name.casefold() in seen_names:
+            name = f"{base.stem}--{counter}{base.suffix}"
+            counter += 1
+        seen_names.add(name.casefold())
 
         dest = staging_dir / name
 

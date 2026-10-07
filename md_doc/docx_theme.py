@@ -59,14 +59,18 @@ def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
 
 
 def _parse_pt(value: str) -> float | None:
-    """Parse a CSS ``pt`` value to a float. Returns None if not a pt value."""
-    m = re.search(r"([\d.]+)\s*pt", value, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            pass
-    return None
+    """Convert an absolute CSS length to points (pt, px, mm, cm or inches)."""
+    m = re.search(r"(-?[\d.]+)\s*(pt|px|mm|cm|in)\b", value, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        number = float(m.group(1))
+    except ValueError:
+        return None
+    return (
+        number
+        * {"pt": 1, "px": 0.75, "mm": 72 / 25.4, "cm": 720 / 25.4, "in": 72}[m.group(2).lower()]
+    )
 
 
 def _parse_margin(value: str) -> dict[str, float | None]:
@@ -420,6 +424,12 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if pt is not None:
             theme["font_size_table"] = pt
 
+    margins = _parse_margin(table_props.get("margin", ""))
+    bottom = table_props.get("margin-bottom")
+    after = _parse_pt(bottom) if bottom else margins.get("bottom")
+    if after is not None:
+        theme["table_space_after"] = after
+
     # table header (th) — background, colour, font size, transform, letter-spacing, padding
     th_props = blocks.get("th", {})
     if "background" in th_props:
@@ -605,8 +615,10 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if "para_space_before" in theme:
             normal.paragraph_format.space_before = Pt(theme["para_space_before"])
         if "line_height_body" in theme:
-            normal.paragraph_format.line_spacing = theme["line_height_body"]
-            normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+            normal.paragraph_format.line_spacing = Pt(
+                (font_size_body or 11) * theme["line_height_body"]
+            )
+            normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     except KeyError:
         pass
 
@@ -673,6 +685,13 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         # Font size
         if size_key in theme:
             heading_style.font.size = Pt(theme[size_key])
+
+        # Headings must not inherit the fixed body line box: larger glyphs
+        # would be clipped. CSS unitless line-height scales with font size.
+        size = theme.get(size_key) or (
+            heading_style.font.size.pt if heading_style.font.size else font_size_body or 11
+        )
+        heading_style.paragraph_format.line_spacing = Pt(size * theme.get("line_height_body", 1.2))
 
         # Font colour
         if color_key in theme:

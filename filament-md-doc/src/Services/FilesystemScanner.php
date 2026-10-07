@@ -8,7 +8,11 @@ class FilesystemScanner
 {
     public function __construct(protected string $workspacePath)
     {
-        $this->workspacePath = rtrim(realpath($workspacePath) ?: $workspacePath, DIRECTORY_SEPARATOR);
+        $root = realpath($workspacePath);
+        if ($root === false || !is_dir($root)) {
+            throw new RuntimeException('Workspace must be an existing directory');
+        }
+        $this->workspacePath = rtrim($root, DIRECTORY_SEPARATOR) ?: DIRECTORY_SEPARATOR;
     }
 
     public function getWorkspacePath(): string
@@ -43,7 +47,10 @@ class FilesystemScanner
             }
 
             $fullPath = $dir . DIRECTORY_SEPARATOR . $entry;
-            $relPath  = ltrim(str_replace($root, '', $fullPath), DIRECTORY_SEPARATOR);
+            if (is_link($fullPath)) {
+                continue; // Do not follow out-of-tree aliases or directory cycles.
+            }
+            $relPath  = ltrim(substr($fullPath, strlen($root)), DIRECTORY_SEPARATOR);
 
             if (is_dir($fullPath)) {
                 $children = $this->scanDirectory($fullPath, $root);
@@ -106,10 +113,13 @@ class FilesystemScanner
                 continue;
             }
             $fullPath = $dir . DIRECTORY_SEPARATOR . $entry;
+            if (is_link($fullPath)) {
+                continue; // Do not follow out-of-tree aliases or directory cycles.
+            }
             if (is_dir($fullPath)) {
                 $results = array_merge($results, $this->collectFiles($fullPath, $root, $type));
             } elseif ($this->classifyFile($entry) === $type) {
-                $relPath = ltrim(str_replace($root, '', $fullPath), DIRECTORY_SEPARATOR);
+                $relPath = ltrim(substr($fullPath, strlen($root)), DIRECTORY_SEPARATOR);
                 $results[] = [
                     'name'        => $entry,
                     'path'        => $relPath,
@@ -143,6 +153,11 @@ class FilesystemScanner
     /**
      * Resolve a relative path to an absolute path, ensuring it stays within workspace root.
      */
+    protected function contains(string $path): bool
+    {
+        return $path === $this->workspacePath || str_starts_with($path, rtrim($this->workspacePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR);
+    }
+
     public function resolveSafe(string $relativePath): string
     {
         // Strip leading slash/separator
@@ -153,13 +168,16 @@ class FilesystemScanner
         if ($real === false) {
             // File may not exist yet (for write operations) — check the directory
             $dir = realpath(dirname($candidate));
-            if ($dir === false || !str_starts_with($dir, $this->workspacePath)) {
+            if ($dir === false || !$this->contains($dir)) {
                 throw new RuntimeException("Path escapes workspace root: {$relativePath}");
             }
-            return $candidate;
+            if (is_link($candidate)) {
+                throw new RuntimeException("Dangling symlink: {$relativePath}");
+            }
+            return $dir . DIRECTORY_SEPARATOR . basename($candidate);
         }
 
-        if (!str_starts_with($real, $this->workspacePath)) {
+        if (!$this->contains($real)) {
             throw new RuntimeException("Path escapes workspace root: {$relativePath}");
         }
 
@@ -179,7 +197,7 @@ class FilesystemScanner
 
         foreach (array_unique($matches[1]) as $templateName) {
             $resolved = $this->resolveTemplate($templateName, $docFullPath);
-            $relPath  = $resolved ? ltrim(str_replace($this->workspacePath, '', $resolved), DIRECTORY_SEPARATOR) : null;
+            $relPath  = $resolved ? ltrim(substr($resolved, strlen($this->workspacePath)), DIRECTORY_SEPARATOR) : null;
             $includes[] = [
                 'name'  => $templateName,
                 'path'  => $relPath,
@@ -202,7 +220,7 @@ class FilesystemScanner
 
         // Ancestor templates/ dirs (deepest first, stop at workspace root)
         $current = dirname($docDir);
-        while (strlen($current) >= strlen($this->workspacePath)) {
+        while ($this->contains($current)) {
             $searchDirs[] = $current . DIRECTORY_SEPARATOR . 'templates';
             if ($current === $this->workspacePath) {
                 break;
@@ -212,8 +230,9 @@ class FilesystemScanner
 
         foreach ($searchDirs as $dir) {
             $candidate = $dir . DIRECTORY_SEPARATOR . $templateName;
-            if (file_exists($candidate)) {
-                return realpath($candidate);
+            $real = realpath($candidate);
+            if ($real !== false && $this->contains($real) && is_file($real)) {
+                return $real;
             }
         }
 

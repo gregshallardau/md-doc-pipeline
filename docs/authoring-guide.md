@@ -492,3 +492,13 @@ and escaped dollar signs stay literal. No TeX installation or JavaScript is
 needed. This supports LaTeX **math expressions**, not full LaTeX documents,
 external packages or custom macros. Conversion failures stop the build with
 the equation in the error message. PPTX math is not supported.
+
+### Incremental build inputs
+
+Builds store a hidden `.NAME.EXT.md-doc-state` file beside each output. Workspace
+input additions, edits and deletions invalidate that signature, including local
+includes and images; explicit external theme imports are tracked too. This is
+conservative: editing an unrelated workspace input can rebuild other documents.
+Removing a state file simply causes the next build to regenerate that output.
+`output_filename` must contain a filename only; configure `output_dir` separately.
+Includes stay inside the project root or explicit renderer search roots.

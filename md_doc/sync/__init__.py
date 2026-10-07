@@ -150,6 +150,11 @@ def run(
     backend_name = _get_backend_name(root, backend)
 
     files = _collect_files(root, include_md)
+    if backend_name == "local" and sync_config.get("path"):
+        destination = Path(sync_config["path"]).expanduser().resolve()
+        if destination == root:
+            raise ValueError("Local sync destination must differ from source")
+        files = [p for p in files if not p.resolve().is_relative_to(destination)]
     if not files:
         print(f"No files to sync under {root}")
         return {"uploaded": [], "failed": []}

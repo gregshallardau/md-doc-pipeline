@@ -63,7 +63,7 @@
 
                     @if(!$isReadOnly)
                     <button
-                        wire:click="save"
+                        x-on:click="$wire.save(window.mdDocEditor.getValue(), window.mdDocPath)"
                         wire:loading.attr="disabled"
                         class="md-doc-btn md-doc-btn-primary"
                     >
@@ -74,7 +74,7 @@
 
                     @if($fileType === 'md')
                         <button
-                            wire:click="buildPdf"
+                            x-on:click="$wire.buildPdf(window.mdDocEditor.getValue(), window.mdDocPath)"
                             wire:loading.attr="disabled"
                             wire:target="buildPdf,buildDocx"
                             class="md-doc-btn md-doc-btn-build"
@@ -84,7 +84,7 @@
                             <span wire:loading wire:target="buildPdf">Building…</span>
                         </button>
                         <button
-                            wire:click="buildDocx"
+                            x-on:click="$wire.buildDocx(window.mdDocEditor.getValue(), window.mdDocPath)"
                             wire:loading.attr="disabled"
                             wire:target="buildPdf,buildDocx"
                             class="md-doc-btn md-doc-btn-build"
@@ -99,6 +99,7 @@
 
             {{-- Monaco container --}}
             <div
+                wire:ignore
                 id="md-doc-monaco"
                 class="md-doc-monaco-container"
                 x-ref="monacoContainer"
@@ -176,7 +177,7 @@
                             >Download {{ strtoupper($buildFormat) }}</a>
                         </div>
                     @else
-                        <div id="md-doc-preview" class="md-doc-preview-content"></div>
+                        <div wire:ignore id="md-doc-preview" class="md-doc-preview-content"></div>
                     @endif
                 </div>
 

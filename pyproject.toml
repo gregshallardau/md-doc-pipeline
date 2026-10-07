@@ -47,6 +47,7 @@ md-doc = "md_doc.cli:main"
 packages = ["md_doc"]
 
 [dependency-groups]
+parity = ["numpy>=2.0", "pdfplumber>=0.11", "pypdfium2>=4.30", "pillow>=10.0"]
 editor = ["md-doc-web-editor", "httpx>=0.27"]
 dev = [
     "pytest>=8.0",

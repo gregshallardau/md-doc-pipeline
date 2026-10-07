@@ -416,6 +416,7 @@ When `page_header_bar` is enabled, the thin grey line above the page footer is a
 | `page_header_bar_color` | string | `"#2563eb"` |
 | `page_header_bar_text_color` | string | `"#ffffff"` |
 | `page_header_bar_height` | string | `"12mm"` |
+| `page_header_bar_offset` | string | `"0mm"` — distance from the physical page top to the bar; e.g. `"2cm"` places it 20mm down in PDF and Word |
 | `page_header_bar_padding` | string | `"6mm"` — gap between bar and content |
 | `page_header_bar_logo` | string | — single logo path (falls back to `header_logo`) |
 | `page_header_bar_logo_position` | string | `"right"` |

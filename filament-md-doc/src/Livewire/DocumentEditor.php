@@ -4,6 +4,7 @@ namespace MdDoc\FilamentMdDoc\Livewire;
 
 use Filament\Notifications\Notification;
 use Livewire\Attributes\On;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 use MdDoc\FilamentMdDoc\MdDocPlugin;
 use MdDoc\FilamentMdDoc\Services\BuildRunner;
@@ -16,8 +17,10 @@ use MdDoc\FilamentMdDoc\Services\GitService;
 class DocumentEditor extends Component
 {
     // ── File state ─────────────────────────────────────────────────────────────
+    #[Locked]
     public string $path        = '';
     public string $content     = '';
+    #[Locked]
     public string $fileType    = 'md';
     public string $activeTab   = 'preview';
 
@@ -54,8 +57,10 @@ class DocumentEditor extends Component
 
     // ── Lock state ────────────────────────────────────────────────────────────
     /** Secret key issued when this session acquired the lock. Null = no lock held. */
+    #[Locked]
     public ?string $lockKey       = null;
     /** Whether this session is in read-only mode (locked by someone else). */
+    #[Locked]
     public bool    $isReadOnly    = false;
     /** Display name of whoever holds the lock (null when unlocked or we hold it). */
     public ?string $lockOwner     = null;
@@ -116,44 +121,59 @@ class DocumentEditor extends Component
 
     public function loadFile(string $path): void
     {
+        $fullPath = $this->scanner->resolveSafe($path);
+        $path = ltrim(substr($fullPath, strlen($this->scanner->getWorkspacePath())), DIRECTORY_SEPARATOR);
+        $content = $this->scanner->read($path);
+
         // Release any lock held on the previous file before loading a new one
         $this->releaseLock();
 
         $this->path     = $path;
-        $this->content  = $this->scanner->read($path);
+        $this->content  = $content;
+        $this->buildToken = null;
+        $this->buildFormat = null;
+        $this->buildError = null;
         $this->fileType = $this->detectFileType($path);
 
         $this->acquireLock($path);
         $this->refreshDerivedData();
+        $this->dispatchFileLoaded();
     }
 
     // ── Save ───────────────────────────────────────────────────────────────────
 
-    public function save(): void
+    public function save(string $content, string $path): void
     {
-        if ($this->isReadOnly) {
-            Notification::make()->title('File is locked by ' . $this->lockOwner)->danger()->send();
+        if (!$this->saveSnapshot($content, $path)) {
             return;
         }
-
-        // Verify we still hold the lock (could have expired)
-        if ($this->lockKey && !$this->lockService->isLockedByKey($this->path, $this->lockKey)) {
-            $this->lockKey    = null;
-            $this->isReadOnly = true;
-            $this->lockOwner  = $this->lockService->getLock($this->path)?->locked_by;
-
-            Notification::make()
-                ->title('Lock expired — file not saved')
-                ->body('Another session may have taken over. Please reload.')
-                ->danger()
-                ->send();
-            return;
-        }
-
-        $this->scanner->write($this->path, $this->content);
         $this->refreshDerivedData();
-
         Notification::make()->title('Saved')->success()->send();
+    }
+
+    protected function saveSnapshot(string $content, string $path): bool
+    {
+        if ($path !== $this->path || $this->path === '') {
+            return false; // A request for the previous file must never write the new file.
+        }
+        try {
+            $this->lockService->withLock($this->path, $this->lockKey, function () use ($content) {
+                $this->scanner->write($this->path, $content);
+            });
+            $this->content = $content;
+            return true;
+        } catch (\Throwable $e) {
+            $this->isReadOnly = true;
+            Notification::make()->title('File not saved')->body($e->getMessage())->danger()->send();
+            return false;
+        }
+    }
+
+    protected function dispatchFileLoaded(): void
+    {
+        $this->dispatch('file-loaded', path: $this->path, content: $this->content,
+            fileType: $this->fileType, mergedConfig: $this->mergedConfig,
+            resolvedCss: $this->resolvedCss, lockKey: $this->lockKey, isReadOnly: $this->isReadOnly);
     }
 
     // ── Template navigation ────────────────────────────────────────────────────
@@ -192,7 +212,7 @@ class DocumentEditor extends Component
             $this->lockService->release($this->path, $this->lockKey);
         }
         $this->lockKey    = null;
-        $this->isReadOnly = false;
+        $this->isReadOnly = true;
         $this->lockOwner  = null;
     }
 
@@ -245,6 +265,7 @@ class DocumentEditor extends Component
         $this->acquireLock($this->path);
 
         if (!$this->isReadOnly) {
+            $this->dispatchFileLoaded();
             Notification::make()->title('Lock acquired — you can now edit')->success()->send();
         }
     }
@@ -252,8 +273,9 @@ class DocumentEditor extends Component
     // ── Content change (from Monaco via Alpine/Livewire) ──────────────────────
 
     #[On('editor-content-changed')]
-    public function onContentChanged(string $content): void
+    public function onContentChanged(string $content, string $path): void
     {
+        if ($path !== $this->path) return;
         $this->content = $content;
 
         if ($this->fileType === 'md') {
@@ -264,6 +286,7 @@ class DocumentEditor extends Component
             $this->configLayers = $configResult['layers'];
             $this->mergedConfig = $configResult['merged'];
             $this->includedTemplates = $this->scanner->findIncludes($content, $this->path);
+            $this->dispatch('content-updated', mergedConfig: $this->mergedConfig, resolvedCss: $this->resolvedCss);
         }
     }
 
@@ -331,17 +354,17 @@ class DocumentEditor extends Component
 
     // ── Build actions ──────────────────────────────────────────────────────────
 
-    public function buildPdf(): void
+    public function buildPdf(string $content, string $path): void
     {
-        $this->triggerBuild('pdf');
+        $this->triggerBuild('pdf', $content, $path);
     }
 
-    public function buildDocx(): void
+    public function buildDocx(string $content, string $path): void
     {
-        $this->triggerBuild('docx');
+        $this->triggerBuild('docx', $content, $path);
     }
 
-    protected function triggerBuild(string $format): void
+    protected function triggerBuild(string $format, string $content, string $path): void
     {
         if ($this->path === '' || $this->fileType !== 'md') {
             Notification::make()->title('Open a .md file before building')->warning()->send();
@@ -349,8 +372,8 @@ class DocumentEditor extends Component
         }
 
         // Save first so the build sees the latest content
-        if (!$this->isReadOnly && $this->lockKey) {
-            $this->scanner->write($this->path, $this->content);
+        if (!$this->saveSnapshot($content, $path)) {
+            return;
         }
 
         try {

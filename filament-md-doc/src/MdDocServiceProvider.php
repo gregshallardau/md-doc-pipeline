@@ -32,6 +32,11 @@ class MdDocServiceProvider extends ServiceProvider
             __DIR__ . '/../database/migrations' => database_path('migrations'),
         ], 'md-doc-migrations');
 
+        $this->callAfterResolving(\Illuminate\Console\Scheduling\Schedule::class, function ($schedule) {
+            $schedule->call(fn () => (new \MdDoc\FilamentMdDoc\Services\BuildRunner())->pruneExpired())
+                ->everyFiveMinutes()->name('md-doc:prune-builds')->withoutOverlapping();
+        });
+
         Livewire::component('md-doc-document-editor', DocumentEditor::class);
     }
 }

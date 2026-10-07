@@ -292,6 +292,9 @@ def _build_document(
     theme_dep = [theme.resolve()] if theme is not None else None
     dep_mtime = _newest_dep_mtime(doc_path, cascade_root, extra=theme_dep)
 
+    from .dependencies import signature
+
+    dependency_signature = signature(cascade_root, config, theme_dep)
     stale: list[tuple[str, Path]] = []
     for format_name in formats:
         ext = (
@@ -304,7 +307,17 @@ def _build_document(
             events.append(("error", f"output_filename render failed: {type(exc).__name__}: {exc}"))
             errored = True
             continue
-        if not force and out_path.exists() and out_path.stat().st_mtime >= dep_mtime:
+        state_path = out_path.with_name("." + out_path.name + ".md-doc-state")
+        try:
+            same_inputs = state_path.read_text() == dependency_signature
+        except OSError:
+            same_inputs = False
+        if (
+            not force
+            and same_inputs
+            and out_path.exists()
+            and out_path.stat().st_mtime >= dep_mtime
+        ):
             events.append(("skip", f"up to date {out_path.name}"))
             skipped += 1
         else:
@@ -360,6 +373,10 @@ def _build_document(
             else:
                 events.append(("warn", f"unknown format '{format_name}' — skipped"))
                 continue
+            # Builders may initialise a default theme; record the final inputs.
+            out_path.with_name("." + out_path.name + ".md-doc-state").write_text(
+                signature(cascade_root, config, theme_dep)
+            )
             built += 1
             if out_path.is_relative_to(root):
                 rel_out = str(out_path.relative_to(root))
@@ -474,6 +491,12 @@ def _apply_filename_override(out_path: Path, config: dict[str, Any], format_name
     rendered = (
         SandboxedEnvironment(undefined=StrictUndefined).from_string(str(raw)).render(**config)
     )
+    if (
+        not rendered.strip()
+        or rendered in (".", "..")
+        or any(c in rendered for c in ("/", "\\", "\x00", ":"))
+    ):
+        raise ValueError("output_filename must be a filename, without directory components")
     # Strip any extension the user may have typed
     stem = Path(rendered).stem if Path(rendered).suffix else rendered
 
@@ -482,7 +505,10 @@ def _apply_filename_override(out_path: Path, config: dict[str, Any], format_name
     else:
         filename = stem + f".{format_name}"
 
-    return out_path.parent / filename
+    result = out_path.parent / filename
+    if not result.resolve().is_relative_to(out_path.parent.resolve()):
+        raise ValueError("output_filename escapes the output directory")
+    return result
 
 
 _REMOTE_WORKSPACES_FILE = "workspace/remote-workspaces.yml"
@@ -1174,7 +1200,7 @@ def _run_export_build(
     built_outputs: list[tuple[Path, Path | None, dict]] = []
     errors: list[str] = []
     for doc_path, orig_path, fm in staged:
-        config = load_config(doc_path, repo_root=source)
+        config = _render_config_strings(load_config(orig_path, repo_root=source))
 
         # Determine formats: CLI flag > frontmatter export_format > outputs > pdf
         if fmt == "all":
@@ -1189,7 +1215,7 @@ def _run_export_build(
         click.echo(f"  {_info(doc_path.name)}  →  {_bold(', '.join(formats))}")
 
         try:
-            rendered_md = render(doc_path, repo_root=source, strict=False)
+            rendered_md = render(orig_path, repo_root=source, strict=False)
         except Exception as exc:
             click.echo(f"    {_err('ERROR')} render failed: {type(exc).__name__}: {exc}", err=True)
             if verbose:
@@ -1204,7 +1230,7 @@ def _run_export_build(
                 ext = "-form.pdf"
             else:
                 ext = f".{format_name}"
-            out_path = _resolve_output_path(doc_path, staging_dir, None, ext)
+            out_path = staging_dir / ".outputs" / doc_path.stem / (doc_path.stem + ext)
             try:
                 out_path = _apply_filename_override(out_path, config, format_name)
             except Exception as exc:
@@ -1220,15 +1246,15 @@ def _run_export_build(
                 if format_name == "pdf":
                     from .builders.pdf import build as build_pdf
 
-                    build_pdf(rendered_md, config, out_path, doc_path=doc_path)
+                    build_pdf(rendered_md, config, out_path, doc_path=orig_path, repo_root=source)
                 elif format_name == "docx":
                     from .builders.docx import build as build_docx
 
-                    build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=source)
+                    build_docx(rendered_md, config, out_path, doc_path=orig_path, repo_root=source)
                 elif format_name == "dotx":
                     from .builders.dotx import build as build_dotx
 
-                    build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=source)
+                    build_dotx(rendered_md, config, out_path, doc_path=orig_path, repo_root=source)
                 else:
                     click.echo(
                         f"    {_warn('WARN')} unknown format '{format_name}' — skipped",

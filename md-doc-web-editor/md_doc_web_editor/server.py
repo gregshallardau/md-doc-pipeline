@@ -15,6 +15,10 @@ The HTML/JS/CSS that drives the SPA lives under ``static/``.
 from __future__ import annotations
 
 import re
+import os
+import shutil
+import asyncio
+from contextlib import asynccontextmanager
 import secrets
 import sys
 import subprocess
@@ -25,6 +29,7 @@ from typing import Any
 
 import yaml
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -36,9 +41,7 @@ _STATIC_DIR = _PACKAGE_DIR / "static"
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 
-# In-memory build artefact cache: token → (file path, expiry timestamp)
 _BUILD_TOKEN_TTL_SECS = 30 * 60
-_BUILDS: dict[str, dict[str, Any]] = {}
 
 
 # ── Request models (must live at module level so FastAPI's body-vs-query
@@ -61,7 +64,53 @@ def create_app(workspace: Path) -> FastAPI:
     if not workspace.is_dir():
         raise ValueError(f"Workspace path is not a directory: {workspace}")
 
-    app = FastAPI(title="md-doc editor", docs_url=None, redoc_url=None)
+    # App-owned storage: an idle sweeper and shutdown cleanup bound disk usage.
+    storage = Path(tempfile.gettempdir()) / "md-doc-edit-builds"
+    storage.mkdir(mode=0o700, exist_ok=True)
+    # Recover abandoned app directories after a crash. Live apps touch their root
+    # every minute; allow the full build timeout plus token TTL before removal.
+    for orphan in storage.iterdir():
+        if (
+            not orphan.is_symlink()
+            and orphan.is_dir()
+            and re.fullmatch(r"[a-f0-9]{32}", orphan.name)
+        ):
+            if orphan.stat().st_mtime < time.time() - _BUILD_TOKEN_TTL_SECS - 180:
+                shutil.rmtree(orphan, ignore_errors=True)
+    build_root = storage / secrets.token_hex(16)
+    build_root.mkdir(mode=0o700)
+    builds: dict[str, dict[str, Any]] = {}
+
+    def prune_builds() -> None:
+        if build_root.exists():
+            os.utime(build_root, None)
+        for token, entry in list(builds.items()):
+            if entry["expires_at"] < time.time():
+                builds.pop(token, None)
+                shutil.rmtree(build_root / token, ignore_errors=True)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async def sweep() -> None:
+            while True:
+                prune_builds()
+                await asyncio.sleep(60)
+
+        task = asyncio.create_task(sweep())
+        try:
+            yield
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            shutil.rmtree(build_root, ignore_errors=True)
+            builds.clear()
+
+    app = FastAPI(title="md-doc editor", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app.state.builds = builds
+    app.state.build_root = build_root
 
     # ── Path safety ───────────────────────────────────────────────────────────
 
@@ -91,7 +140,7 @@ def create_app(workspace: Path) -> FastAPI:
         except OSError:
             return items
         for entry in entries:
-            if entry.name.startswith("."):
+            if entry.name.startswith(".") or entry.is_symlink():
                 continue
             rel = entry.relative_to(workspace).as_posix()
             if entry.is_dir():
@@ -141,7 +190,7 @@ def create_app(workspace: Path) -> FastAPI:
     @app.get("/api/config")
     def get_config(path: str) -> JSONResponse:
         full = _safe_path(path)
-        return JSONResponse(_config_layers(full, workspace))
+        return JSONResponse(jsonable_encoder(_config_layers(full, workspace)))
 
     # ── CSS theme panel ───────────────────────────────────────────────────────
 
@@ -175,8 +224,9 @@ def create_app(workspace: Path) -> FastAPI:
         if req.format not in ("pdf", "docx", "dotx"):
             raise HTTPException(status_code=400, detail="invalid format")
 
+        prune_builds()
         token = secrets.token_urlsafe(24)
-        tmp_dir = Path(tempfile.gettempdir()) / "md-doc-edit-builds" / token
+        tmp_dir = build_root / token
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -198,15 +248,18 @@ def create_app(workspace: Path) -> FastAPI:
                 timeout=180,
                 check=False,
             )
-        except FileNotFoundError as exc:
+        except OSError as exc:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Could not launch pipeline with editor Python: {exc}",
             ) from exc
         except subprocess.TimeoutExpired as exc:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             raise HTTPException(status_code=504, detail="build timed out") from exc
 
         if proc.returncode != 0:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             stderr = (proc.stderr or proc.stdout or "").strip()
             raise HTTPException(status_code=500, detail=f"build failed: {stderr[-2000:]}")
 
@@ -217,9 +270,10 @@ def create_app(workspace: Path) -> FastAPI:
             found = candidate
             break
         if found is None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             raise HTTPException(status_code=500, detail="build succeeded but no output file found")
 
-        _BUILDS[token] = {
+        builds[token] = {
             "path": str(found),
             "filename": found.name,
             "format": ext,
@@ -229,9 +283,12 @@ def create_app(workspace: Path) -> FastAPI:
 
     @app.get("/api/build/{token}")
     def serve_build(token: str) -> FileResponse:
-        entry = _BUILDS.get(token)
+        prune_builds()
+        entry = builds.get(token)
         if entry is None or entry["expires_at"] < time.time():
             raise HTTPException(status_code=404, detail="build expired or unknown")
+        # Give an accepted download a fresh lease before constructing the response.
+        entry["expires_at"] = time.time() + _BUILD_TOKEN_TTL_SECS
         path = Path(entry["path"])
         if not path.is_file():
             raise HTTPException(status_code=404, detail="build artefact missing")
@@ -244,6 +301,7 @@ def create_app(workspace: Path) -> FastAPI:
             path,
             media_type=media,
             filename=entry["filename"],
+            content_disposition_type="inline" if entry["format"] == "pdf" else "attachment",
         )
 
     # ── Static + index ────────────────────────────────────────────────────────
@@ -291,7 +349,7 @@ def _config_layers(doc_path: Path, workspace: Path) -> dict[str, Any]:
 
     for d in dirs:
         meta = d / "_meta.yml"
-        if meta.exists():
+        if meta.exists() and meta.resolve().is_relative_to(repo_root):
             try:
                 parsed = yaml.safe_load(meta.read_text(encoding="utf-8"))
             except yaml.YAMLError:
@@ -321,7 +379,7 @@ def _resolve_css(doc_path: Path, workspace: Path) -> dict[str, Any]:
     while True:
         for name in candidates:
             f = current / name
-            if f.exists():
+            if f.is_file() and f.resolve().is_relative_to(workspace):
                 rel = f.relative_to(workspace).as_posix() if f.is_relative_to(workspace) else str(f)
                 return {"css": f.read_text(encoding="utf-8"), "source": rel}
         if current.resolve() == workspace.resolve():
@@ -350,19 +408,14 @@ def _find_includes(content: str, doc_path: Path, workspace: Path) -> list[dict[s
 
 
 def _resolve_template(name: str, doc_path: Path, workspace: Path) -> Path | None:
-    doc_dir = doc_path.parent
-    search = [doc_dir, doc_dir / "templates"]
-    current = doc_dir.parent
-    while True:
-        search.append(current / "templates")
-        if current.resolve() == workspace.resolve():
-            break
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
-    for d in search:
-        candidate = d / name
-        if candidate.exists():
-            return candidate.resolve()
-    return None
+    from md_doc.renderer import _MarkdownLoader, _build_search_dirs
+    from jinja2 import Environment, TemplateNotFound
+
+    try:
+        _, filename, _ = _MarkdownLoader(
+            _build_search_dirs(doc_path, workspace), [workspace]
+        ).get_source(Environment(), name)
+        resolved = Path(filename).resolve()
+        return resolved if resolved.is_relative_to(workspace) else None
+    except TemplateNotFound:
+        return None

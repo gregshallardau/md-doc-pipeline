@@ -13,26 +13,21 @@ end
 
 function M.find_repo_root(start_dir)
   local dir = start_dir
+  local meta_root = nil
   while true do
     if exists(dir .. "/pyproject.toml") or vim.fn.isdirectory(dir .. "/.git") == 1 or vim.fn.filereadable(dir .. "/.git") == 1 then
       return dir
     end
-    local parent = dir:match("^(.+)/[^/]+$")
-    if not parent then return nil end
+    if exists(dir .. "/_meta.yml") then meta_root = dir end
+    local parent = vim.fn.fnamemodify(dir, ":h")
+    if parent == dir then return meta_root end
     dir = parent
   end
 end
 
--- Returns the nearest ancestor directory containing a _meta.yml file, or nil.
--- Used to detect md-doc projects that don't live inside a git/pyproject repo.
+-- Compatibility alias: all editor operations use the same project root policy.
 function M.find_meta_root(start_dir)
-  local dir = start_dir
-  while true do
-    if exists(dir .. "/_meta.yml") then return dir end
-    local parent = dir:match("^(.+)/[^/]+$")
-    if not parent then return nil end
-    dir = parent
-  end
+  return M.find_repo_root(start_dir)
 end
 
 local function collect_meta_files(doc_path, repo_root)

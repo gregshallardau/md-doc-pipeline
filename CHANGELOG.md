@@ -6,25 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-### Added
-- LaTeX math in PDF (static SVG) and DOCX/DOTX (editable Office Math),
-  including inline, display and table-cell equations.
-- Regression tests for equation rendering, output routing and Neovim build
-  saves; Neovim plugin tests now run in CI.
-
 ### Fixed
+- Cover pages follow physical page dimensions in landscape and custom themes;
+  bottom bands sit against the page edge. Word cover spacing and indents no
+  longer inherit body layout, and PDF assets resolve from the source folder.
+- Header bars support a physical `page_header_bar_offset` in both formats.
+  Word reads absolute CSS spacing units and preserves image line heights.
+- Workspace boundary checks reject traversal, sibling-prefix bypasses and escaping
+  symlinks; HTML previews run in script-disabled sandbox frames.
+- Editor saves preserve the current Monaco snapshot, reject expired/missing locks,
+  and update file-switch state consistently. The standalone editor guards unsaved
+  changes and keeps in-flight builds tied to their original document.
+- YAML dates serialize correctly in editor config responses. Temporary builds are
+  removed on failure, expiry and standalone-server shutdown.
+- Incremental builds track workspace input membership, assets and external theme
+  imports, including deletions. Export copies retain source config/includes/assets,
+  staging names cannot collide, and local sync excludes its destination subtree.
+- Word table cells retain images and missing-image alt text. Neovim uses the same
+  topmost metadata root for context, single-file and workspace builds.
 - Output paths use the detected project root consistently for single-file,
   subfolder and workspace builds, including relative `output_dir` settings.
 - Neovim saves the current file before building it and all modified workspace
   file buffers before a workspace build; save failures cancel the build.
-- Editor declares its required pipeline dependency and installs alongside the
-  local pipeline through `uv sync --group editor`.
-- Editor builds use its own Python environment instead of finding a potentially
-  missing or unrelated `md-doc` executable on PATH.
-- Install guides include explicit uv virtual environment setup, activation
-  commands and source-checkout installs that do not require a PyPI release.
-- CI covers editor tests and startup from installed wheels, including a real
-  Word build with an empty PATH.
+- Editor declares its pipeline dependency and builds with its own Python.
+  Install guides document uv virtual environment setup and source installs.
+
+### Added
+- Deterministic rendered Word/PDF parity checks for A4 page size, header position,
+  colored geometry, tables, images and short/wrapped title pages. CI retains
+  measurements, generated files, page rasters, overlays and difference images.
+- LaTeX math in PDF (static SVG) and DOCX/DOTX (editable Office Math),
+  including inline, display and table-cell equations.
+- Python, browser, PHP and Neovim regressions for the application review findings;
+  clean-wheel server startup/build smoke checks and expanded CI.
 
 ## [Unreleased]
 

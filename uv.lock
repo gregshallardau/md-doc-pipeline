@@ -1255,6 +1255,12 @@ editor = [
     { name = "httpx" },
     { name = "md-doc-web-editor" },
 ]
+parity = [
+    { name = "numpy" },
+    { name = "pdfplumber" },
+    { name = "pillow" },
+    { name = "pypdfium2" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1290,6 +1296,12 @@ dev = [
 editor = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "md-doc-web-editor", editable = "md-doc-web-editor" },
+]
+parity = [
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "pdfplumber", specifier = ">=0.11" },
+    { name = "pillow", specifier = ">=10.0" },
+    { name = "pypdfium2", specifier = ">=4.30" },
 ]
 
 [[package]]
