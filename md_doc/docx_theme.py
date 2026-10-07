@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -258,6 +259,7 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         props = blocks.get(sel, {})
         if "font-family" in props and "font_body" not in theme:
             theme["font_body"] = _first_font(props["font-family"])
+            theme["font_stack_body"] = props["font-family"]
         if "font-size" in props and "font_size_body" not in theme:
             pt = _parse_pt(props["font-size"])
             if pt is not None:
@@ -327,6 +329,7 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         props = blocks.get(tag, {})
         if "font-family" in props:
             theme[f"font_{tag}"] = _first_font(props["font-family"])
+            theme[f"font_stack_{tag}"] = props["font-family"]
         if "color" in props:
             col = _first_color(props["color"])
             if col:
@@ -355,6 +358,7 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
     code_props = blocks.get("code", {})
     if "font-family" in code_props:
         theme["font_code"] = _first_font(code_props["font-family"])
+        theme["font_stack_code"] = code_props["font-family"]
     if "font-size" in code_props:
         pt = _parse_pt(code_props["font-size"])
         if pt is not None:
@@ -460,6 +464,10 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
 
     # table body cells (td) — bottom border colour, size, and padding
     td_props = blocks.get("td", {})
+    if "font-size" in td_props:
+        pt = _parse_pt(td_props["font-size"])
+        if pt is not None:
+            theme["font_size_table"] = pt
     if "border-bottom" in td_props:
         val = td_props["border-bottom"]
         col = _first_color(val)
@@ -641,8 +649,8 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if "li_space_before" in theme:
             lp.paragraph_format.space_before = Pt(theme["li_space_before"])
         if "li_line_height" in theme:
-            lp.paragraph_format.line_spacing = theme["li_line_height"]
-            lp.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+            lp.paragraph_format.line_spacing = Pt((font_size_body or 11) * theme["li_line_height"])
+            lp.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
 
     # Hyperlink style — apply link colour
     try:
@@ -788,6 +796,39 @@ def find_docx_theme_css(
     return None
 
 
+@lru_cache(maxsize=64)
+def _resolve_font_stack(stack: str) -> str | None:
+    """Use the PDF renderer's font matcher for CSS fallback lists.
+
+    OOXML has no CSS family stack. Resolve it on the build host so Word and
+    PDF select the same installed family. Word-only hosts without Pango keep
+    the requested primary font rather than failing an otherwise valid build.
+    """
+    if "," not in stack:
+        return None
+    try:
+        from weasyprint.text.ffi import ffi, pango, gobject
+        from weasyprint.text.fonts import FontConfiguration
+
+        fonts = FontConfiguration()
+        context = ffi.gc(
+            pango.pango_font_map_create_context(fonts.font_map), gobject.g_object_unref
+        )
+        description = ffi.gc(pango.pango_font_description_new(), pango.pango_font_description_free)
+        families = ",".join(p.strip().strip("\"'") for p in stack.split(","))
+        pango.pango_font_description_set_family(description, families.encode())
+        pango.pango_font_description_set_absolute_size(description, 12 * 1024)
+        font = pango.pango_font_map_load_font(fonts.font_map, context, description)
+        if font == ffi.NULL:
+            return None
+        font = ffi.gc(font, gobject.g_object_unref)
+        matched = ffi.gc(pango.pango_font_describe(font), pango.pango_font_description_free)
+        return ffi.string(pango.pango_font_description_get_family(matched)).decode()
+    except Exception:
+        _log.debug("PDF font matching unavailable; retaining requested Word font", exc_info=True)
+        return None
+
+
 def resolve_docx_theme(
     doc_path: Path,
     repo_root: Path,
@@ -799,7 +840,15 @@ def resolve_docx_theme(
     see the former for the resolution order.
     """
     path = find_docx_theme_css(doc_path, repo_root, config)
-    return parse_css_for_word(path) if path else None
+    if not path:
+        return None
+    theme = parse_css_for_word(path)
+    for key, stack in list(theme.items()):
+        if key.startswith("font_stack_"):
+            family = _resolve_font_stack(stack)
+            if family:
+                theme[key.replace("font_stack_", "font_", 1)] = family
+    return theme
 
 
 def set_para_shading(paragraph: Any, hex_color: str) -> None:

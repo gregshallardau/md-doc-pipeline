@@ -34,6 +34,7 @@ logging.getLogger("fonttools").setLevel(logging.ERROR)
 import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
+from ._cover import footer_band_geometry  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 
 # Markdown extensions to enable
@@ -200,11 +201,11 @@ def _field_to_html(field_spec: str) -> str:
     """Convert a single ?[type: name, ...] spec to HTML."""
     field_spec = field_spec.strip()
 
+    submit = re.fullmatch(r"submit(?:(?:\s*:\s*|\s+)(.*))?", field_spec, re.IGNORECASE)
+    if submit:
+        label = (submit.group(1) or "").strip() or "Submit"
+        return f'<input type="submit" value="{_escape_html(label)}">'
     if ":" not in field_spec:
-        if field_spec.lower().startswith("submit"):
-            parts = field_spec.split(None, 1)
-            label = parts[1] if len(parts) > 1 else "Submit"
-            return f'<input type="submit" value="{_escape_html(label)}">'
         return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
     type_part, rest = field_spec.split(":", 1)
@@ -617,7 +618,11 @@ def _build_cover(
 
     text_on_bar_class = " cover-text-on-bar" if text_on_bar else ""
     footer_line_class = " cover-footer-no-line" if not show_footer_line else ""
-    footer_color_style = f' style="color: {footer_color};"' if footer_color else ""
+    footer_styles = [f"color: {footer_color};"] if footer_color else []
+    band_footer = footer_band_geometry(cover_cfg, _parse_mm(bar_bottom_height, 10.0))
+    if band_footer:
+        footer_styles.append(f"bottom: {band_footer[0]}mm; line-height: 13.2pt;")
+    footer_color_style = ' style="' + " ".join(footer_styles) + '"' if footer_styles else ""
     footer_inner = (
         f'<div class="cover-footer{footer_line_class}"{footer_color_style}>{_escape_html(footer_text)}</div>'
         if show_footer

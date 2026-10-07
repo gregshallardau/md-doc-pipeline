@@ -30,13 +30,15 @@ import logging
 import re
 import shutil
 import zipfile
+from html import escape, unescape
+from ._cover import footer_band_geometry
 from io import BytesIO
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
@@ -542,6 +544,7 @@ class _DocxBuilder(HTMLParser):
         self._sub = False
         self._strike = False
         self._list_stack: list[str] = []
+        self._list_num_ids: list[int | None] = []
         self._list_counters: list[int] = []
         # Loose-list handling: markdown wraps list-item text in <p> when items
         # are separated by blank lines.  The first <p> inside an <li> must
@@ -557,6 +560,7 @@ class _DocxBuilder(HTMLParser):
         self._in_table = False
         self._in_cell = False  # True while cursor is inside a <th> or <td>
         self._in_th = False
+        self._table_form_kind: str | None = None
         self._table_rows: list[list[tuple[bool, str, str | None]]] = []
         self._current_row: list[tuple[bool, str, str | None]] = []
         self._current_cell_html = ""
@@ -935,6 +939,33 @@ class _DocxBuilder(HTMLParser):
         elif tag in ("ul", "ol"):
             self._list_stack.append(tag)
             self._list_counters.append(0)
+            num_id = None
+            if tag == "ol":
+                numbering = self.doc.part.numbering_part.element
+                style_num = self.doc.styles["List Number"].element.pPr.numPr.numId.val
+                base_num = next(
+                    n
+                    for n in numbering.findall(qn("w:num"))
+                    if int(n.get(qn("w:numId"))) == style_num
+                )
+                num_id = max(int(n.get(qn("w:numId"))) for n in numbering.findall(qn("w:num"))) + 1
+                number = OxmlElement("w:num")
+                number.set(qn("w:numId"), str(num_id))
+                abstract = OxmlElement("w:abstractNumId")
+                abstract.set(qn("w:val"), base_num.find(qn("w:abstractNumId")).get(qn("w:val")))
+                number.append(abstract)
+                override = OxmlElement("w:lvlOverride")
+                override.set(qn("w:ilvl"), "0")
+                start = OxmlElement("w:startOverride")
+                try:
+                    first = int(dict(attrs).get("start") or 1)
+                except ValueError:
+                    first = 1
+                start.set(qn("w:val"), str(first))
+                override.append(start)
+                number.append(override)
+                numbering.append(number)
+            self._list_num_ids.append(num_id)
 
         elif tag == "li":
             if self._list_stack:
@@ -944,6 +975,9 @@ class _DocxBuilder(HTMLParser):
                 else:
                     self._list_counters[-1] += 1
                     self._paragraph = self.doc.add_paragraph(style="List Number")
+                    num_pr = self._paragraph._p.get_or_add_pPr().get_or_add_numPr()
+                    num_pr.get_or_add_ilvl().val = 0
+                    num_pr.get_or_add_numId().val = self._list_num_ids[-1]
             else:
                 self._new_para("List Bullet")
             self._li_depth += 1
@@ -1036,6 +1070,10 @@ class _DocxBuilder(HTMLParser):
             bottom.set(qn("w:color"), hr_color)
 
         elif tag == "table":
+            classes = (dict(attrs).get("class") or "").split()
+            self._table_form_kind = next(
+                (c for c in classes if c in ("field-row", "field-box")), None
+            )
             self._in_table = True
             self._table_rows = []
             self._current_row = []
@@ -1095,6 +1133,7 @@ class _DocxBuilder(HTMLParser):
         elif tag in ("ul", "ol"):
             if self._list_stack:
                 self._list_stack.pop()
+                self._list_num_ids.pop()
             if self._list_counters:
                 self._list_counters.pop()
             self._paragraph = None
@@ -1412,6 +1451,8 @@ class _DocxBuilder(HTMLParser):
         # Cell margins from CSS td { padding }
         tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
         lr_pt = self._theme.get("padding_cell_lr_pt", 9.0)
+        if self._table_form_kind:
+            tb_pt, lr_pt = (2.0, 5.0) if self._table_form_kind == "field-box" else (2.0, 8.0)
         tblCellMar = OxmlElement("w:tblCellMar")
         for side_name, pt_val in (
             ("top", tb_pt),
@@ -1439,6 +1480,16 @@ class _DocxBuilder(HTMLParser):
         uppercase_th = self._theme.get("uppercase_th", False)
         letter_spacing_th = self._theme.get("letter_spacing_th_pt")
 
+        if self._table_form_kind:
+            header_bg = row_alt_bg = None
+            borders = OxmlElement("w:tblBorders")
+            for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+                edge = OxmlElement(f"w:{side}")
+                edge.set(qn("w:val"), "single" if self._table_form_kind == "field-box" else "nil")
+                edge.set(qn("w:sz"), "4")
+                edge.set(qn("w:color"), "000000")
+                borders.append(edge)
+            tblPr.append(borders)
         n_rows = len(rows)
 
         for r_idx, row_cells in enumerate(rows):
@@ -1511,6 +1562,12 @@ class _DocxBuilder(HTMLParser):
                 # Apply font sizes
                 size = header_font_size if is_header else body_font_size
                 if size:
+                    para.paragraph_format.line_spacing = Pt(
+                        size * self._theme.get("line_height_body", 1.65)
+                    )
+                    # Cell text uses its own size; pictures/equations may expand
+                    # the minimum line box rather than getting clipped.
+                    para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
                     for run in para.runs:
                         run.font.size = Pt(size)
 
@@ -1539,11 +1596,12 @@ class _DocxBuilder(HTMLParser):
                     if row_alt_bg and r_idx % 2 == 1:
                         set_cell_shading(cell, row_alt_bg)
                     # Bottom border
-                    _set_cell_bottom_border(
-                        cell,
-                        color=last_border_color if is_last_row else cell_border_color,
-                        pt=last_border_size if is_last_row else cell_border_size,
-                    )
+                    if not self._table_form_kind:
+                        _set_cell_bottom_border(
+                            cell,
+                            color=last_border_color if is_last_row else cell_border_color,
+                            pt=last_border_size if is_last_row else cell_border_size,
+                        )
 
             # Rows shorter than max_cols still have Word cells that need
             # explicit tcW; without it fixed-layout tables render incorrectly.
@@ -2104,6 +2162,13 @@ def _add_docx_cover_page(
         framePr = OxmlElement("w:framePr")
         frame_w_mm = max(10.0, page_w_mm - 28.0 - 20.0)
         frame_top_mm = max(0.0, page_h_mm - 14.0 - 9.4)  # ≈ rule + padding + one 8pt line
+        band_footer = footer_band_geometry(config, bar_bot_h)
+        if band_footer:
+            bottom_gap, footer_height = band_footer
+            frame_top_mm = page_h_mm - bottom_gap - footer_height
+            fp.paragraph_format.space_before = Pt(0)
+            fp.paragraph_format.space_after = Pt(0)
+            fp.paragraph_format.line_spacing = Pt(8 * 1.65)
         framePr.set(qn("w:w"), str(round(frame_w_mm * _TWIPS_PER_MM)))
         framePr.set(qn("w:h"), "0")
         framePr.set(qn("w:hRule"), "auto")
@@ -2123,7 +2188,7 @@ def _add_docx_cover_page(
             top.set(qn("w:color"), "D5D8DC")
             pBdr.append(top)
             pPr.append(pBdr)
-        run = fp.add_run(footer_text)
+        run = fp.add_run(re.sub(r"\s+", " ", footer_text))
         run.font.size = Pt(8)
         if font_body:
             _apply_font_name(run.font, font_body)
@@ -2221,19 +2286,152 @@ def _strip_leading_h1(md_content: str) -> str:
 _STRUCT_MARKER_RE = re.compile(r"^\?\[(/?(row|box)(:[^\]]*)?)\]\s*$", re.MULTILINE)
 
 
+def _word_html_forms(source: str, field_type: str | None) -> str:
+    """Retain HTML controls instead of silently dropping them in Word."""
+
+    class Controls(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.parts: list[str] = []
+            self.control: str | None = None
+            self.attrs: dict[str, str | None] = {}
+            self.options: list[str] = []
+            self.text = ""
+            self.index = 0
+
+        def field_name(self, attrs: dict[str, str | None]) -> str:
+            self.index += 1
+            return attrs.get("name") or attrs.get("id") or f"html_field_{self.index}"
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            values = dict(attrs)
+            if self.control:
+                if tag == "option":
+                    if self.text.strip():
+                        self.options.append(self.text.strip())
+                    self.text = ""
+                return
+            if tag == "input":
+                kind = values.get("type") or "text"
+                if kind in ("hidden", "submit", "reset", "button"):
+                    return
+                if field_type:
+                    name = self.field_name(values)
+                    text = f"[[?cb:{name}]]" if kind in ("checkbox", "radio") else f"[[{name}]]"
+                elif kind in ("checkbox", "radio"):
+                    text = "☑" if "checked" in values else ("○" if kind == "radio" else "☐")
+                else:
+                    text = values.get("value") or "________"
+                self.parts.append(escape(text))
+            elif tag in ("select", "textarea"):
+                self.control, self.attrs, self.options, self.text = tag, values, [], ""
+            else:
+                self.parts.append(self.get_starttag_text())
+
+        def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            self.handle_starttag(tag, attrs)
+
+        def handle_endtag(self, tag: str) -> None:
+            if self.control:
+                if tag != self.control:
+                    return
+                if self.text.strip():
+                    self.options.append(self.text.strip())
+                if field_type:
+                    name = self.field_name(self.attrs)
+                    options = "|".join(self.options)
+                    text = (
+                        f"[[?dd:{name}|{options}]]"
+                        if self.control == "select" and options
+                        else f"[[{name}]]"
+                    )
+                elif self.control == "select":
+                    text = "________ (" + " / ".join(self.options) + ")"
+                else:
+                    text = self.text or "________"
+                self.parts.append(escape(unescape(text)))
+                self.control = None
+            else:
+                self.parts.append(f"</{tag}>")
+
+        def handle_data(self, data: str) -> None:
+            if self.control:
+                self.text += data
+            else:
+                self.parts.append(data)
+
+        def handle_entityref(self, name: str) -> None:
+            self.handle_data(f"&{name};")
+
+        def handle_charref(self, name: str) -> None:
+            self.handle_data(f"&#{name};")
+
+        def handle_comment(self, data: str) -> None:
+            if not self.control:
+                self.parts.append(f"<!--{data}-->")
+
+    parser = Controls()
+    parser.feed(source)
+    parser.close()
+    return "".join(parser.parts)
+
+
+def _word_form_layout(md_content: str) -> str:
+    """Keep side-by-side field groups and grids as real Word tables."""
+    import markdown
+
+    pattern = re.compile(
+        r"^\?\[(row|box)(?::([^\]]*))?\]\s*\n(.*?)^\?\[/\1\]\s*$", re.MULTILINE | re.DOTALL
+    )
+
+    def table(match: re.Match) -> str:
+        kind, args, content = match.groups()
+        rows = []
+        for line in content.strip().splitlines():
+            if line.strip():
+                # Option separators inside ?[...] / [[...]] belong to a field.
+                cells = re.split(r"\|(?![^\[]*\])", line.strip())
+                rows.append(
+                    [markdown.markdown(c.strip(), extensions=["extra"]) for c in cells if c.strip()]
+                )
+        width = re.search(r"widths\s*=\s*([\d.,\s]+)", args or "")
+        prefix = f"<!-- col-widths: {width.group(1).strip()} -->\n" if width else ""
+        body = "".join(
+            "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows
+        )
+        return f'\n\n{prefix}<table class="field-{kind}">{body}</table>\n\n'
+
+    return pattern.sub(table, md_content)
+
+
 def _strip_form_fields_for_docx(md_content: str) -> str:
     """Render PDF ``?[...]`` form markers as a plain fill-in line for Word.
 
-    Plain ``.docx`` output doesn't carry interactive fields, so rather than
-    leaking the literal marker text we substitute an underscore fill-in line.
-    ``?[row]``/``?[box]`` layout markers are dropped.
+    Plain ``.docx`` retains fill-in lines, choice labels, defaults and grids.
+    Interactive fields are available in the companion DOTX template.
     """
-    from ..forms import FIELD_RE
+    from ..forms import FIELD_RE, OPTION_TYPES, parse_field_spec
 
-    md_content = _STRUCT_MARKER_RE.sub("", md_content)
-    # Backslash-escaped so markdown renders literal underscores instead of
-    # parsing __ pairs as bold delimiters (which swallowed the fill-in line).
-    return FIELD_RE.sub("\\_" * 8, md_content)
+    def convert(match: re.Match) -> str:
+        parsed = parse_field_spec(match.group(1))
+        if parsed is None:
+            return match.group(0) if _STRUCT_MARKER_RE.fullmatch(match.group(0)) else ""
+        ftype, _name, options, attrs = parsed
+        if ftype == "checkbox":
+            return ("☑" if attrs.get("checked") else "☐") + (
+                " " + str(attrs["label"]) if attrs.get("label") else ""
+            )
+        if ftype == "yesno":
+            return "☐ Yes   ☐ No"
+        if ftype in ("checkbox-inline", "radio", "radio-inline"):
+            mark = "☐" if ftype == "checkbox-inline" else "○"
+            return "   ".join(f"{mark} {option}" for option in options)
+        if ftype in OPTION_TYPES:
+            return "\\_" * 8 + " (" + " / ".join(options) + ")"
+        value = attrs.get("value")
+        return str(value) if value is not None else "\\_" * 8
+
+    return _STRUCT_MARKER_RE.sub("", _word_form_layout(FIELD_RE.sub(convert, md_content)))
 
 
 def _convert_form_fields_for_dotx(md_content: str) -> str:
@@ -2243,18 +2441,16 @@ def _convert_form_fields_for_dotx(md_content: str) -> str:
     template: text-ish fields become Text Form Fields (via the existing
     ``[[name]]`` machinery), checkboxes become FORMCHECKBOX, selects/radios
     become FORMDROPDOWN, and a ``yesno`` becomes a pair of labelled
-    checkboxes. Row/box layout markers are dropped (cells flow as text);
+    checkboxes. Row/box layout markers become Word tables;
     submit buttons have no Word equivalent and are removed.
     """
     from ..forms import FIELD_RE, OPTION_TYPES, parse_field_spec
-
-    md_content = _STRUCT_MARKER_RE.sub("", md_content)
 
     def convert(m: re.Match) -> str:
         spec = m.group(1).strip()
         parsed = parse_field_spec(spec)
         if parsed is None:
-            return ""  # submit / stray structural marker
+            return m.group(0) if _STRUCT_MARKER_RE.fullmatch(m.group(0)) else ""
         ftype, name, options, attrs = parsed
         if ftype == "checkbox":
             label = attrs.get("label")
@@ -2273,7 +2469,7 @@ def _convert_form_fields_for_dotx(md_content: str) -> str:
         # text / email / date / number / tel / url / textarea / signature / unknown
         return f"[[{name}]]"
 
-    return FIELD_RE.sub(convert, md_content)
+    return _STRUCT_MARKER_RE.sub("", _word_form_layout(FIELD_RE.sub(convert, md_content)))
 
 
 def _resolve_docx_theme(
@@ -2884,7 +3080,9 @@ def build(
 
     from ..math import markdown_html, render_math
 
-    html, math_equations = render_math(markdown_html(body, _MD_EXTENSIONS), word=True)
+    html, math_equations = render_math(
+        _word_html_forms(markdown_html(body, _MD_EXTENSIONS), field_type), word=True
+    )
     html = _drop_empty_table_headers(html)
 
     # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF

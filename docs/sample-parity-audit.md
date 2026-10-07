@@ -36,14 +36,20 @@ Generated every discovered sample in `examples/` and `docs/examples/`: 12 existi
 - Preserve full-width diagram sizing instead of interpreting SVG viewBox coordinates as raster pixel widths.
 - Avoid redundant PDF blank pages after explicit page breaks and a stranded initial letterhead before the first heading.
 - Restore report footer dates in PDF.
+- Resolve Word CSS font stacks with the PDF font matcher.
+- Restart each numbered list and preserve explicit HTML start values.
+- Preserve form grids, choice labels, field values and raw HTML controls in Word.
+- Put white cover footers inside dark bottom bands.
+- Match table/list leading to their actual font sizes without clipping embedded objects.
+- Recognize both submit syntaxes as PDF buttons and omit them from Word rather than creating bogus text fields.
 - Repeat Word table headings and keep them with the following row.
 
 ## Remaining parity gaps
 
 - Word and PDF pagination differs for: on-call-handbook, form-controls, example-markdown-form, example-pdf-form.
-- PDF fields are interactive AcroForms; ordinary DOCX represents Markdown controls as fill-in lines and does not preserve structured row/box appearance. Raw HTML inputs are not represented as equivalent Word fields. DOTX variants contain native fields but are not evidence of visual parity.
-- Existing themes request Segoe UI, which is unavailable in this renderer. Different font fallback changes wrapping and spacing. The new showcases use DejaVu Sans explicitly; original samples retain their styles.
-- White footers can land outside narrow dark bottom bands; font fallback still changes cover title wrapping.
+- PDF fields are interactive AcroForms. DOCX now retains choice labels, checked states, values and row/box tables; raw HTML controls also have visible Word representations. DOTX keeps native fields inside these grids. Field heights, multiline textarea layout, form validation attributes and radio/dropdown appearance still differ.
+- Word now resolves CSS font lists through the same Pango matcher as PDF, so the original Segoe UI themes render with the same installed fallback family. On Word-only hosts without Pango, the primary requested font is retained. Unsupported emoji glyphs and font availability on other viewing hosts remain limitations.
+- Explicitly white cover footers now sit inside sufficiently tall bottom bands. Bands shorter than the footer height cannot accommodate the footer; long footer text can still wrap differently.
 - Lists, code blocks, footnotes, table padding and emoji rendering need broader physical layout assertions.
 
 ## Feature coverage
@@ -54,7 +60,7 @@ This covers rendering feature families, not every configuration permutation. The
 
 ## Validation
 
-478 Python tests passed, 2 skipped. All 7 controlled rendered parity cases passed, including the new dark cover-bar case. Ruff, Black, mypy and whitespace checks passed.
+491 Python tests passed, 2 skipped. All 8 controlled rendered parity cases passed, including font fallback and physical white-footer placement on the dark cover bar. Ruff, Black, mypy and whitespace checks passed.
 
 ## Reproduce
 
@@ -65,4 +71,4 @@ uv run --group parity python tools/inspect_sample_gallery.py --output build/samp
 MD_DOC_PARITY=1 uv run --group parity pytest tests/parity --no-cov
 ```
 
-Install LibreOffice Writer and the fonts before rendering. The gallery audit records page dimensions/counts and Word structures; it deliberately does not label samples as passing parity. The seven controlled parity fixtures separately assert physical geometry with documented tolerances.
+Install LibreOffice Writer and the fonts before rendering. The gallery audit records page dimensions/counts and Word structures; it deliberately does not label samples as passing parity. The eight controlled parity fixtures separately assert physical geometry with documented tolerances.

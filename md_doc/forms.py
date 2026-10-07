@@ -32,7 +32,7 @@ KNOWN_FIELD_TYPES = frozenset(
 )
 
 # Structural markers that are not fields themselves.
-_STRUCTURAL_RE = re.compile(r"^(/?(row|box)(:.*)?|submit(\s.*)?)$", re.IGNORECASE | re.DOTALL)
+_STRUCTURAL_RE = re.compile(r"^(/?(row|box)(:.*)?|submit([\s:].*)?)$", re.IGNORECASE | re.DOTALL)
 
 
 def parse_field_attrs(attr_str: str) -> dict[str, str | bool]:

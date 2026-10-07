@@ -98,22 +98,27 @@ def near(actual: list[float], expected: list[float], tolerance_mm: float, label:
 
 
 @pytest.mark.parametrize(
-    "orientation,offset,width,height",
+    "orientation,offset,width,height,fallback",
     [
-        ("portrait", 20, 210, 297),
-        ("landscape", 0, 297, 210),
+        ("portrait", 20, 210, 297, False),
+        ("portrait", 20, 210, 297, True),
+        ("landscape", 0, 297, 210, False),
     ],
 )
-def test_rendered_word_pdf_layout(tmp_path, orientation, offset, width, height):
+def test_rendered_word_pdf_layout(tmp_path, orientation, offset, width, height, fallback):
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     assert soffice, "Parity is enabled but LibreOffice is missing (do not silently skip CI)"
-    artifacts = (
-        Path(os.environ.get("MD_DOC_PARITY_ARTIFACTS", str(tmp_path / "artifacts"))) / orientation
-    )
+    name = orientation + ("-fallback" if fallback else "")
+    artifacts = Path(os.environ.get("MD_DOC_PARITY_ARTIFACTS", str(tmp_path / "artifacts"))) / name
     artifacts.mkdir(parents=True, exist_ok=True)
     document = tmp_path / "layout.md"
     document.write_text((FIXTURES / "layout.md").read_text())
     css = (FIXTURES / "theme.css").read_text().replace("size: A4;", f"size: A4 {orientation};")
+    if fallback:
+        css = css.replace(
+            "font-family: 'DejaVu Sans'",
+            "font-family: 'Missing Parity Font', 'DejaVu Sans', sans-serif",
+        )
     (tmp_path / "_theme.css").write_text(css)
     Image.new("RGB", (48, 48), MARKER).save(tmp_path / "marker.png", dpi=(96, 96))
     config = {
@@ -244,6 +249,9 @@ def test_rendered_cover(tmp_path, orientation, title, custom, on_bar):
         "cover_text_on_bar": on_bar,
         "cover_bar_height": "100mm" if on_bar else "10mm",
         "cover_stripe": not on_bar,
+        "cover_footer_color": "white" if on_bar else "#7f8c9a",
+        "cover_footer_line": not on_bar,
+        "cover_bar_bottom_height": "15mm" if on_bar else "10mm",
     }
     build_pdf(
         document.read_text(),
@@ -321,3 +329,12 @@ def test_rendered_cover(tmp_path, orientation, title, custom, on_bar):
         a[round((height - 20) * DPI / 25.4) :] = False
         b[round((height - 20) * DPI / 25.4) :] = False
         near(mask_box(a), mask_box(b), 1.5, "Cover text bar extent")
+
+        for page in (pdf_pages[0], word_pages[0]):
+            assert height - 15 < page["words_mm"]["Confidential"][1] < height - 2
+        near(
+            pdf_pages[0]["words_mm"]["Confidential"][:2],
+            word_pages[0]["words_mm"]["Confidential"][:2],
+            1.5,
+            "White footer in bottom band",
+        )

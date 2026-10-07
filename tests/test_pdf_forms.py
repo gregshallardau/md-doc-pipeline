@@ -365,3 +365,18 @@ def test_lint_ok_on_separated_tables(tmp_repo):
     )
     msgs = [i.message for i in lint_file(doc, repo_root=tmp_repo)]
     assert not any("Two tables jammed together" in m for m in msgs)
+
+
+@pytest.mark.parametrize("spec", ["submit Send", "submit: Send"])
+def test_submit_alias_is_a_button_not_a_named_text_field(spec):
+    from md_doc.forms import parse_field_spec
+    from md_doc.builders.pdf import _field_to_html
+
+    assert parse_field_spec(spec) is None
+    assert _field_to_html(spec) == '<input type="submit" value="Send">'
+
+
+def test_submit_colon_does_not_create_a_word_field(tmp_repo):
+    from md_doc.builders.docx import _convert_form_fields_for_dotx
+
+    assert _convert_form_fields_for_dotx("?[submit: Send]") == ""

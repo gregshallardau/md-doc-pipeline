@@ -571,7 +571,8 @@ def test_list_spacing_from_theme_li_rules(tmp_repo):
         assert block, f"{sid} style missing"
         spacing = block.group(0)
         assert 'w:after="40"' in spacing  # 2pt
-        assert 'w:line="288"' in spacing  # 1.2 line height
+        assert 'w:line="240"' in spacing  # 10pt × 1.2 = 12pt leading
+        assert 'w:lineRule="atLeast"' in spacing
 
 
 def test_page_geometry_survives_nested_margin_boxes():
@@ -602,3 +603,80 @@ def test_source_soft_wraps_do_not_create_word_line_breaks(tmp_repo):
     assert any(p.text == "First soft wrapped paragraph." for p in paragraphs)
     assert any(p.text == "Explicit\nbreak." for p in paragraphs)
     assert Document(out).tables[0].cell(0, 0).text == "soft wrap"
+
+
+@pytest.mark.parametrize("fmt", ["docx", "dotx"])
+def test_word_form_grids_preserve_columns_widths_and_labels(tmp_repo, fmt):
+    body = "?[row]\n**City** ?[text: city] | **Post code** ?[text: postcode]\n?[/row]\n\n?[box: widths=70,30]\nQuestion | Response\nNeed cover? | ?[yesno: cover]\n?[/box]"
+    out = _build(tmp_repo, body, {}, fmt)
+    xml = _part(out, "word/document.xml")
+    assert xml.count("<w:tbl>") == 2
+    assert "City" in xml and "Post code" in xml and "Yes" in xml and "No" in xml
+    assert 'w:val="nil"' in xml and 'w:val="single"' in xml
+    if fmt == "dotx":
+        assert "FORMTEXT" in xml and xml.count("FORMCHECKBOX") == 2
+    assert "?[" not in xml
+
+
+def test_docx_form_choices_and_values_are_not_lost(tmp_repo):
+    out = _build(
+        tmp_repo,
+        "?[checkbox: agree, label=I agree]\n\n?[radio-inline: contact | Email | Phone]\n\n?[text: name, value=Alice]",
+        {},
+    )
+    xml = _part(out, "word/document.xml")
+    assert all(text in xml for text in ("I agree", "Email", "Phone", "Alice", "☐", "○"))
+
+
+@pytest.mark.parametrize("fmt", ["docx", "dotx"])
+def test_raw_html_form_controls_are_not_dropped(tmp_repo, fmt):
+    out = _build(
+        tmp_repo,
+        '<p>Name <input name="name" value="Alice"></p>\n<p><input type="checkbox" name="agree"> Agree</p>\n<p><select name="region"><option>North &amp; East</option><option>South</option></select></p>\n<p><textarea name="comments">Notes</textarea></p>',
+        {},
+        fmt,
+    )
+    xml = _part(out, "word/document.xml")
+    if fmt == "docx":
+        assert "Alice" in xml and "☐" in xml and "North &amp; East" in xml and "Notes" in xml
+    else:
+        assert all(field in xml for field in ("FORMTEXT", "FORMCHECKBOX", "FORMDROPDOWN"))
+        assert 'w:val="North &amp; East"' in xml
+
+
+def test_separate_numbered_lists_restart_and_preserve_explicit_start(tmp_repo):
+    out = _build(
+        tmp_repo,
+        '1. First\n2. Second\n\nParagraph\n\n1. Another\n\n<ol start="5"><li>Fifth</li></ol>',
+        {},
+    )
+    doc = Document(out)
+    ids = [p._p.pPr.numPr.numId.val for p in doc.paragraphs if p.style.name == "List Number"]
+    assert ids[0] == ids[1] and len(set(ids)) == 3
+    assert 'w:val="5"' in _part(out, "word/numbering.xml")
+
+
+def test_table_line_spacing_uses_cell_font_size_without_clipping(tmp_repo):
+    from docx.enum.text import WD_LINE_SPACING
+
+    (tmp_repo / "_theme.css").write_text(
+        "body { font-size: 11pt; line-height: 1.5; } td { font-size: 9pt; } th { font-size: 8pt; }"
+    )
+    out = _build(tmp_repo, "| A | B |\n| --- | --- |\n| One | Two |", {})
+    table = Document(out).tables[0]
+    assert table.cell(0, 0).paragraphs[0].paragraph_format.line_spacing.pt == 12
+    assert table.cell(1, 0).paragraphs[0].paragraph_format.line_spacing.pt == 13.5
+    assert (
+        table.cell(1, 0).paragraphs[0].paragraph_format.line_spacing_rule
+        == WD_LINE_SPACING.AT_LEAST
+    )
+
+
+def test_list_line_spacing_matches_css_leading(tmp_repo):
+    from docx.enum.text import WD_LINE_SPACING
+
+    (tmp_repo / "_theme.css").write_text("body { font-size: 10pt; } li { line-height: 1.6; }")
+    out = _build(tmp_repo, "- One\n- Two", {})
+    style = Document(out).styles["List Bullet"].paragraph_format
+    assert style.line_spacing.pt == 16
+    assert style.line_spacing_rule == WD_LINE_SPACING.AT_LEAST
