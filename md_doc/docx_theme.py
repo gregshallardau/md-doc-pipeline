@@ -686,6 +686,13 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if size_key in theme:
             heading_style.font.size = Pt(theme[size_key])
 
+        # Headings must not inherit the fixed body line box: larger glyphs
+        # would be clipped. CSS unitless line-height scales with font size.
+        size = theme.get(size_key) or (
+            heading_style.font.size.pt if heading_style.font.size else font_size_body or 11
+        )
+        heading_style.paragraph_format.line_spacing = Pt(size * theme.get("line_height_body", 1.2))
+
         # Font colour
         if color_key in theme:
             r, g, b = _hex_to_rgb(theme[color_key])

@@ -1214,6 +1214,8 @@ class _DocxBuilder(HTMLParser):
 
         equation = deepcopy(self._math_equations[int(src[7:])])
         paragraph._p.append(equation)
+        # Fractions and display equations can exceed the fixed body line box.
+        paragraph.paragraph_format.line_spacing = 1.0
 
     def _embed_image(self, attrs: dict[str, str | None], paragraph: Any = None) -> None:
         """Embed an <img> as a picture: a mermaid:// reference or a file asset."""
