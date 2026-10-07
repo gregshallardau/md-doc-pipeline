@@ -807,7 +807,10 @@ def _make_forms_finisher(field_meta: dict[str, dict[str, Any]]):
 _BASE_FIXES_CSS = (
     "<style>\n"
     ".report-body > h1:first-of-type { page-break-before: auto; }\n"
+    ".report-body h1[data-md-doc-first-heading] { page-break-before: auto; break-before: auto; }\n"
+    ".running-date { display: block; position: absolute; visibility: hidden; width: 0; height: 0; overflow: hidden; }\n"
     ".report-body table + table { margin-top: 10pt; }\n"
+    ".report-body .md-doc-page-break + h1, .report-body .md-doc-page-break + .keep-with-next h1 { page-break-before: auto; break-before: auto; }\n"
     "</style>"
 )
 
@@ -967,7 +970,9 @@ def _build_html(
         cover_support_style = (
             "<style>\n"
             ".cover-label { line-height: 1.2; }\n"
-            ".cover-logo { max-width: 50mm; max-height: 20mm; margin-bottom: 4mm; }\n"
+            ".cover-text-on-bar .cover-label, .cover-text-on-bar .cover-title, .cover-text-on-bar .cover-meta, .cover-text-on-bar .cover-meta strong { color: white; }\n"
+            ".cover-text-on-bar .cover-divider { border-top-color: white; }\n"
+            ".cover-logo { display: inline-block; max-width: 50mm; max-height: 20mm; margin: 0 0 4mm; }\n"
             ".cover-bar-logo { position: absolute; right: 30mm; top: 50%; transform: translateY(-50%); max-height: 70%; max-width: 50mm; }\n"
             ".cover-bar-bottom { position: absolute; bottom: 0; left: 0; }\n"
             f".cover {{ width: {page_size_mm[0]}mm; height: {page_size_mm[1]}mm; }}\n"
@@ -1674,6 +1679,9 @@ def build(
 
     html_body, _ = render_math(markdown_html(body, _MD_EXTENSIONS))
     html_body = _drop_empty_table_headers(html_body)
+    # Mark before keep-with-next wrappers are inserted; direct-child selectors
+    # otherwise miss a leading heading after an included letterhead.
+    html_body = re.sub(r"<h1\b", '<h1 data-md-doc-first-heading="true"', html_body, count=1)
 
     # Column widths: <!-- col-widths --> comments and the table_col_widths
     # config key, applied per table with the same precedence as the docx

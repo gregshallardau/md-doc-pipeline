@@ -74,3 +74,8 @@ def test_conversion_failure_is_actionable(monkeypatch):
     monkeypatch.setattr(ziamath, "Latex", fail)
     with pytest.raises(ValueError, match="Could not render LaTeX equation"):
         render_math(markdown_html("$x$", []))
+
+
+def test_inline_pdf_math_overrides_generic_block_image_style():
+    html, _ = render_math(markdown_html("Before $x$ after", []))
+    assert "display: inline-block; margin: 0" in html

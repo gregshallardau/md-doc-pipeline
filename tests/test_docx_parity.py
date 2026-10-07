@@ -590,3 +590,15 @@ def test_page_geometry_survives_nested_margin_boxes():
     g = _page_geometry(css)
     assert (g["top"], g["right"], g["bottom"], g["left"]) == (25.0, 20.0, 20.0, 25.0)
     assert g.get("footer_distance") == 6.0
+
+
+def test_source_soft_wraps_do_not_create_word_line_breaks(tmp_repo):
+    out = _build(
+        tmp_repo,
+        "First soft\nwrapped paragraph.\n\nExplicit  \nbreak.\n\n<table><tr><td>soft\nwrap</td></tr></table>",
+        {},
+    )
+    paragraphs = Document(out).paragraphs
+    assert any(p.text == "First soft wrapped paragraph." for p in paragraphs)
+    assert any(p.text == "Explicit\nbreak." for p in paragraphs)
+    assert Document(out).tables[0].cell(0, 0).text == "soft wrap"

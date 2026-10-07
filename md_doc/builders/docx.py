@@ -473,6 +473,7 @@ def _render_cell_html(
                 self._link_text = ""
 
         def handle_data(self, data: str) -> None:
+            data = re.sub(r"[ \t\r\n\f]+", " ", data)
             if not data:
                 return
             if self._href is not None:
@@ -812,7 +813,7 @@ class _DocxBuilder(HTMLParser):
         if not text:
             return
         if self._last_was_br:
-            text = text.lstrip("\n")
+            text = text.lstrip()
             self._last_was_br = False
         if self._current_href is not None:
             self._link_text_buf += text
@@ -1231,7 +1232,11 @@ class _DocxBuilder(HTMLParser):
                 return
             png, w_px, _h_px = self._mermaid_images[idx]
             stream = BytesIO(png)
-            native_w_emu = w_px * _EMU_PER_PX
+            native_w_emu = (
+                text_width
+                if attrs.get("width") == "100%"
+                else int(attrs.get("width") or w_px) * _EMU_PER_PX
+            )
         else:
             path = _resolve_asset(src, self._doc_path, self._repo_root)
             if path is None:
@@ -1275,7 +1280,8 @@ class _DocxBuilder(HTMLParser):
         if self._in_table:
             self._current_cell_html += data
             return
-        self._add_text(data)
+        # HTML soft whitespace wraps naturally; only <br> creates a hard break.
+        self._add_text(re.sub(r"[ \t\r\n\f]+", " ", data))
 
     def handle_comment(self, data: str) -> None:
         if self._in_table:
@@ -1443,6 +1449,8 @@ class _DocxBuilder(HTMLParser):
             trPr = table.rows[r_idx]._tr.get_or_add_trPr()
             if trPr.find(qn("w:cantSplit")) is None:
                 trPr.append(OxmlElement("w:cantSplit"))
+            if r_idx == 0 and all(cell[0] for cell in row_cells):
+                trPr.append(OxmlElement("w:tblHeader"))
             for c_idx, (is_header, cell_html, cell_align) in enumerate(row_cells):
                 if c_idx >= max_cols:
                     break
@@ -1462,6 +1470,8 @@ class _DocxBuilder(HTMLParser):
                 # Zero paragraph spacing so cell padding alone controls whitespace
                 para.paragraph_format.space_before = Pt(0)
                 para.paragraph_format.space_after = Pt(0)
+                if is_header:
+                    para.paragraph_format.keep_with_next = True
 
                 _render_cell_html(
                     para,
@@ -1837,6 +1847,9 @@ def _add_docx_cover_page(
         "#"
     )
     meta_value_color = (theme.get("color_em") or "5d6d7e").lstrip("#")
+    if text_on_bar:
+        title_color = label_color = divider_color = "ffffff"
+        meta_label_color = meta_value_color = "ffffff"
     font_body = theme.get("font_body")
     text_align = str(config.get("cover_text_align", "left")).lower()
     para_align = {
@@ -1850,6 +1863,20 @@ def _add_docx_cover_page(
     top_margin_mm = section.top_margin / 36000
     text_width_mm = (section.page_width - section.left_margin - section.right_margin) / 36000
     page_twips = round(section.page_width / 635)
+
+    background = str(config.get("cover_background", "white"))
+    if background.lower() not in ("white", "#fff", "#ffffff"):
+        from PIL import Image
+
+        image = BytesIO()
+        Image.new("RGB", (1, 1), background).save(image, format="PNG")
+        image.seek(0)
+        paragraph = section.first_page_header.paragraphs[0]
+        paragraph.paragraph_format.line_spacing = Pt(1)
+        picture = paragraph.add_run().add_picture(
+            image, width=section.page_width, height=section.page_height
+        )
+        _anchor_cover_picture(picture, 0, 0)
 
     has_top_bar = show_bar and bar_pos in ("top", "both")
     has_bottom_bar = show_bar and bar_pos in ("bottom", "both")
@@ -1892,12 +1919,15 @@ def _add_docx_cover_page(
         wrap_tbl = _add_floating_table(
             doc,
             width_twips=page_twips,
-            height_mm=bar_top_h,
+            # Word adds cell padding to the minimum row content height.
+            # CSS min-height applies to the whole wrapper in this cover layout.
+            height_mm=max(0.1, bar_top_h - 50.0 - 20.0),
             fill=bar_color,
             y_spec="top",
             height_rule="atLeast",
         )
         wrap_cell = wrap_tbl.rows[0].cells[0]
+        wrap_cell._tc.get_or_add_tcPr().find(qn("w:vAlign")).set(qn("w:val"), "top")
         # Mirror .cover-content { padding: 50mm 30mm 20mm 28mm; }
         _set_cell_margins_mm(wrap_cell, top=50.0, right=30.0, bottom=20.0, left=28.0)
         container = wrap_cell

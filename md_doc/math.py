@@ -58,7 +58,7 @@ def render_math(html: str, *, word: bool = False) -> tuple[str, list[Any]]:
                 svg = ziamath.Latex(source, size=16, inline=not display).svg()
                 encoded = base64.b64encode(svg.encode()).decode("ascii")
                 image = (
-                    '<img class="md-doc-math" style="vertical-align: middle" '
+                    '<img class="md-doc-math" style="display: inline-block; margin: 0; vertical-align: middle" '
                     f'src="data:image/svg+xml;base64,{encoded}" alt="{escape(source, quote=True)}" />'
                 )
         except Exception as exc:
