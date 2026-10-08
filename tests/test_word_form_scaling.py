@@ -11,11 +11,9 @@ from md_doc.builders.pdf import form_rule_colors
 
 def test_form_dims_scale_with_theme_fonts() -> None:
     base = _compute_form_dims({})
-    big = _compute_form_dims(
-        {"form_input": {"font_pt": 20.0}, "font_size_table": 19.0, "font_size_body": 21.0}
-    )
-    assert big["line"] == base["line"] * 2
-    assert big["relief"] == base["relief"] * 2
+    big = _compute_form_dims({"font_size_table": 19.0, "font_size_body": 21.0})
+    assert big["line"] == base["line"]  # WeasyPrint's input box is a fixed height
+    assert big["relief"] == base["relief"] * 2  # descent follows the body font
     assert big["cell_input"] == base["cell_input"] * 2
     assert big["choice_line"] == base["choice_line"] * 2
 
@@ -66,3 +64,38 @@ def test_form_document_word_footer_hides_running_date_and_grid_uses_theme_tint(
         footers = "".join(z.read(n).decode() for n in z.namelist() if "footer" in n)
     assert "1 April 2026" not in footers
     assert 'w:color="000000"' not in document.split("<w:tblBorders>")[1].split("</w:tblBorders>")[0]
+
+
+def test_css_row_heights_follow_theme_font(tmp_path: Path) -> None:
+    from md_doc.builders.pdf import _expand_box_block
+    from md_doc.table_layout import css_row_heights
+
+    html = _expand_box_block(None, "**A** ?[text: a]\nQ | ?[yesno: y]")
+    heights = []
+    for size in (8, 16):
+        css = tmp_path / f"t{size}.css"
+        css.write_text(f"table {{ font-size: {size}pt; border-collapse: collapse; }}")
+        found = css_row_heights(html, css, 450)
+        assert found is not None and len(found) == 2
+        heights.append(found)
+    assert all(big > small for big, small in zip(heights[1], heights[0], strict=True))
+
+
+def test_form_table_rows_carry_pdf_row_heights(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "_theme.css").write_text("table { font-size: 9.5pt; border-collapse: collapse; }")
+    body = "?[box]\n**Name** ?[text: n]\nQ | ?[yesno: y]\n?[/box]\n"
+    md = f"---\ntitle: T\n---\n\n{body}"
+    doc = tmp_path / "f.md"
+    doc.write_text(md)
+    out = tmp_path / "f.docx"
+    build(
+        md,
+        {"title": "T", "cover_page": False, "pdf_forms": True},
+        out,
+        doc_path=doc,
+        repo_root=tmp_path,
+    )
+    with zipfile.ZipFile(out) as z:
+        document = z.read("word/document.xml").decode()
+    assert document.count('w:hRule="atLeast"') >= 2

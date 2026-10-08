@@ -138,3 +138,51 @@ def css_code_line_pitch(css_path: Path | None, text_width_pt: float) -> float | 
     if css_path is None or not css_path.is_file():
         return None
     return _code_pitch(str(css_path), css_path.stat().st_mtime, round(text_width_pt, 2))
+
+
+def _form_extra_css() -> str:
+    """The stylesheet the PDF builder adds on top of the theme for form documents."""
+    import re as _re
+
+    from .builders import pdf as _pdf
+
+    return _re.sub(r"</?style>", "", _pdf._BASE_FIXES_CSS + _pdf._form_support_css(None))
+
+
+@lru_cache(maxsize=256)
+def _row_heights(
+    html: str, css_path: str, css_mtime: float, width_pt: float
+) -> tuple[float, ...] | None:
+    del css_mtime  # cache key only
+    try:
+        from weasyprint import CSS, HTML
+
+        path = Path(css_path)
+        document = HTML(
+            string=(
+                '<!doctype html><html><body><div class="report-body"><form>'
+                f"{html}</form></div></body></html>"
+            ),
+            base_url=str(path.parent) + "/",
+        ).render(
+            stylesheets=[
+                CSS(filename=str(path)),
+                CSS(string=_form_extra_css()),
+                CSS(string=f"@page {{ size: {width_pt}pt 4000pt; margin: 0 }}"),
+            ]
+        )
+        page_box = document.pages[0]._page_box
+        rows = [b for b in page_box.descendants() if type(b).__name__ == "TableRowBox"]
+        heights = tuple(round(float(b.height) * 0.75, 2) for b in rows)  # CSS px -> pt
+        return heights if heights and all(h > 0 for h in heights) else None
+    except Exception:  # noqa: BLE001 - layout is an enhancement, never fatal
+        _log.debug("PDF form row layout unavailable; using fitted heights", exc_info=True)
+        return None
+
+
+def css_row_heights(html: str, css_path: Path | None, width_pt: float) -> list[float] | None:
+    """Row heights (pt) the PDF gives a form table, laid out with the real theme CSS."""
+    if css_path is None or not css_path.is_file():
+        return None
+    heights = _row_heights(html, str(css_path), css_path.stat().st_mtime, round(width_pt, 2))
+    return list(heights) if heights else None

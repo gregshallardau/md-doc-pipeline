@@ -47,7 +47,7 @@ from docx.shared import Emu, Mm, Pt, RGBColor
 
 from ..config import coerce_bool
 from ..forms import collapse_select_markup
-from ..table_layout import css_code_line_pitch, css_column_weights
+from ..table_layout import css_code_line_pitch, css_column_weights, css_row_heights
 from ..docx_theme import (
     _apply_font_name,
     _hex_to_rgb,
@@ -202,25 +202,26 @@ _CELL_CHOICE_LINE_PT = 18.3
 _CELL_PLAIN_BARE_PT = 13.0
 _CHOICE_MARKS = "\u2610\u2611\u25cb"
 
-# The constants above were fitted against themes with a 10pt input font, 9.5pt
-# table text and 10.5pt body text. A theme with other sizes scales them (line
-# boxes, descent relief and control sizes are all proportional to font size),
-# and its own input margins / textarea minimum replace the defaults.
-_REF_INPUT_FONT_PT = 10.0
+# The constants above were fitted against themes with 9.5pt table text and
+# 10.5pt body text. Measured against WeasyPrint at 8-18pt: a text input's box is
+# a fixed height regardless of font size (so ``line`` never scales), while the
+# descent an empty input sits above is proportional to the *body* font (0.479 em).
+# Cell and choice lines scale with the text they sit in.
 _REF_TABLE_FONT_PT = 9.5
 _REF_BODY_FONT_PT = 10.5
+_RELIEF_PER_BODY_PT = 0.479
 
 
 def _compute_form_dims(theme: dict[str, Any]) -> dict[str, float]:
     box = theme.get("form_input") or {}
-    inp = float(box.get("font_pt") or _REF_INPUT_FONT_PT) / _REF_INPUT_FONT_PT
+    body_pt = float(theme.get("font_size_body") or _REF_BODY_FONT_PT)
     tab = float(theme.get("font_size_table") or _REF_TABLE_FONT_PT) / _REF_TABLE_FONT_PT
-    body = float(theme.get("font_size_body") or _REF_BODY_FONT_PT) / _REF_BODY_FONT_PT
+    body = body_pt / _REF_BODY_FONT_PT
     return {
-        "line": _FIELD_LINE_PT * inp,
+        "line": _FIELD_LINE_PT,
         "margin_top": float(box.get("margin_top", _FIELD_MARGIN_TOP_PT)),
         "margin_bottom": float(box.get("margin_bottom", _FIELD_MARGIN_BOTTOM_PT)),
-        "relief": _FILLED_RELIEF_PT * inp,
+        "relief": _RELIEF_PER_BODY_PT * body_pt,
         "textarea_min": float(box.get("textarea_min", _TEXTAREA_MIN_PT)),
         "choice_line": _CHOICE_LINE_PT * body,
         "cell_input": _CELL_INPUT_PT * tab,
@@ -704,6 +705,7 @@ class _DocxBuilder(HTMLParser):
         self._in_cell = False  # True while cursor is inside a <th> or <td>
         self._in_th = False
         self._table_form_kind: str | None = None
+        self._table_pdf_html: str | None = None
         self._table_rows: list[list[tuple[bool, str, str | None]]] = []
         self._current_row: list[tuple[bool, str, str | None, dict[str, str]]] = []
         self._table_style: dict[str, str] = {}
@@ -1137,7 +1139,11 @@ class _DocxBuilder(HTMLParser):
         # margin falls after the box rather than between label and box.
         # The box margin lives inside the PDF's line box and never collapses
         # with neighbours; the enclosing paragraph's own bottom margin does.
-        fixed_after = _dim("margin_bottom") - (_dim("relief") if attrs.get("data-filled") else 0.0)
+        # A filled PDF input sits on its text; an empty one on the baseline with the
+        # line's descent below it, which grows with the body font. The base is the
+        # filled line (margin less the descent at the reference size).
+        base_after = _dim("margin_bottom") - _RELIEF_PER_BODY_PT * _REF_BODY_FONT_PT
+        fixed_after = base_after + (0.0 if attrs.get("data-filled") else _dim("relief"))
         fmt.space_after = Pt(fixed_after + float(self._theme.get("para_space_after", 0)))
         self._fixed_margins[para._p] = (_dim("margin_top"), fixed_after)
         if label is not None:
@@ -1509,6 +1515,7 @@ class _DocxBuilder(HTMLParser):
                 self._table_gap = float(dict(attrs).get("data-gap") or 0.0)
             except ValueError:
                 self._table_gap = 0.0
+            self._table_pdf_html = dict(attrs).get("data-pdf")
             self._in_table = True
             self._table_style = _parse_inline_style(dict(attrs).get("style"))
             self._table_rows = []
@@ -2058,6 +2065,16 @@ class _DocxBuilder(HTMLParser):
                 borders.append(edge)
             tblPr.append(borders)
         n_rows = len(rows)
+        # Row heights the PDF gives this form table, laid out with the real theme
+        # CSS: they depend on the theme (input display, padding, fonts), so Word
+        # rows take them as minimums rather than relying on fitted constants.
+        pdf_heights: list[float] | None = None
+        if form_kind in ("field-box", "field-row") and self._table_pdf_html:
+            pdf_heights = css_row_heights(
+                self._table_pdf_html, self._layout_css, self._text_width_emu() / 12700
+            )
+            if pdf_heights is not None and len(pdf_heights) != n_rows:
+                pdf_heights = None
         header_rows = 1 if all(cell[0] for cell in rows[0]) else 0
 
         for r_idx, row_cells in enumerate(rows):
@@ -2072,6 +2089,11 @@ class _DocxBuilder(HTMLParser):
             trPr = table.rows[r_idx]._tr.get_or_add_trPr()
             if trPr.find(qn("w:cantSplit")) is None:
                 trPr.append(OxmlElement("w:cantSplit"))
+            if pdf_heights is not None:
+                tr_height = OxmlElement("w:trHeight")
+                tr_height.set(qn("w:val"), str(int(pdf_heights[r_idx] * 20)))
+                tr_height.set(qn("w:hRule"), "atLeast")
+                trPr.append(tr_height)
             if r_idx == 0 and all(cell[0] for cell in row_cells):
                 trPr.append(OxmlElement("w:tblHeader"))
             c_idx = 0
@@ -3079,7 +3101,14 @@ def _word_form_layout(md_content: str) -> str:
             return "<tr>" + "".join(cells) + "</tr>"
 
         body = "".join(row_html(row) for row in rows)
-        return f'\n\n{prefix}<table class="field-{kind}">{body}</table>\n\n'
+        import base64
+
+        token = re.search(r"pdf=([A-Za-z0-9_=-]+)", args or "")
+        pdf_html = base64.urlsafe_b64decode(token.group(1)).decode() if token else ""
+        return (
+            f'\n\n{prefix}<table class="field-{kind}" '
+            f'data-pdf="{escape(pdf_html, quote=True)}">{body}</table>\n\n'
+        )
 
     return pattern.sub(table, md_content)
 
@@ -3217,6 +3246,30 @@ def _textarea_height(attrs: dict[str, str | bool]) -> float:
     return max(_dim("textarea_min"), rows * _dim("line"))
 
 
+def _with_pdf_table(block: re.Match, converted: str) -> str:
+    """Tag a converted ``?[row]``/``?[box]`` block with the PDF's own HTML for it.
+
+    The PDF builder's table markup (from the *original* source) is what gets laid
+    out to find the row heights Word must reproduce; it rides along in the opening
+    marker as ``pdf=<base64>`` and is read back by ``_word_form_layout``.
+    """
+    import base64
+
+    from .pdf import _expand_box_block, _expand_row_block
+
+    kind, args, content = block.groups()
+    pdf_html = _expand_box_block(args, content) if kind == "box" else _expand_row_block(content)
+    token = base64.urlsafe_b64encode(pdf_html.encode()).decode()
+    prefix = f"{args};" if args else ""
+    return re.sub(
+        r"^\?\[(?:row|box)(?::[^\]]*)?\]",
+        lambda _m: f"?[{kind}:{prefix}pdf={token}]",
+        converted,
+        count=1,
+        flags=re.MULTILINE,
+    )
+
+
 def _convert_form_markup(md_content: str, inline: Any, boxed: Any) -> str:
     """Rewrite ``?[...]`` markers: *boxed* for body fields, *inline* inside grids.
 
@@ -3264,7 +3317,7 @@ def _convert_form_markup(md_content: str, inline: Any, boxed: Any) -> str:
     pos = 0
     for block in _FORM_BLOCK_RE.finditer(md_content):
         out.append(prose(md_content[pos : block.start()]))
-        out.append(FIELD_RE.sub(inline, block.group(0)))
+        out.append(_with_pdf_table(block, FIELD_RE.sub(inline, block.group(0))))
         pos = block.end()
     out.append(prose(md_content[pos:]))
     return _STRUCT_MARKER_RE.sub("", _word_form_layout("".join(out)))
