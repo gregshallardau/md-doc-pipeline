@@ -394,6 +394,20 @@ def _expand_row_block(row_content: str) -> str:
     )
 
 
+_PREFIXED_FIELD_RE = re.compile(r"^([^\w\s*?\[]{1,3})\s*(\?\[[^\]]*\])$")
+
+
+def _box_cell_to_html(cell: str) -> str:
+    """``$ ?[number: x]`` keeps its currency prefix on the field's own line."""
+    m = _PREFIXED_FIELD_RE.match(cell)
+    if not m:
+        return _cell_to_html(cell)
+    return (
+        f'<div class="prefixed-field"><span>{_escape_html(m.group(1))}</span>'
+        f"{_cell_to_html(m.group(2))}</div>"
+    )
+
+
 def _expand_box_block(args: str | None, box_content: str) -> str:
     """Expand a ?[box]...?[/box] block into a bordered field-grid table.
 
@@ -448,8 +462,12 @@ def _expand_box_block(args: str | None, box_content: str) -> str:
                 width_style = f' style="width: {100 // max_cols}%;"'
             else:
                 width_style = ""
-            tds.append(f"<td{colspan}{width_style}>{_cell_to_html(cell)}</td>")
-        rows_html.append(f"<tr>{''.join(tds)}</tr>")
+            tds.append(f"<td{colspan}{width_style}>{_box_cell_to_html(cell)}</td>")
+        # Question/answer rows (no **label** in any cell) centre vertically so a
+        # Yes/No pair or a $ field lines up with its question; labelled rows
+        # keep the label pinned to the top of the cell.
+        qa = "" if any("**" in c for c in cells) else ' class="qa"'
+        rows_html.append(f"<tr{qa}>{''.join(tds)}</tr>")
 
     body = "".join(rows_html)
     return f'<table class="field-box">\n{body}\n</table>'
@@ -912,6 +930,10 @@ table.field-box { font-size: 9.5pt; }
 table.field-box td { border: 0.5pt solid __RULE_SOFT__; background: none; padding: 5pt 9pt; vertical-align: top; line-height: 1.3; }
 table.field-box tr:nth-child(even) td { background: none; }
 table.field-box tr { page-break-inside: avoid; }
+table.field-box tr.qa td { vertical-align: middle; }
+table.field-box .prefixed-field { display: flex; align-items: center; }
+table.field-box .prefixed-field > span { margin-right: 3pt; }
+table.field-box .prefixed-field > input { flex: 1; width: auto; }
 table.field-box strong { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; color: __PRIMARY__; }
 table.field-box em { font-size: 7.5pt; }
 table.field-box input[type="text"], table.field-box input[type="email"],
@@ -940,6 +962,14 @@ table td > input[type="tel"], table td > input[type="url"],
 table td > textarea, table td > select {
   appearance: auto; border: none; background: transparent; border-radius: 0;
   width: 100%; height: 13pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+}
+/* Controls sharing a row (labelled form-groups) take one fixed height, so a
+   <select> never makes its row taller than the text-input rows around it */
+.form-group input[type="text"], .form-group input[type="email"],
+.form-group input[type="date"], .form-group input[type="number"],
+.form-group input[type="tel"], .form-group input[type="url"],
+.form-group select {
+  box-sizing: border-box; height: 20pt; margin: 0; padding: 0 6pt;
 }
 /* Checkboxes sit inline beside their label (the UA form stylesheet makes
    inputs block-level, which strands the label on the next line) */

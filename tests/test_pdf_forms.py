@@ -390,3 +390,11 @@ def test_signature_row_labels_become_captions():
     md = "?[row]\n?[signature: sig] | **Date** ?[date: d]\n?[/row]\n"
     html = _expand_form_fields(md, is_form=True)
     assert '<div class="signature-label">Date</div>' in html
+
+
+def test_box_question_rows_centre_and_currency_prefix_inline():
+    md = "?[box]\nTotal turnover: | $ ?[number: t]\n**City** ?[text: c]\n?[/box]\n"
+    html = _expand_form_fields(md, is_form=True)
+    assert '<tr class="qa">' in html
+    assert 'class="prefixed-field"' in html
+    assert html.count('<tr class="qa">') == 1  # the labelled row stays top-aligned
