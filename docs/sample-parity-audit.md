@@ -49,7 +49,8 @@ Generated every discovered sample in `examples/` and `docs/examples/`: 12 existi
 Page counts now match the PDF for all 17 gallery samples. Mean vertical drift of matched text lines is roughly 2-3pt for report-style samples and up to ~10pt (forms ~12-33pt) for the form-heavy ones. Residual, understood differences:
 
 - PDF form boundary cases: where WeasyPrint moves a label and its box to the next page together, Word can fit them by a few points (pdf-form).
-- The PDF "Send" submit button has no Word equivalent and is intentionally omitted, which shifts later form-controls content slightly.
+- The PDF "Send" submit button has no Word equivalent and is intentionally omitted, so content after it sits one button-height (~40pt) higher in Word. This is now the largest remaining form drift.
+- Form geometry is theme-driven: Word row heights for `?[row]`/`?[box]` come from laying out the PDF's own table markup with the real theme CSS; field and choice spacing scale with the theme's body/table font sizes. Word still draws checkboxes as `☐` glyphs rather than boxes, and text in Yes/No rows sits at the cell's bottom rather than centred.
 - Header text is offset ~5pt when a header bar has logos (a PDF table-cell quirk); a right-aligned cover logo differs ~9pt horizontally (LibreOffice rendering detail).
 - A table with `col-widths` that overflows the right margin in the PDF is clamped to the text width in Word.
 - Checkbox glyphs are smaller than the PDF's 16pt control; `.section-note` class styles are not translated.

@@ -99,3 +99,33 @@ def test_form_table_rows_carry_pdf_row_heights(tmp_path: Path) -> None:
     with zipfile.ZipFile(out) as z:
         document = z.read("word/document.xml").decode()
     assert document.count('w:hRule="atLeast"') >= 2
+
+
+def _word_xml(tmp_path: Path, body: str) -> str:
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    (tmp_path / "_theme.css").write_text("table { font-size: 9.5pt; border-collapse: collapse; }")
+    md = f"---\ntitle: T\n---\n\n{body}"
+    doc = tmp_path / "f.md"
+    doc.write_text(md)
+    out = tmp_path / "f.docx"
+    build(
+        md,
+        {"title": "T", "cover_page": False, "pdf_forms": True},
+        out,
+        doc_path=doc,
+        repo_root=tmp_path,
+    )
+    with zipfile.ZipFile(out) as z:
+        return z.read("word/document.xml").decode()
+
+
+def test_standalone_signature_gets_caption_and_em_scaled_line(tmp_path: Path) -> None:
+    xml = _word_xml(tmp_path, "Sign below.\n\n?[signature: sig]\n")
+    assert "SIGNATURE" in xml
+    assert 'w:color="555555"' in xml  # the PDF's rule colour
+
+
+def test_signature_row_uses_rule_leader_and_captions(tmp_path: Path) -> None:
+    xml = _word_xml(tmp_path, "?[row]\n?[signature: sig] | **Date** ?[date: d]\n?[/row]\n")
+    assert 'w:leader="underscore"' in xml
+    assert "SIGNATURE" in xml and "DATE" in xml

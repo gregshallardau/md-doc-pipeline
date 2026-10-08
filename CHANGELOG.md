@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 ### Changed
+- Word form tables take their row heights from the PDF: the PDF builder's own table
+  markup is laid out with the real theme CSS and each Word row is given that
+  height as a minimum, so row pitch follows theme padding, input display and font
+  sizes. Empty-input spacing follows the body font; signature fields (standalone
+  and in `?[row]`) get the PDF's rule, caption and em-scaled height.
 - Form PDFs: every form-control dimension is now em-based, so controls, grids,
   labels and signature rows scale with the theme's font size. Grids use the
   theme's primary colour (tinted rules, uppercase labels) and ordinary tables

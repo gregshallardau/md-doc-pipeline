@@ -218,6 +218,8 @@ def _compute_form_dims(theme: dict[str, Any]) -> dict[str, float]:
     tab = float(theme.get("font_size_table") or _REF_TABLE_FONT_PT) / _REF_TABLE_FONT_PT
     body = body_pt / _REF_BODY_FONT_PT
     return {
+        "body_pt": body_pt,
+        "signature_h": 3.0 * body_pt,
         "line": _FIELD_LINE_PT,
         "margin_top": float(box.get("margin_top", _FIELD_MARGIN_TOP_PT)),
         "margin_bottom": float(box.get("margin_bottom", _FIELD_MARGIN_BOTTOM_PT)),
@@ -512,6 +514,7 @@ def _render_cell_html(
     input_pt: float = 0.0,
     bare_input_pt: float = 0.0,
     label_style: dict[str, Any] | None = None,
+    caption_style: dict[str, Any] | None = None,
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
@@ -535,10 +538,13 @@ def _render_cell_html(
             self._href: str | None = None
             self._link_text = ""
             self._label = False
+            self._cap = False
 
         def handle_starttag(self, tag: str, attrs: list) -> None:
             tag = tag.lower()
-            if tag == "label" and label_style:
+            if tag == "span" and "docx-cap" in (dict(attrs).get("class") or ""):
+                self._cap = True
+            elif tag == "label" and label_style:
                 self._label = True
             elif tag in ("strong", "b"):
                 self._bold = True
@@ -592,6 +598,8 @@ def _render_cell_html(
                 self._link_text = ""
             elif tag == "label":
                 self._label = False
+            elif tag == "span":
+                self._cap = False
 
         def handle_data(self, data: str) -> None:
             data = re.sub(r"[ \t\r\n\f]+", " ", data)
@@ -600,10 +608,26 @@ def _render_cell_html(
             if self._href is not None:
                 self._link_text += data
                 return
+            if self._cap and caption_style:
+                self._write_caption(data)
+                return
             if self._label and label_style:
                 self._write_label(data)
                 return
             write_text(paragraph, data, bold=self._bold, italic=self._italic, code=self._code)
+
+        def _write_caption(self, data: str) -> None:
+            """Caption under a write-in rule: small bold uppercase, themed colour."""
+            assert caption_style is not None
+            before = len(paragraph.runs)
+            write_text(paragraph, data.upper(), bold=True)
+            for run in paragraph.runs[before:]:
+                run.font.size = Pt(float(caption_style["size"]))
+                r, g, b = _hex_to_rgb(str(caption_style["color"]))
+                run.font.color.rgb = RGBColor(r, g, b)
+                spacing = OxmlElement("w:spacing")
+                spacing.set(qn("w:val"), str(round(float(caption_style["size"]) * 0.07 * 20)))
+                run._r.get_or_add_rPr().append(spacing)
 
         def _write_label(self, data: str) -> None:
             """Field label: the theme's label size / colour / case / tracking."""
@@ -893,22 +917,59 @@ class _DocxBuilder(HTMLParser):
         return self._paragraph
 
     def _style_signature_line(self, para: Any) -> None:
-        """Signature field: a 40pt-high slot ruled underneath, 60% of the width."""
+        """Signature field: a ruled slot 3 body-em high, 60% of the width (as the PDF)."""
+        body = _dim("body_pt")
         fmt = para.paragraph_format
-        fmt.space_before = Pt(8)
-        fmt.space_after = Pt(12)
+        # The PDF block margins (1.2em / 1.4em) collapse with neighbours like any
+        # CSS margin, so they are ordinary (not fixed) paragraph spacing here.
+        self._fixed_margins.pop(para._p, None)
+        fmt.space_before = Pt(1.2 * body)
+        fmt.space_after = Pt(0)
         fmt.left_indent = Pt(0)
         text_width_pt = self._text_width_emu() / 12700
         fmt.right_indent = Pt(text_width_pt * 0.4)
+        fmt.line_spacing = Pt(_dim("signature_h"))
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        fmt.keep_with_next = True
         pPr = para._p.get_or_add_pPr()
         pBdr = OxmlElement("w:pBdr")
         bottom = OxmlElement("w:bottom")
         bottom.set(qn("w:val"), "single")
-        bottom.set(qn("w:sz"), "12")
+        bottom.set(qn("w:sz"), "8")
         bottom.set(qn("w:space"), "1")
-        bottom.set(qn("w:color"), "1A1A2E")
+        bottom.set(qn("w:color"), "555555")
         pBdr.append(bottom)
         _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+
+    def _start_signature_caption(self) -> None:
+        """The small uppercase caption under a signature rule."""
+        body = _dim("body_pt")
+        self._new_para("Normal")
+        para = self._paragraph
+        fmt = para.paragraph_format
+        size = 0.75 * body
+        fmt.space_before = Pt(0.3 * body)
+        fmt.space_after = Pt(1.4 * body)
+        fmt.left_indent = Pt(0)
+        fmt.right_indent = Pt(self._text_width_emu() / 12700 * 0.4)
+        fmt.line_spacing = Pt(size * 1.65)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        fmt.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        self._signature_caption = para
+
+    def _finish_signature_caption(self) -> None:
+        para = self.__dict__.get("_signature_caption")
+        if para is None:
+            return
+        self._signature_caption = None
+        size = 0.75 * _dim("body_pt")
+        for run in para.runs:
+            run.text = run.text.upper()
+            run.font.size = Pt(size)
+            run.font.color.rgb = RGBColor(0x7F, 0x8C, 0x9A)
+            spacing = OxmlElement("w:spacing")
+            spacing.set(qn("w:val"), str(int(size * 0.2 * 20)))
+            run._r.get_or_add_rPr().append(spacing)
 
     def _add_rule(self) -> None:
         """A horizontal rule: a hairline paragraph carrying the CSS ``hr`` margins.
@@ -1383,6 +1444,8 @@ class _DocxBuilder(HTMLParser):
                 self._page_break_pending = True
             if "docx-field" in classes:
                 self._start_field_box(dict(attrs))
+            if "docx-caption" in classes:
+                self._start_signature_caption()
             self._div_stack.append(self._block_count() if "keep-with-next" in classes else None)
 
         elif tag == "a":
@@ -1631,6 +1694,7 @@ class _DocxBuilder(HTMLParser):
         elif tag == "div":
             if self._alignment_stack:
                 self._alignment_stack.pop()
+            self._finish_signature_caption()
             self._paragraph = None
             if self._div_stack:
                 keep_from = self._div_stack.pop()
@@ -1891,6 +1955,25 @@ class _DocxBuilder(HTMLParser):
         return cached  # type: ignore[no-any-return]
 
     @staticmethod
+    def _rule_fill_lines(para: Any, width_pt: float, color: str) -> None:
+        """Replace ``____`` stand-ins with a full-width write-in rule (a tab leader).
+
+        The PDF draws bare ``?[row]`` inputs as a 1pt rule in the theme colour.
+        """
+        from docx.enum.text import WD_TAB_LEADER
+
+        for run in para.runs:
+            if run.text and set(run.text) <= {"_"}:
+                run.text = ""
+                run.add_tab()
+                r, g, b = _hex_to_rgb(color)
+                run.font.color.rgb = RGBColor(r, g, b)
+                para.paragraph_format.tab_stops.add_tab_stop(
+                    Pt(width_pt), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.LINES
+                )
+                break
+
+    @staticmethod
     def _blank_fill_lines(para: Any) -> None:
         """The PDF's cell inputs are blank until filled: drop the ``____`` stand-ins."""
         for run in para.runs:
@@ -2149,6 +2232,14 @@ class _DocxBuilder(HTMLParser):
                     bold_override=is_header,
                     insert_math=self._insert_math,
                     insert_image=self._embed_image,
+                    caption_style=(
+                        {
+                            "size": (body_font_size or 9.5) * 0.7,
+                            "color": self._form_colors()[0],
+                        }
+                        if form_kind == "field-row"
+                        else None
+                    ),
                     input_pt=_dim("cell_input") if form_kind == "field-box" else _dim("cell_plain"),
                     bare_input_pt=(
                         _dim("cell_bare") if form_kind == "field-box" else _dim("cell_plain_bare")
@@ -2204,6 +2295,9 @@ class _DocxBuilder(HTMLParser):
 
                 if self._form_document and form_kind not in ("field-row", "flex-row"):
                     self._blank_fill_lines(para)
+                if form_kind == "field-row":
+                    rule_pt = sum(col_widths_twips[start : start + span]) / 20 - 8.0
+                    self._rule_fill_lines(para, rule_pt, self._form_colors()[0])
                 if form_kind == "field-box" and not is_header:
                     self._style_field_box_cell(para, size or 0.0, form_label_color)
                     if qa_row:
@@ -3317,7 +3411,15 @@ def _convert_form_markup(md_content: str, inline: Any, boxed: Any) -> str:
     pos = 0
     for block in _FORM_BLOCK_RE.finditer(md_content):
         out.append(prose(md_content[pos : block.start()]))
-        out.append(_with_pdf_table(block, FIELD_RE.sub(inline, block.group(0))))
+        text = block.group(0)
+        if block.group(1) == "row" and "?[signature" in text:
+            # PDF: labels in a signature row become captions under their rule.
+            text = re.sub(
+                r"\*\*([^*|]+?)\*\*\s*(\?\[[^\]]*\])",
+                r'\2<br><span class="docx-cap">\1</span>',
+                text,
+            )
+        out.append(_with_pdf_table(block, FIELD_RE.sub(inline, text)))
         pos = block.end()
     out.append(prose(md_content[pos:]))
     return _STRUCT_MARKER_RE.sub("", _word_form_layout("".join(out)))
@@ -3351,7 +3453,10 @@ def _strip_form_fields_for_docx(md_content: str) -> str:
             return _cell_input("\\_" * 8 + " (" + " / ".join(options) + ")")
         value = attrs.get("value")
         shown = escape(str(value)) if value is not None else "\\_" * 8
-        return _cell_input(shown, _cell_textarea_height(attrs) if ftype == "textarea" else None)
+        cell = _cell_input(shown, _cell_textarea_height(attrs) if ftype == "textarea" else None)
+        if ftype == "signature":
+            cell += '<br><span class="docx-cap">Signature</span>'
+        return cell
 
     def boxed(match: re.Match) -> str:
         parsed = parse_field_spec(match.group(1))
@@ -3362,7 +3467,10 @@ def _strip_form_fields_for_docx(md_content: str) -> str:
         if ftype == "textarea":
             return _field_box(value, height=_textarea_height(attrs))
         if ftype == "signature":
-            return _field_box(value, height=40.0, style="line")
+            return (
+                _field_box(value, height=_dim("signature_h"), style="line")
+                + '\n\n<div class="docx-caption">Signature</div>\n\n'
+            )
         if ftype == "select":
             first = options[0] if options else ""
             return _field_box(first, arrow="1")
