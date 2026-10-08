@@ -1212,7 +1212,7 @@ wheels = [
 
 [[package]]
 name = "md-doc-pipeline"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1277,7 +1277,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.1.2" },
     { name = "python-pptx", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "weasyprint", specifier = ">=60.0" },
+    { name = "weasyprint", specifier = ">=68.0,<71" },
     { name = "ziamath", specifier = ">=0.13" },
 ]
 provides-extras = ["azure", "s3", "mermaid"]

@@ -170,8 +170,8 @@ out of `_meta.yml`. An unset variable is an error (a `--dry-run` leaves it unexp
 
 | Backend | `sync_config` keys | Notes |
 |---------|--------------------|-------|
-| `azure` | `share_name` (required), `connection_string`, `directory` | Needs `pip install "md-doc-pipeline[azure]"`. `connection_string` falls back to the `AZURE_STORAGE_CONNECTION_STRING` environment variable. |
-| `s3` | `bucket` (required), `prefix`, `region` | Needs `pip install "md-doc-pipeline[s3]"`. `region` falls back to `AWS_DEFAULT_REGION`; credentials come from boto3's normal chain (environment, profile, role). |
+| `azure` | `share_name` (required), `connection_string`, `directory` | Needs the `azure` extra (`uv sync --extra azure`, or see [Installation](../README.md#installation)). `connection_string` falls back to the `AZURE_STORAGE_CONNECTION_STRING` environment variable. |
+| `s3` | `bucket` (required), `prefix`, `region` | Needs the `s3` extra (`uv sync --extra s3`, or see [Installation](../README.md#installation)). `region` falls back to `AWS_DEFAULT_REGION`; credentials come from boto3's normal chain (environment, profile, role). |
 | `local` | `path` (required) | Copies atomically to a folder; the destination must differ from the source. |
 
 ```yaml

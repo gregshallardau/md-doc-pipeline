@@ -93,6 +93,7 @@ Every user-facing feature must be documented before it ships. Where things live:
 | Fillable forms | `docs/pdf-forms-guide.md` |
 | Slides | `docs/slides-guide.md`, `docs/llm-deck-prompt.md` |
 | Export and extract | `docs/export-guide.md`, `docs/extraction-guide.md` |
+| Word/PDF parity and known differences | `docs/word-pdf-parity.md` |
 | Troubleshooting, Python API | `docs/troubleshooting.md`, `docs/python-api.md` |
 | Agent prompts | `prompts/` |
 
@@ -430,7 +431,7 @@ Multiline footer text in Word documents uses soft line breaks (`<w:br/>`) instea
 
 ### WeasyPrint PDF forms — key facts for implementation
 
-WeasyPrint 68.x supports interactive AcroForm PDF fields natively. No extra libraries needed.
+WeasyPrint 68–70 support interactive AcroForm PDF fields natively (the dependency is bounded to `>=68,<71`). No extra libraries needed.
 
 - Pass `pdf_forms=True` to `write_pdf()`: `weasyprint.HTML(...).write_pdf(path, pdf_forms=True)`
 - HTML `<input type="text" name="x">` → `/Tx` text field

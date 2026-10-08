@@ -20,7 +20,6 @@ from typing import Any, Iterable
 from .config import is_boolish
 
 _FORMATS = {"pdf", "docx", "dotx", "pptx"}
-_LR = {"left", "right"}
 _LCR = {"left", "center", "right"}
 
 # Keys whose value must be a boolean.
@@ -47,7 +46,7 @@ BOOL_KEYS: frozenset[str] = frozenset(
 ENUM_KEYS: dict[str, set[str]] = {
     "dotx_field_type": {"form", "merge"},
     "body_text_align": {"justify", "left", "center", "right"},
-    "cover_text_align": _LR,
+    "cover_text_align": _LCR,
     "cover_bar_position": {"top", "bottom", "both"},
     "header_logo_position": _LCR,
     "header_text_position": _LCR,

@@ -25,7 +25,7 @@ from md_doc.builders.docx import build as word  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING)
 logging.disable(logging.INFO)
-paths = _discover_markdown(ROOT / "examples") + _discover_markdown(ROOT / "docs/examples")
+paths = _discover_markdown(ROOT / "examples")
 
 records = []
 for p in paths:

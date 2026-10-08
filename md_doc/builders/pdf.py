@@ -40,17 +40,41 @@ from ..forms import collapse_select_markup  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 
 
-def _local_url_fetcher(url: str, *args: Any, **kwargs: Any) -> Any:
-    """Allow embedded data and local files only, before any network I/O.
-
-    WeasyPrint applies this to images, stylesheets, fonts and nested SVG assets.
-    Remote and UNC resources are omitted rather than fetched.
-    """
+def _reject_external(url: str) -> None:
+    """Raise unless *url* is embedded data or a local file (no host, no UNC path)."""
     parsed = urlsplit(url)
     path = unquote(parsed.path).replace("\\", "/")
     if parsed.scheme not in {"file", "data"} or parsed.netloc or path.startswith("//"):
         raise ValueError(f"External resource blocked: {parsed.scheme or 'relative'} URL")
+
+
+def _local_url_fetcher(url: str, *args: Any, **kwargs: Any) -> Any:
+    """Allow embedded data and local files only, before any network I/O.
+
+    WeasyPrint applies this to images, stylesheets, fonts and nested SVG assets.
+    Remote and UNC resources are omitted rather than fetched. Used with
+    WeasyPrint before 70, where a ``url_fetcher`` is a plain function.
+    """
+    _reject_external(url)
     return weasyprint.default_url_fetcher(url, *args, **kwargs)
+
+
+def _make_url_fetcher() -> Any:
+    """The offline fetcher in the form the installed WeasyPrint expects.
+
+    WeasyPrint 70 replaced ``default_url_fetcher`` and function fetchers with a
+    ``URLFetcher`` class, whose instances carry state WeasyPrint reads.
+    """
+    fetcher_cls = getattr(weasyprint, "URLFetcher", None)
+    if fetcher_cls is None:
+        return _local_url_fetcher
+
+    class _LocalURLFetcher(fetcher_cls):  # type: ignore[misc, valid-type]
+        def fetch(self, url: str, headers: Any = None) -> Any:
+            _reject_external(url)
+            return super().fetch(url, headers)
+
+    return _LocalURLFetcher(allowed_protocols={"file", "data"})
 
 
 # Markdown extensions to enable
@@ -188,11 +212,6 @@ def _parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
 # Input types the ?[...] shorthand passes through verbatim; anything else
 # falls back to a plain text input.
 _INPUT_TYPES = ("text", "email", "date", "number", "tel", "url")
-# Every field type the shorthand understands (used by the linter too).
-KNOWN_FORM_FIELD_TYPES = frozenset(
-    (*_INPUT_TYPES, "textarea", "checkbox", "signature", "select", "radio")
-    + ("radio-inline", "checkbox-inline", "yesno")
-)
 
 
 def _extra_attrs_html(attrs: dict[str, str | bool], skip: tuple[str, ...] = ()) -> str:
@@ -1925,5 +1944,5 @@ def build(
     weasyprint.HTML(
         string=html,
         base_url=str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
-        url_fetcher=_local_url_fetcher,
+        url_fetcher=_make_url_fetcher(),
     ).write_pdf(str(out_path), **wp_kwargs)

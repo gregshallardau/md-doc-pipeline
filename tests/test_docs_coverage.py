@@ -14,9 +14,6 @@ from md_doc.config_schema import BOOL_KEYS, ENUM_KEYS, KNOWN_KEYS
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 
-# Working notes and design records that are not part of the user documentation.
-_NOT_GUIDES = {"sample-parity-audit.md", "pdf-forms-plan.md"}
-
 
 def _walk(cmd: click.Command, path: list[str]):
     yield path, cmd
@@ -55,11 +52,7 @@ def test_every_brand_custom_property_is_documented() -> None:
 
 def test_every_guide_is_linked_from_the_readme() -> None:
     readme = (ROOT / "README.md").read_text()
-    unlinked = sorted(
-        p.name
-        for p in DOCS.glob("*.md")
-        if p.name not in _NOT_GUIDES and f"docs/{p.name}" not in readme
-    )
+    unlinked = sorted(p.name for p in DOCS.glob("*.md") if f"docs/{p.name}" not in readme)
     assert not unlinked, f"guides not linked from README.md: {unlinked}"
 
 

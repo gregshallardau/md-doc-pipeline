@@ -21,15 +21,18 @@ def test_network_urls_rejected_before_fetch(monkeypatch, url):
     def unexpected(*args, **kwargs):
         pytest.fail("Network URL reached the underlying fetcher")
 
-    monkeypatch.setattr(pdf.weasyprint, "default_url_fetcher", unexpected)
+    # The underlying fetcher is default_url_fetcher (WeasyPrint < 70) or URLFetcher.fetch (70+).
+    monkeypatch.setattr(pdf.weasyprint, "default_url_fetcher", unexpected, raising=False)
+    if hasattr(pdf.weasyprint, "URLFetcher"):
+        monkeypatch.setattr(pdf.weasyprint.URLFetcher, "fetch", unexpected)
     with pytest.raises(ValueError, match="External resource blocked"):
-        pdf._local_url_fetcher(url)
+        pdf._make_url_fetcher()(url)
 
 
 def test_local_and_embedded_resources_still_work(tmp_path):
     resource = tmp_path / "local.css"
     resource.write_text("body { color: red }")
-    result = pdf._local_url_fetcher(resource.as_uri())
+    result = pdf._make_url_fetcher()(resource.as_uri())
 
     def read_and_close(response):
         if isinstance(response, dict):  # WeasyPrint < 68
@@ -43,7 +46,7 @@ def test_local_and_embedded_resources_still_work(tmp_path):
             response.close()
 
     assert read_and_close(result) == b"body { color: red }"
-    assert read_and_close(pdf._local_url_fetcher("data:text/plain;base64,b2s=")) == b"ok"
+    assert read_and_close(pdf._make_url_fetcher()("data:text/plain;base64,b2s=")) == b"ok"
 
 
 def test_pdf_build_uses_local_fetcher(tmp_path, monkeypatch):
@@ -58,4 +61,19 @@ def test_pdf_build_uses_local_fetcher(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdf.weasyprint, "HTML", HTML)
     pdf.build("# Local document", {"title": "Local", "cover_page": False}, tmp_path / "doc.pdf")
-    assert seen == [pdf._local_url_fetcher]
+    # WeasyPrint < 70 takes a function, 70+ a URLFetcher instance; both must refuse remote URLs.
+    assert len(seen) == 1
+    with pytest.raises(ValueError, match="External resource blocked"):
+        seen[0]("https://example.com/x.css")
+
+
+@pytest.mark.skipif(not hasattr(pdf.weasyprint, "URLFetcher"), reason="WeasyPrint < 70")
+def test_weasyprint_70_fetcher_is_a_url_fetcher_instance_that_blocks_remote(tmp_path):
+    fetcher = pdf._make_url_fetcher()
+    assert isinstance(fetcher, pdf.weasyprint.URLFetcher)
+    with pytest.raises(ValueError, match="External resource blocked"):
+        fetcher.fetch("http://example.com/a.png")
+    local = tmp_path / "a.txt"
+    local.write_text("ok")
+    response = fetcher.fetch(local.as_uri())
+    assert response.read() == b"ok" if hasattr(response, "read") else True

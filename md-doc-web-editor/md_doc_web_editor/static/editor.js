@@ -103,7 +103,14 @@
                 det.className = "md-doc-tree-dir";
                 det.open = true;
                 const sum = document.createElement("summary");
-                sum.textContent = "📁 " + node.name;
+                // Workspaces (discovered from the project) get their own icon; a remote one that
+                // is not mounted is greyed out and collapsed.
+                const dirIcon = node.workspace ? (node.remote ? "🌐 " : "🗂️ ") : "📁 ";
+                sum.textContent = dirIcon + node.name + (node.available === false ? " — not mounted" : "");
+                if (node.available === false) {
+                    det.classList.add("md-doc-tree-unavailable");
+                    det.open = false;
+                }
                 det.appendChild(sum);
                 if (node.children && node.children.length) {
                     const childUl = document.createElement("ul");

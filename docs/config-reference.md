@@ -768,7 +768,7 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `slide_split` | enum | `h2` | Slide boundaries: `h1`, `h2` or `marker`. |
 | `cover_page` | boolean | `false` | Add a branded cover page. |
 | `cover_label` | string | `Report` | Text above the cover title. |
-| `cover_text_align` | enum | `left` | Cover content alignment: `left` or `right`. |
+| `cover_text_align` | enum | `left` | Cover content alignment: `left`, `center` or `right`. |
 | `cover_background` | string | `white` | Cover page background (PDF only). |
 | `cover_divider` | boolean | `true` | Rule under the cover title. |
 | `cover_meta_label` | string | `Prepared by` | Label before the author on the cover. |

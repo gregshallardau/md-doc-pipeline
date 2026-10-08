@@ -21,7 +21,8 @@ A self-contained browser editor for [md-doc-pipeline](https://github.com/gregsha
 
 ## What it does
 
-- **File tree** of any workspace directory (`.md`, `_meta.yml`, `*.css`)
+- **Finds your workspaces by itself.** Run it from the project with no arguments and every folder under `workspace/` appears as a top-level folder, along with each remote workspace named in `workspace/remote-workspaces.yml` (🌐, greyed out as "not mounted" when the share is offline). New workspaces show up on refresh; there is nothing to configure and no restart
+- **File tree** of each workspace (`.md`, `_meta.yml`, `*.css`)
 - **Monaco editor** with syntax highlighting tuned for md-doc:
   - YAML frontmatter, Jinja2 expressions, `[[fields]]`, `?[forms]`, mermaid blocks
   - Known md-doc config keys highlighted distinctly
@@ -46,11 +47,11 @@ cd md-doc-pipeline
 uv venv
 uv sync --group editor
 
-# Launch from the project environment without activating it
-uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser
+# Launch from the project environment without activating it. No arguments needed:
+uv run --offline --no-sync md-doc-edit --no-browser
 ```
 
-Open http://127.0.0.1:8765/. `md-doc-edit serve [WORKSPACE]` takes `--host` (default `127.0.0.1`), `--port` (default `8765`) and `--no-browser`. `--offline --no-sync` uses the installed environment
+Open http://127.0.0.1:8765/. `md-doc-edit` (the `serve` word is optional) takes `--host` (default `127.0.0.1`), `--port` (default `8765`) and `--no-browser`. Give it a directory (`md-doc-edit serve workspace/acme/`) to edit just that one instead of discovering workspaces. `--offline --no-sync` uses the installed environment
 without resolving or downloading dependencies. Include `--group editor` when
 explicitly syncing again to retain the optional editor.
 Omit `--no-browser` to launch a browser automatically.
@@ -60,22 +61,22 @@ If you prefer activated commands, after the sync use:
 ```bash
 # Linux / macOS
 source .venv/bin/activate
-md-doc-edit serve workspace/
+md-doc-edit
 ```
 
 ```powershell
 # Windows PowerShell
 .\.venv\Scripts\Activate.ps1
-md-doc-edit serve workspace/
+md-doc-edit
 ```
 
 In Windows Command Prompt, activate with `.venv\Scripts\activate.bat`.
 Other launch options (from the repository root):
 
 ```bash
-uv run --offline --no-sync md-doc-edit serve .
-uv run --offline --no-sync md-doc-edit serve workspace/ --port 9000
-uv run --offline --no-sync md-doc-edit serve workspace/ --host 0.0.0.0
+uv run --offline --no-sync md-doc-edit --port 9000
+uv run --offline --no-sync md-doc-edit --host 0.0.0.0
+uv run --offline --no-sync md-doc-edit serve workspace/acme/   # just one directory
 ```
 
 For an existing virtual environment or an offline source deployment:
@@ -83,7 +84,7 @@ For an existing virtual environment or an offline source deployment:
 ```bash
 uv venv
 uv pip install --python .venv/bin/python -e . -e ./md-doc-web-editor
-.venv/bin/md-doc-edit serve workspace/ --no-browser
+.venv/bin/md-doc-edit --no-browser
 ```
 
 On Windows replace `.venv/bin/python` with `.venv/Scripts/python.exe` and
@@ -112,7 +113,7 @@ The SPA is the only client, but the API is plain JSON if you want to script agai
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | SPA entry point (HTML) |
-| GET | `/api/tree` | Workspace file tree (recursive) |
+| GET | `/api/tree` | Workspaces as top-level folders with their file trees (also `workspaces`: name, remote, available, path). In single-directory mode, that directory's tree |
 | GET | `/api/file?path=...` | Read a file's contents |
 | PUT | `/api/file` | Write a file: body `{path, content}` |
 | GET | `/api/config?path=...` | Cascade layers + merged config for the doc |
@@ -122,7 +123,7 @@ The SPA is the only client, but the API is plain JSON if you want to script agai
 | GET | `/api/build/{token}` | Stream the built artefact (PDF inline; DOCX/DOTX as downloads) |
 | GET | `/static/...` | Bundled JS / CSS / fonts / Monaco workers (all local) |
 
-All file paths are workspace-relative; `..` traversal is rejected with HTTP 400.
+With discovery, every file path starts with its workspace name (`acme/clients/q1.md`); with an explicit directory paths are relative to it. `..` traversal, including from one workspace into another, is rejected with HTTP 400, and an unknown or unmounted workspace is a 404.
 
 ---
 
@@ -148,15 +149,15 @@ Then launch without dependency resolution or downloads:
 
 ```bash
 # Linux / macOS
-.venv/bin/md-doc-edit serve workspace/ --no-browser
+.venv/bin/md-doc-edit --no-browser
 ```
 
 ```powershell
 # Windows PowerShell
-.\.venv\Scripts\md-doc-edit.exe serve workspace/ --no-browser
+.\.venv\Scripts\md-doc-edit.exe --no-browser
 ```
 
-Alternatively, `uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser`
+Alternatively, `uv run --offline --no-sync md-doc-edit --no-browser`
 uses the existing environment without syncing. Open http://127.0.0.1:8765/.
 The server defaults to loopback. Keep it there for local use.
 
