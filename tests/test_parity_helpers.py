@@ -37,7 +37,7 @@ def test_code_line_pitch_is_positive(tmp_path) -> None:
 
 
 def test_collapse_select_markup_single_line() -> None:
-    src = "<select name=\"a\">\n<option>A</option>\n<option>B</option>\n</select>"
+    src = '<select name="a">\n<option>A</option>\n<option>B</option>\n</select>'
     out = collapse_select_markup(src)
     assert "\n" not in out
     assert "<option>B</option>" in out
