@@ -36,6 +36,8 @@ from pydantic import BaseModel
 
 from md_doc.config import _find_repo_root
 
+from .workspaces import Workspace, discover, find_project
+
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _STATIC_DIR = _PACKAGE_DIR / "static"
 
@@ -58,11 +60,22 @@ class BuildRequest(BaseModel):
     format: str = "pdf"
 
 
-def create_app(workspace: Path) -> FastAPI:
-    """Build a FastAPI app rooted at ``workspace``."""
-    workspace = Path(workspace).resolve()
-    if not workspace.is_dir():
-        raise ValueError(f"Workspace path is not a directory: {workspace}")
+def create_app(workspace: Path | None = None, *, project: Path | None = None) -> FastAPI:
+    """Build a FastAPI app.
+
+    With *workspace* the app is rooted at that one directory and API paths are relative to it.
+    Without it the app discovers the project's workspaces (local ``workspace/*`` folders and the
+    names in ``workspace/remote-workspaces.yml``) on every request; each is a top-level folder and
+    the first segment of every API path. *project* is where discovery starts (default: the
+    current directory).
+    """
+    fixed: Workspace | None = None
+    if workspace is not None:
+        root = Path(workspace).resolve()
+        if not root.is_dir():
+            raise ValueError(f"Workspace path is not a directory: {root}")
+        fixed = Workspace(root.name, root)
+    project_root = find_project(project)
 
     # App-owned storage: an idle sweeper and shutdown cleanup bound disk usage.
     storage = Path(tempfile.gettempdir()) / "md-doc-edit-builds"
@@ -129,13 +142,35 @@ def create_app(workspace: Path) -> FastAPI:
 
     # ── Path safety ───────────────────────────────────────────────────────────
 
-    def _safe_path(rel: str) -> Path:
-        candidate = (workspace / rel).resolve()
+    def _workspaces() -> list[Workspace]:
+        return [fixed] if fixed is not None else discover(project_root)
+
+    def _prefix(ws: Workspace) -> str:
+        """Path prefix that identifies *ws* in API paths (none for a fixed single root)."""
+        return "" if fixed is not None else f"{ws.name}/"
+
+    def _locate(rel: str) -> tuple[Workspace, Path]:
+        """Resolve an API path to its workspace and a file inside it (never outside)."""
+        if fixed is not None:
+            ws, inner = fixed, rel
+        else:
+            name, _, inner = rel.strip("/").partition("/")
+            ws = next((w for w in _workspaces() if w.name == name), None)  # type: ignore[assignment]
+            if ws is None:
+                raise HTTPException(status_code=404, detail=f"Unknown workspace '{name}'")
+            if not ws.available:
+                raise HTTPException(
+                    status_code=404, detail=f"Workspace '{name}' is not available (not mounted?)"
+                )
+        candidate = (ws.root / inner).resolve()
         try:
-            candidate.relative_to(workspace)
+            candidate.relative_to(ws.root)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Path escapes workspace") from exc
-        return candidate
+        return ws, candidate
+
+    def _safe_path(rel: str) -> Path:
+        return _locate(rel)[1]
 
     # ── File tree ─────────────────────────────────────────────────────────────
 
@@ -148,7 +183,7 @@ def create_app(workspace: Path) -> FastAPI:
             return "css"
         return None
 
-    def _scan(directory: Path) -> list[dict[str, Any]]:
+    def _scan(directory: Path, ws: Workspace) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         try:
             entries = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name))
@@ -157,14 +192,14 @@ def create_app(workspace: Path) -> FastAPI:
         for entry in entries:
             if entry.name.startswith(".") or entry.is_symlink():
                 continue
-            rel = entry.relative_to(workspace).as_posix()
+            rel = _prefix(ws) + entry.relative_to(ws.root).as_posix()
             if entry.is_dir():
                 items.append(
                     {
                         "name": entry.name,
                         "path": rel,
                         "type": "dir",
-                        "children": _scan(entry),
+                        "children": _scan(entry, ws),
                     }
                 )
             else:
@@ -175,7 +210,28 @@ def create_app(workspace: Path) -> FastAPI:
 
     @app.get("/api/tree")
     def get_tree() -> JSONResponse:
-        return JSONResponse({"workspace": str(workspace), "tree": _scan(workspace)})
+        if fixed is not None:
+            return JSONResponse({"workspace": str(fixed.root), "tree": _scan(fixed.root, fixed)})
+        listed = _workspaces()
+        nodes = [
+            {
+                "name": ws.name + (" (remote)" if ws.remote else ""),
+                "path": ws.name,
+                "type": "dir",
+                "workspace": True,
+                "remote": ws.remote,
+                "available": ws.available,
+                "children": _scan(ws.root, ws) if ws.available else [],
+            }
+            for ws in listed
+        ]
+        return JSONResponse(
+            {
+                "workspace": str(project_root),
+                "workspaces": [ws.public() for ws in listed],
+                "tree": nodes,
+            }
+        )
 
     # ── Read / write files ───────────────────────────────────────────────────
 
@@ -204,26 +260,28 @@ def create_app(workspace: Path) -> FastAPI:
 
     @app.get("/api/config")
     def get_config(path: str) -> JSONResponse:
-        full = _safe_path(path)
-        return JSONResponse(jsonable_encoder(_config_layers(full, workspace)))
+        ws, full = _locate(path)
+        return JSONResponse(jsonable_encoder(_config_layers(full, ws.root, _prefix(ws))))
 
     # ── CSS theme panel ───────────────────────────────────────────────────────
 
     @app.get("/api/css")
     def get_css(path: str) -> JSONResponse:
-        full = _safe_path(path)
-        return JSONResponse(_resolve_css(full, workspace))
+        ws, full = _locate(path)
+        return JSONResponse(_resolve_css(full, ws.root, _prefix(ws)))
 
     # ── Included templates ────────────────────────────────────────────────────
 
     @app.get("/api/includes")
     def get_includes(path: str) -> JSONResponse:
-        full = _safe_path(path)
+        ws, full = _locate(path)
         if not full.is_file() or full.suffix != ".md":
             return JSONResponse({"includes": []})
         return JSONResponse(
             {
-                "includes": _find_includes(full.read_text(encoding="utf-8"), full, workspace),
+                "includes": _find_includes(
+                    full.read_text(encoding="utf-8"), full, ws.root, _prefix(ws)
+                ),
             }
         )
 
@@ -344,7 +402,7 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _config_layers(doc_path: Path, workspace: Path) -> dict[str, Any]:
+def _config_layers(doc_path: Path, workspace: Path, prefix: str = "") -> dict[str, Any]:
     """Walk repo root → doc dir collecting _meta.yml, then frontmatter."""
     repo_root = _find_repo_root(doc_path.parent)
     merged: dict[str, Any] = {}
@@ -371,7 +429,7 @@ def _config_layers(doc_path: Path, workspace: Path) -> dict[str, Any]:
                 parsed = None
             if isinstance(parsed, dict) and parsed:
                 rel = (
-                    meta.relative_to(workspace).as_posix()
+                    prefix + meta.relative_to(workspace).as_posix()
                     if meta.is_relative_to(workspace)
                     else str(meta)
                 )
@@ -411,7 +469,7 @@ def _inline_css_imports(path: Path, workspace: Path, depth: int = 0) -> str:
     return _CSS_IMPORT_RE.sub(replace, css)
 
 
-def _resolve_css(doc_path: Path, workspace: Path) -> dict[str, Any]:
+def _resolve_css(doc_path: Path, workspace: Path, prefix: str = "") -> dict[str, Any]:
     """Walk up from doc_path to the theme the PDF builder would use.
 
     At each folder ``_pdf-theme.css`` comes before the shared ``_theme.css``; the
@@ -425,7 +483,7 @@ def _resolve_css(doc_path: Path, workspace: Path) -> dict[str, Any]:
         for name in candidates:
             f = current / name
             if f.is_file() and f.resolve().is_relative_to(workspace):
-                rel = f.resolve().relative_to(workspace).as_posix()
+                rel = prefix + f.resolve().relative_to(workspace).as_posix()
                 return {"css": _inline_css_imports(f.resolve(), workspace), "source": rel}
         if current.resolve() == workspace:
             break
@@ -436,7 +494,9 @@ def _resolve_css(doc_path: Path, workspace: Path) -> dict[str, Any]:
     return {"css": "", "source": None}
 
 
-def _find_includes(content: str, doc_path: Path, workspace: Path) -> list[dict[str, Any]]:
+def _find_includes(
+    content: str, doc_path: Path, workspace: Path, prefix: str = ""
+) -> list[dict[str, Any]]:
     names = re.findall(r"\{%-?\s*include\s+[\"']([^\"']+)[\"']\s*-?%\}", content)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -447,7 +507,7 @@ def _find_includes(content: str, doc_path: Path, workspace: Path) -> list[dict[s
         resolved = _resolve_template(name, doc_path, workspace)
         rel: str | None = None
         if resolved is not None and resolved.is_relative_to(workspace):
-            rel = resolved.relative_to(workspace).as_posix()
+            rel = prefix + resolved.relative_to(workspace).as_posix()
         out.append({"name": name, "path": rel, "found": resolved is not None})
     return out
 

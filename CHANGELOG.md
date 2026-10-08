@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.4.0] — 2026-10-08
 
 ### Added
+- **The browser editor finds your workspaces by itself.** `md-doc-edit` with no arguments, run
+  from the project, offers every folder under `workspace/` plus each remote workspace in
+  `workspace/remote-workspaces.yml` (an unmounted share is shown greyed out), re-scanned on every
+  load so nothing needs configuring or restarting. Each workspace is a top-level folder in the file
+  tree; `md-doc-edit serve DIR` still edits a single directory. It was already fully offline: no
+  CDN, with Monaco and marked served from the package.
 - Documentation for every feature: new CLI reference, theming guide, Markdown reference and
   export guide; a complete key index in the config reference; and `tests/test_docs_coverage.py`,
   which fails when a config key, CLI command or option, or `--mddoc-*` property is undocumented.

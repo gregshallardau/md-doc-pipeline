@@ -50,6 +50,7 @@ html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, Bl
     color: #111827;
 }
 .md-doc-tree-dir > summary::-webkit-details-marker { display: none; }
+.md-doc-tree-unavailable > summary { color: #9ca3af; font-style: italic; }
 .md-doc-tree-file {
     display: flex;
     align-items: center;
