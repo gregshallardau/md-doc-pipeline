@@ -166,6 +166,10 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         response.headers["X-DNS-Prefetch-Control"] = "off"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        if request.url.path == "/" or (
+            request.url.path.startswith("/static/") and "/vendor/" not in request.url.path
+        ):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     # ── Path safety ───────────────────────────────────────────────────────────
@@ -204,12 +208,21 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     # ── File tree ─────────────────────────────────────────────────────────────
 
     def _classify(name: str) -> str | None:
-        if name.endswith(".md"):
+        if name.lower().endswith(".md"):
             return "md"
         if name in ("_meta.yml", "_merge_fields.yml"):
             return "meta"
-        if name.endswith(".css"):
+        if name.lower().endswith(".css"):
             return "css"
+        suffix = Path(name).suffix.lower()
+        if suffix in {".yml", ".yaml", ".html", ".jinja", ".j2", ".txt", ".csv"}:
+            return "meta" if suffix in {".yml", ".yaml"} else "text"
+        if suffix == ".pdf":
+            return "pdf"
+        if suffix in {".docx", ".dotx", ".pptx", ".potx"}:
+            return "office"
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}:
+            return "image"
         return None
 
     def _scan(directory: Path, ws: Workspace) -> list[dict[str, Any]]:
@@ -221,14 +234,21 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         for entry in entries:
             if entry.name.startswith(".") or entry.is_symlink():
                 continue
+            if entry.name in {"node_modules", "__pycache__", "Exports", "dist", "build"}:
+                continue
             rel = _prefix(ws) + entry.relative_to(ws.root).as_posix()
             if entry.is_dir():
+                children = _scan(entry, ws)
+                count = sum(
+                    node.get("documentCount", int(node["type"] == "md")) for node in children
+                )
                 items.append(
                     {
                         "name": entry.name,
                         "path": rel,
                         "type": "dir",
-                        "children": _scan(entry, ws),
+                        "children": children,
+                        "documentCount": count,
                     }
                 )
             else:
@@ -240,7 +260,16 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     @app.get("/api/tree")
     def get_tree() -> JSONResponse:
         if fixed is not None:
-            return JSONResponse({"workspace": str(fixed.root), "tree": _scan(fixed.root, fixed)})
+            tree = _scan(fixed.root, fixed)
+            return JSONResponse(
+                {
+                    "workspace": str(fixed.root),
+                    "tree": tree,
+                    "documentCount": sum(
+                        node.get("documentCount", int(node["type"] == "md")) for node in tree
+                    ),
+                }
+            )
         listed = _workspaces()
         nodes = [
             {
@@ -263,6 +292,26 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         )
 
     # ── Read / write files ───────────────────────────────────────────────────
+
+    @app.get("/api/asset")
+    def read_asset(path: str):
+        import mimetypes
+
+        full = _safe_path(path)
+        if not full.is_file() or _classify(full.name) not in {"pdf", "office", "image"}:
+            raise HTTPException(404, "Asset not found")
+        media = mimetypes.guess_type(full.name)[0] or "application/octet-stream"
+        return FileResponse(
+            full,
+            media_type=media,
+            filename=full.name,
+            content_disposition_type=(
+                "inline"
+                if media == "application/pdf"
+                or (media.startswith("image/") and media != "image/svg+xml")
+                else "attachment"
+            ),
+        )
 
     @app.get("/api/file")
     def read_file(path: str) -> JSONResponse:
@@ -448,10 +497,9 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     def index() -> FileResponse:
         return FileResponse(_STATIC_DIR / "index.html")
 
-    if fixed is None:
-        from .discovery import install_discovery
+    from .discovery import install_discovery
 
-        install_discovery(app, project_root, create_app)
+    install_discovery(app, project_root, create_app, fixed=fixed)
     return app
 
 
