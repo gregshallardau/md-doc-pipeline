@@ -214,7 +214,9 @@ def install_studio(app, workspace, build_root, builds, write_lock):
     def capabilities():
         return {
             "workspace": str(workspace),
-            "name": workspace.name,
+            "name": getattr(app.state, "workspace_info", {}).get("name", workspace.name),
+            "remote": getattr(app.state, "workspace_info", {}).get("remote", False),
+            "configuredRoot": getattr(app.state, "workspace_info", {}).get("path", str(workspace)),
             "session": studio.token,
             "formats": ["pdf", "docx", "dotx", "pptx"],
             "exactPreview": ["pdf"],

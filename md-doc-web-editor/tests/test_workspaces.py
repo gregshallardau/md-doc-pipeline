@@ -133,7 +133,7 @@ def test_discovered_workspace_has_isolated_studio_preview(project):
     import time
 
     with TestClient(create_app(project=project)) as client:
-        assert "workspace=acme" in client.get("/", follow_redirects=False).headers["location"]
+        assert "workspace=nas" in client.get("/", follow_redirects=False).headers["location"]
         first = client.get("/api/capabilities?workspace=acme").json()
         second = client.get("/api/capabilities?workspace=blueshift").json()
         assert first["session"] != second["session"]
@@ -153,3 +153,65 @@ def test_discovered_workspace_has_isolated_studio_preview(project):
         assert client.get(job["artifact"]["url"] + "?workspace=acme").content.startswith(b"%PDF")
         assert client.get(job["artifact"]["url"] + "?workspace=blueshift").status_code == 404
         assert "title: Q1" in (project / "workspace/acme/clients/q1.md").read_text()
+
+
+def test_remote_relative_path_is_resolved_from_project(project, monkeypatch, tmp_path):
+    (project / "workspace/remote-workspaces.yml").write_text("nas: mnt/share\n")
+    monkeypatch.chdir(project / "workspace/acme")
+    remote = next(ws for ws in discover(project) if ws.remote)
+    assert remote.root == project / "mnt/share"
+    assert remote.available
+
+
+def test_tree_counts_and_nested_document_root(project):
+    with TestClient(create_app(project=project)) as client:
+        tree = client.get("/api/tree?workspace=acme").json()
+        assert tree["documentCount"] == 2
+        clients = next(node for node in tree["tree"] if node["name"] == "clients")
+        assert clients["documentCount"] == 1
+        folders = client.get("/api/workspace-folders?workspace=acme").json()
+        assert folders["root"] == str(project / "workspace/acme")
+        assert next(f for f in folders["folders"] if f["name"] == "clients")["documentCount"] == 1
+        nested = client.get("/api/tree?workspace=acme&folder=clients").json()
+        assert nested["workspace"] == str(project / "workspace/acme/clients")
+        assert nested["tree"][0]["path"] == "q1.md"
+        assert client.get("/api/tree?workspace=acme&folder=../blueshift").status_code == 400
+        assert client.get("/api/workspace-folders?workspace=acme&path=../../").status_code == 400
+
+
+def test_explicit_workspace_supports_document_folder_choice(project):
+    with TestClient(create_app(project / "workspace/acme")) as client:
+        assert client.get("/api/workspaces").json()["workspaces"][0]["name"] == "acme"
+        nested = client.get("/api/tree?workspace=acme&folder=clients").json()
+        assert nested["documentCount"] == 1
+        assert nested["tree"][0]["name"] == "q1.md"
+
+
+def test_editor_ui_does_not_remain_cached(client):
+    assert client.get("/").headers["cache-control"] == "no-store"
+    assert client.get("/static/editor.js").headers["cache-control"] == "no-store"
+
+
+def test_explorer_lists_outputs_assets_and_authoring_files(project):
+    workspace = project / "workspace/acme"
+    (workspace / "report.pdf").write_bytes(b"%PDF-1.7\n")
+    (workspace / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (workspace / "settings.yaml").write_text("title: Test\n")
+    with TestClient(create_app(workspace)) as client:
+        tree = client.get("/api/tree").json()
+        nodes = {node["name"]: node for node in tree["tree"]}
+        assert nodes["report.pdf"]["type"] == "pdf"
+        assert nodes["logo.png"]["type"] == "image"
+        assert nodes["settings.yaml"]["type"] == "meta"
+        assert tree["documentCount"] == 2
+        assert client.get("/api/asset?path=report.pdf").content.startswith(b"%PDF")
+        assert client.get("/api/asset?path=../outside.pdf").status_code == 400
+        assert client.get("/api/asset?path=_meta.yml").status_code == 404
+
+
+def test_remote_capabilities_show_configured_location(client, project):
+    data = client.get("/api/capabilities?workspace=nas").json()
+    assert data["name"] == "nas"
+    assert data["remote"] is True
+    assert data["workspace"] == str(project / "mnt/share")
+    assert data["configuredRoot"] == str(project / "mnt/share")

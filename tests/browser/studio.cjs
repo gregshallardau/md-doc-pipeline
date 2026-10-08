@@ -51,6 +51,11 @@ function check(condition, message) {
     path.join(workspace, "second.md"),
     "# Second document\n\nA second paragraph.\n",
   );
+  fs.mkdirSync(path.join(workspace, "reports"));
+  fs.writeFileSync(
+    path.join(workspace, "reports", "nested.md"),
+    "# Nested report\n",
+  );
   git("add", ".");
   git("commit", "-m", "Initial samples");
   const listener = net.createServer();
@@ -123,6 +128,90 @@ function check(condition, message) {
     testPage = page;
     page.on("pageerror", (error) => errors.push(error.stack || error.message));
     await page.goto(origin);
+    await page.locator('[data-path="doc.md"]').waitFor();
+    check(
+      await page.locator('[data-path="reports/nested.md"]').isVisible(),
+      "Nested documents are visible on first launch",
+    );
+    check(
+      (await page.locator("#tree-document-count").textContent()) === "3",
+      "Workspace document count is visible",
+    );
+    check(
+      (await page
+        .locator(".tree-folder summary .document-count")
+        .first()
+        .textContent()) === "1",
+      "Folders show document counts",
+    );
+    await page.locator('[data-nav="files"]').click();
+    check(
+      await page
+        .locator("#workbench")
+        .evaluate((node) => node.classList.contains("nav-hidden")),
+      "Files rail collapses its sidebar",
+    );
+    await page.locator('[data-nav="files"]').click();
+    check(
+      await page.locator("#sidebar").isVisible(),
+      "Files rail reopens its sidebar",
+    );
+    await page.locator('[data-action="collapse-folders"]').click();
+    check(
+      !(await page.locator('[data-path="reports/nested.md"]').isVisible()),
+      "Collapse all hides nested documents",
+    );
+    await page.locator('[data-action="expand-folders"]').click();
+    check(
+      await page.locator('[data-path="reports/nested.md"]').isVisible(),
+      "Expand all reveals nested documents",
+    );
+    await page.locator("#appearance-button").click();
+    check(
+      (await page.locator("html").getAttribute("data-theme")) === "dark" &&
+        (await page.locator("#appearance-label").textContent()) ===
+          "Light mode",
+      "Visible theme control applies dark mode",
+    );
+    await page.locator("#appearance-button").click();
+    check(
+      (await page.locator("html").getAttribute("data-theme")) === "light",
+      "Theme control restores light mode",
+    );
+    await page.locator("#tree-root-toggle").click();
+    check(
+      !(await page.locator("#md-doc-tree").isVisible()),
+      "Workspace root collapses its file list",
+    );
+    await page.locator("#tree-root-toggle").click();
+    check(
+      await page.locator("#md-doc-tree").isVisible(),
+      "Workspace root reopens its file list",
+    );
+    await page.locator("#workspace-button").click();
+    await page
+      .getByRole("button", { name: "Choose document folder", exact: true })
+      .click();
+    await page
+      .locator(".workspace-folder")
+      .filter({ hasText: "reports" })
+      .click();
+    await page.locator("#dialog-body .workspace-choice-path").filter({hasText: path.join(workspace, "reports")}).waitFor();
+    check(
+      (await page
+        .locator("#dialog-body .workspace-choice-path")
+        .textContent()) === path.join(workspace, "reports"),
+      "Directory chooser displays the exact nested path",
+    );
+    check(
+      (
+        await page
+          .getByRole("link", { name: "Open this directory", exact: true })
+          .getAttribute("href")
+      ).includes("folder=reports"),
+      "Directory chooser opens the selected root",
+    );
+    await page.locator("#dialog-close").click();
     await page.evaluate(async () => {
       const module = await import("/static/viewer.js");
       const load = module.DocumentViewer.prototype.load;

@@ -35,12 +35,14 @@
         </button>
         <div class="header-actions">
           <button
-            class="icon-button"
+            class="button appearance-button"
             data-action="appearance"
-            title="Switch appearance"
+            title="Switch between light and dark mode"
             aria-label="Switch appearance"
+            id="appearance-button"
           >
-            <span data-icon="sun"></span></button
+            <span data-icon="moon"></span
+            ><span id="appearance-label">Dark mode</span></button
           ><button
             class="icon-button"
             data-action="help"
@@ -104,7 +106,7 @@
         </nav>
         <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
           <div class="pane-heading">
-            <span id="sidebar-title">EXPLORER</span>
+            <span id="sidebar-title">FILES</span>
             <div class="heading-actions">
               <button
                 class="icon-button small"
@@ -123,10 +125,33 @@
               </button>
             </div>
           </div>
-          <div class="sidebar-workspace">
-            <span data-icon="chevron-down"></span
-            ><span id="tree-root-name">Workspace</span
+          <div class="tree-controls">
+            <button class="text-button" data-action="expand-folders">
+              Expand all</button
+            ><button class="text-button" data-action="collapse-folders">
+              Collapse all</button
             ><button
+              class="icon-button small"
+              data-action="nav-toggle"
+              title="Hide file sidebar"
+              aria-label="Hide file sidebar"
+            >
+              <span data-icon="panel"></span>
+            </button>
+          </div>
+          <div class="sidebar-workspace">
+            <button
+              class="tree-root-toggle"
+              id="tree-root-toggle"
+              data-action="root-toggle"
+              aria-expanded="true"
+              title="Collapse workspace files"
+            >
+              <span data-icon="chevron-down"></span
+              ><span id="tree-root-name">Workspace</span
+              ><span id="tree-document-count" class="document-count">0</span>
+            </button>
+            <button
               class="icon-button small"
               data-action="file-actions"
               title="File actions"
@@ -135,6 +160,7 @@
               <span data-icon="more"></span>
             </button>
           </div>
+          <div id="workspace-path" class="workspace-path"></div>
           <input
             id="file-filter"
             class="input tree-filter"

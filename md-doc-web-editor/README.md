@@ -13,6 +13,10 @@ uv run --offline --no-sync md-doc-edit
 
 With no directory, the editor discovers local folders under `workspace/` and the remote shares in `workspace/remote-workspaces.yml`, falling back to examples on a fresh checkout. The workspace button switches between available workspaces; unmounted shares remain listed. Each workspace has its own editor session, buffers and output artifacts. New workspaces appear without restarting.
 
+An available configured remote workspace is opened before local samples. Its configured `path` is used exactly; relative paths resolve from the project directory. The header identifies remote workspaces and the explorer displays the full directory path. **Choose document folder** lets you explicitly open a nested folder without changing the configuration or guessing where documents live.
+
+The Files rail button toggles the sidebar. Click the workspace row to collapse its files, or use **Expand all / Collapse all** for folders. New sessions open the first two folder levels; folder badges count Markdown documents recursively. PDFs, Office outputs, images and authoring files appear alongside Markdown. PDF/image files open in a browser tab and Office files download. **Dark mode / Light mode** is available directly in the header.
+
 To open all samples as one directory:
 
 ```bash

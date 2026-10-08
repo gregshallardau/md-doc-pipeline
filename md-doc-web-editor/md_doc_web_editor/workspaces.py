@@ -90,7 +90,10 @@ def _remote_entries(project: Path) -> list[tuple[str, Path, str]]:
         description = str(entry.get("description", "")) if isinstance(entry, dict) else ""
         if not raw:
             continue
-        out.append((str(name), Path(str(raw)).expanduser(), description))
+        path = Path(str(raw)).expanduser()
+        if not path.is_absolute():
+            path = project / path
+        out.append((str(name), path, description))
     return out
 
 

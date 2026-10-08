@@ -3,7 +3,12 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const icons = {
-    folder: "M3 7h6l2 2h10v11H3Z M3 7V4h6l2 3",
+    folder:
+      "M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+    "folder-open":
+      "M3 8V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2 M3 8h17a1 1 0 0 1 1 1l-3 10H5a2 2 0 0 1-2-2Z",
+    markdown:
+      "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z M14 3v6h6 M7 17v-5l3 3 3-3v5 M17 12v5 m-2-2 2 2 2-2",
     file: "M5 3h9l5 5v13H5Z M14 3v6h5 M9 13h6 M9 17h5",
     files: "M8 3h10v14H8Z M5 7H3v14h11v-2",
     search: "M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14 M15 15l6 6",
@@ -136,11 +141,17 @@
       }
     }
   }
+  const selectedFolder = new URLSearchParams(location.search).get("folder");
   const selectedWorkspace = new URLSearchParams(location.search).get(
     "workspace",
   );
   function workspaceUrl(url) {
     if (!selectedWorkspace) return url;
+    if (selectedFolder)
+      url +=
+        (url.includes("?") ? "&" : "?") +
+        "folder=" +
+        encodeURIComponent(selectedFolder);
     return (
       url +
       (url.includes("?") ? "&" : "?") +
@@ -422,6 +433,8 @@
   async function loadTree() {
     const result = await api("/api/tree");
     state.tree = result.tree;
+    $("workspace-path").textContent = result.workspace;
+    $("workspace-path").title = result.workspace;
     state.files = [];
     const flatten = (nodes) =>
       nodes.forEach((node) => {
@@ -429,9 +442,27 @@
         else state.files.push(node);
       });
     flatten(result.tree);
+    const total = state.files.filter((file) => file.type === "md").length;
+    $("tree-document-count").textContent = total;
+    $("tree-document-count").title = `${total} documents`;
+    if (readStorage("folders", null) === null) {
+      const open = [];
+      const expand = (nodes, depth = 0) =>
+        nodes.forEach((node) => {
+          if (node.type === "dir" && depth < 2) {
+            open.push(node.path);
+            expand(node.children, depth + 1);
+          }
+        });
+      expand(state.tree);
+      store("folders", open);
+    }
     renderTree();
   }
   function renderTree() {
+    const collapsed = readStorage("rootCollapsed", false);
+    $("md-doc-tree").hidden = state.nav !== "files" || collapsed;
+    $("tree-root-toggle").setAttribute("aria-expanded", String(!collapsed));
     const filter = $("file-filter").value.toLowerCase();
     $("md-doc-tree").replaceChildren();
     const build = (nodes) => {
@@ -447,10 +478,25 @@
           const summary = el("summary");
           const chevron = icon("chevron-down");
           chevron.classList.add("chevron");
-          summary.append(chevron, icon("folder"), el("span", null, node.name));
+          const folderIcon = icon(details.open ? "folder-open" : "folder");
+          const count = node.documentCount || 0;
+          const badge = el("span", "document-count", String(count));
+          badge.title = `${count} documents`;
+          summary.append(
+            chevron,
+            folderIcon,
+            el("span", "folder-name", node.name),
+            badge,
+          );
           summary.title = node.path;
           details.append(summary, children);
           details.ontoggle = () => {
+            folderIcon
+              .querySelector("path")
+              .setAttribute(
+                "d",
+                icons[details.open ? "folder-open" : "folder"],
+              );
             if (filter) return;
             const folders = new Set(readStorage("folders", []));
             details.open ? folders.add(node.path) : folders.delete(node.path);
@@ -471,11 +517,15 @@
           button.title = node.path;
           button.append(
             icon(
-              node.type === "css"
-                ? "code"
-                : node.type === "meta"
-                  ? "settings"
-                  : "file",
+              node.type === "image"
+                ? "image"
+                : node.type === "pdf" || node.type === "office"
+                  ? "file"
+                  : node.type === "css" || node.type === "text"
+                    ? "code"
+                    : node.type === "meta"
+                      ? "settings"
+                      : "markdown",
             ),
             el("span", "file-name", node.name),
           );
@@ -495,9 +545,29 @@
       }
       return list;
     };
-    $("md-doc-tree").append(build(state.tree));
+    const list = build(state.tree);
+    $("md-doc-tree").append(list);
+    if (!list.childElementCount)
+      $("md-doc-tree").append(
+        el(
+          "p",
+          "tree-empty",
+          filter
+            ? "No files match this filter."
+            : "No document files found in this directory. Use the workspace button to check the configured path.",
+        ),
+      );
   }
   async function openFile(path, line = null) {
+    const file = state.files.find((file) => file.path === path);
+    if (file && ["pdf", "office", "image"].includes(file.type)) {
+      window.open(
+        workspaceUrl("/api/asset?path=" + encodeURIComponent(path)),
+        "_blank",
+        "noopener",
+      );
+      return;
+    }
     const sequence = ++state.openSequence;
     await monacoReady;
     if (!state.buffers.has(path)) {
@@ -935,10 +1005,110 @@
       }
     });
   }
+  async function openWorkspaceChooser() {
+    const data = await api("/api/workspaces");
+    const body = el("div", "workspace-list");
+    body.append(
+      el(
+        "p",
+        "inspector-note",
+        "Open the exact root configured for a workspace, or browse its document folders.",
+      ),
+    );
+    for (const ws of data.workspaces) {
+      const row = el("div", "workspace-choice");
+      const link = el("a", "workspace-choice-link");
+      link.append(
+        icon("folder"),
+        el("strong", null, ws.name),
+        el("span", "workspace-kind", ws.remote ? "Remote" : "Local"),
+      );
+      if (ws.available)
+        link.href = "/?workspace=" + encodeURIComponent(ws.name);
+      else link.setAttribute("aria-disabled", "true");
+      row.append(link, el("p", "workspace-choice-path", ws.path));
+      if (ws.available) {
+        const browse = el("button", "button", "Choose document folder");
+        browse.onclick = () => {
+          $("form-dialog").close();
+          browseWorkspace(ws.name);
+        };
+        row.append(browse);
+      } else
+        row.append(
+          el(
+            "p",
+            "inspector-note",
+            "Not mounted — the configured directory is unavailable.",
+          ),
+        );
+      body.append(row);
+    }
+    dialog(
+      "Workspaces",
+      body,
+      [{ label: "Close", run: (d) => d.close() }],
+      true,
+    );
+  }
+  async function browseWorkspace(name, path = "") {
+    const response = await fetch(
+      "/api/workspace-folders?workspace=" +
+        encodeURIComponent(name) +
+        "&path=" +
+        encodeURIComponent(path),
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail);
+    const body = el("div", "workspace-list");
+    body.append(el("p", "workspace-choice-path", data.absolutePath));
+    const open = el("a", "button primary", "Open this directory");
+    open.href =
+      "/?workspace=" +
+      encodeURIComponent(name) +
+      (path ? "&folder=" + encodeURIComponent(path) : "");
+    body.append(open);
+    if (path && path !== ".") {
+      const up = el("button", "button", "Up one level");
+      up.onclick = () => {
+        $("form-dialog").close();
+        browseWorkspace(name, path.split("/").slice(0, -1).join("/"));
+      };
+      body.append(up);
+    }
+    for (const folder of data.folders) {
+      const row = el("button", "workspace-folder");
+      row.append(
+        icon("folder"),
+        el("span", null, folder.name),
+        el("span", "document-count", folder.documentCount),
+      );
+      row.onclick = () => {
+        $("form-dialog").close();
+        browseWorkspace(name, folder.path);
+      };
+      body.append(row);
+    }
+    dialog(
+      "Choose document directory",
+      body,
+      [{ label: "Close", run: (d) => d.close() }],
+      true,
+    );
+  }
   function nav(name) {
+    if (
+      state.nav === name &&
+      !$("workbench").classList.contains("nav-hidden") &&
+      (window.innerWidth > 850 ||
+        $("workbench").classList.contains("mobile-nav"))
+    ) {
+      actions["nav-toggle"]();
+      return;
+    }
     state.nav = name;
     const titles = {
-      files: "EXPLORER",
+      files: "FILES",
       search: "SEARCH",
       outline: "OUTLINE",
       git: "SOURCE CONTROL",
@@ -951,13 +1121,14 @@
       "git-panel",
     ])
       $(id).hidden =
+        (id === "md-doc-tree" && readStorage("rootCollapsed", false)) ||
         id !==
-        {
-          files: "md-doc-tree",
-          search: "search-panel",
-          outline: "outline-panel",
-          git: "git-panel",
-        }[name];
+          {
+            files: "md-doc-tree",
+            search: "search-panel",
+            outline: "outline-panel",
+            git: "git-panel",
+          }[name];
     $("file-filter").hidden = name !== "files";
     document
       .querySelectorAll(".rail-button[data-nav]")
@@ -975,6 +1146,12 @@
         matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     state.editor?.updateOptions({ theme: dark ? "vs-dark" : "mddoc-light" });
+    const button = $("appearance-button");
+    button
+      .querySelector("svg path")
+      .setAttribute("d", icons[dark ? "sun" : "moon"]);
+    $("appearance-label").textContent = dark ? "Light mode" : "Dark mode";
+    button.setAttribute("aria-pressed", String(dark));
     store("appearance", state.appearance);
   }
   function applyLayout() {
@@ -1019,6 +1196,7 @@
       navWidth: state.navWidth,
       editRatio: state.editRatio,
       horizontalRatio: state.horizontalRatio,
+      navHidden: $("workbench").classList.contains("nav-hidden"),
     });
   }
   function splitters() {
@@ -1979,6 +2157,28 @@
     new: newDocument,
     "file-actions": () => fileActions(),
     "refresh-tree": () => loadTree(),
+    "root-toggle": () => {
+      store("rootCollapsed", !readStorage("rootCollapsed", false));
+      renderTree();
+    },
+    "expand-folders": () => {
+      store("rootCollapsed", false);
+      const paths = [];
+      const walk = (nodes) =>
+        nodes.forEach((node) => {
+          if (node.type === "dir") {
+            paths.push(node.path);
+            walk(node.children);
+          }
+        });
+      walk(state.tree);
+      store("folders", paths);
+      renderTree();
+    },
+    "collapse-folders": () => {
+      store("folders", []);
+      renderTree();
+    },
     "open-sample": async () => {
       const file =
         state.files.find((f) => f.path.endsWith("branded-cover.md")) ||
@@ -2521,36 +2721,16 @@
     try {
       state.workspace = await api("/api/capabilities");
       state.session = state.workspace.session;
+      const badge = document.querySelector(".local-badge");
+      badge.replaceChildren(
+        el("i"),
+        document.createTextNode(state.workspace.remote ? " Remote" : " Local"),
+      );
+      $("workspace-button").title = state.workspace.workspace;
       state.recoveryDrafts = readStorage("drafts", {});
       $("workspace-name").textContent = state.workspace.name;
       $("tree-root-name").textContent = state.workspace.name;
-      $("workspace-button").onclick = async () => {
-        if (selectedWorkspace) {
-          const data = await api("/api/workspaces");
-          const body = el("div");
-          for (const ws of data.workspaces) {
-            const link = el(
-              "a",
-              "button",
-              ws.name +
-                (ws.remote ? " · Remote" : "") +
-                (ws.available ? "" : " · Not mounted"),
-            );
-            if (ws.available)
-              link.href = "/?workspace=" + encodeURIComponent(ws.name);
-            body.append(link);
-          }
-          dialog("Open workspace", body, [
-            { label: "Close", run: (d) => d.close() },
-          ]);
-          return;
-        }
-        dialog(
-          "Local workspace",
-          `<p>${escape(state.workspace.workspace)}</p><p>Files are edited locally. Previews and exports use the installed md-doc pipeline.</p>`,
-          [{ label: "Close", run: (d) => d.close() }],
-        );
-      };
+      $("workspace-button").onclick = openWorkspaceChooser;
       const layout = readStorage("layout", {});
       Object.assign(state, {
         layout: layout.layout || "split",
@@ -2558,6 +2738,7 @@
         editRatio: layout.editRatio || 0.5,
         horizontalRatio: layout.horizontalRatio || 0.5,
       });
+      $("workbench").classList.toggle("nav-hidden", !!layout.navHidden);
       state.appearance = readStorage("appearance", "system");
       state.auto = readStorage("auto", true);
       $("auto-preview").checked = state.auto;
