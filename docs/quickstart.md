@@ -558,8 +558,8 @@ cover_page: false
 
 ## Next Steps
 
-- **Read more:** Check out `workspace/CLAUDE.md` for detailed authoring guidance
-- **Theming:** See root `CLAUDE.md` for CSS variables and advanced theme customization
+- **Read more:** Check out `workspace/AGENTS.md` for detailed authoring guidance
+- **Theming:** See root `AGENTS.md` for CSS variables and advanced theme customization
 - **CI/CD:** The GitHub Actions template shows how to integrate into your workflow
 - **Cloud sync:** Configure Azure, S3, or local sync targets in `_meta.yml`
 
@@ -591,5 +591,5 @@ cover_page: false
 ## Help & Feedback
 
 - **Issues:** [GitHub Issues](https://github.com/gregshallardau/md-doc-pipeline/issues)
-- **Docs:** Check `CLAUDE.md` and `workspace/CLAUDE.md` in the repo
+- **Docs:** Check `AGENTS.md` and `workspace/AGENTS.md` in the repo
 - **Examples:** See `examples/` folder for sample projects

@@ -82,7 +82,7 @@ Layer-by-layer accordion of the cascading `_meta.yml` files plus the document's 
 
 #### CSS
 
-The resolved theme — typically `_pdf-theme.css` from the deepest matching directory. Shows:
+The resolved theme: `_pdf-theme.css` (then the shared `_theme.css`) from the deepest matching directory, with workspace-local `@import`s inlined and the Word-only `_docx-theme.css` ignored. Shows:
 
 - Source path (with an **Edit ↗** button to open the file)
 - Full CSS contents in a syntax-highlighted code block

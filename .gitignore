@@ -27,9 +27,6 @@ workspace/
 .DS_Store
 *.swp
 
-# Auto-generated agent config
-AGENTS.md
-GEMINI.md
 /_pdf-theme.css
 
 # Incremental dependency state and browser test dependencies

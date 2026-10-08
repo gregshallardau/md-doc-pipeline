@@ -187,7 +187,7 @@ These styles live in `generate_base_theme()` in `md_doc/theme.py`. Override them
 _VALID_FORMATS: frozenset[str] = frozenset({"pdf", "docx", "dotx", "formpdf"})
 ```
 
-### 6. `workspace/CLAUDE.md` additions
+### 6. `workspace/AGENTS.md` additions
 
 Add a "PDF forms" section explaining the authoring syntax, the `outputs: [formpdf]` key, and the `name` attribute convention.
 
@@ -236,7 +236,7 @@ All tests written before production code. Follow red-green-refactor strictly.
 2. **Theme** — add form field CSS block to `generate_base_theme()` template
 3. **Builder** — `builders/formpdf.py` as a thin wrapper
 4. **CLI** — add `formpdf` to choices, dispatch to new builder
-5. **Docs** — update `workspace/CLAUDE.md` authoring section
+5. **Docs** — update `workspace/AGENTS.md` authoring section
 6. **README** — add `formpdf` to output types table and CLI reference
 
 ---
@@ -251,9 +251,9 @@ All tests written before production code. Follow red-green-refactor strictly.
 | `md_doc/theme.py` | Modify — add form field CSS block to `generate_base_theme()` |
 | `tests/test_formpdf_builder.py` | **Create** |
 | `tests/test_formpdf_cli.py` | **Create** |
-| `workspace/CLAUDE.md` | Modify — add PDF forms authoring section |
+| `workspace/AGENTS.md` | Modify — add PDF forms authoring section |
 | `README.md` | Modify — add `formpdf` to output types and CLI reference |
-| `CLAUDE.md` | Already updated |
+| `AGENTS.md` | Already updated |
 
 ---
 

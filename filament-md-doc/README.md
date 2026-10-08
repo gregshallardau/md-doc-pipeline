@@ -24,7 +24,7 @@ A [Filament v5](https://filamentphp.com) plugin that turns the [md-doc-pipeline]
 - **Editor** — Monaco code editor for `.md`, `_meta.yml`, and CSS theme files with custom syntax highlighting for md-doc syntax (Jinja2, `[[fields]]`, `?[forms]`, frontmatter, mermaid).
 - **Live preview** — client-side HTML render via `marked.js` with the resolved theme CSS injected, plus `{{ var }}` substitution from the merged config cascade.
 - **Inherited config panel** — shows every `_meta.yml` layer from the repo root down to the doc, plus the document's frontmatter, plus the final merged result.
-- **CSS theme panel** — displays the resolved `_pdf-theme.css` / `_theme.css` for the current document and lets you jump to it.
+- **CSS theme panel** — displays the theme the PDF builder would use for the current document and lets you jump to it. In each folder `_pdf-theme.css` comes before the shared `_theme.css`; workspace-local `@import`s are inlined so the preview is styled, and the Word-only `_docx-theme.css` is ignored.
 - **Template navigation** — clickable buttons for every `{% include "..." %}` in the document; opens the included file in the editor.
 - **File locking** — pessimistic, database-backed locks prevent two users editing the same file. Auto-released on tab close via `sendBeacon`. Heartbeat keeps the lock alive while you're typing.
 - **Git integration** — file history, dirty-status indicators in the file tree, and a Monaco diff viewer for comparing your working copy to any commit.

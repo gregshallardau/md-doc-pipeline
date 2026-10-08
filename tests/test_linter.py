@@ -337,3 +337,16 @@ class TestColWidthsCommentLint:
             "<!-- col-widths: wide, narrow -->\n| A | B |\n| --- | --- |\n| 1 | 2 |\n",
         )
         assert any("non-numeric" in m for m in msgs)
+
+
+def test_default_filter_guards_undefined_variable_warning(tmp_path):
+    from md_doc.linter import lint_file
+
+    (tmp_path / ".git").mkdir()
+    doc = tmp_path / "d.md"
+    doc.write_text(
+        '---\ntitle: T\n---\n\nMail {{ support_email | default("x@y.z") }} and {{ other_missing }}.\n'
+    )
+    messages = [i.message for i in lint_file(doc, repo_root=tmp_path)]
+    assert not any("support_email" in m for m in messages)
+    assert any("other_missing" in m for m in messages)

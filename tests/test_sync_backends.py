@@ -126,3 +126,20 @@ def test_azure_missing_credentials_raises(tree, monkeypatch):
 
     with pytest.raises(ValueError, match="connection string"):
         azure_files.make_uploader(root, {"share_name": "share"})
+
+
+def test_sync_config_expands_environment_references(monkeypatch):
+    from md_doc.sync import expand_env
+
+    monkeypatch.setenv("MD_DOC_TEST_SECRET", "s3cr3t")
+    assert expand_env({"a": "${MD_DOC_TEST_SECRET}", "b": ["x-${MD_DOC_TEST_SECRET}"], "c": 1}) == {
+        "a": "s3cr3t",
+        "b": ["x-s3cr3t"],
+        "c": 1,
+    }
+    monkeypatch.delenv("MD_DOC_TEST_SECRET")
+    assert expand_env("${MD_DOC_TEST_SECRET}", strict=False) == "${MD_DOC_TEST_SECRET}"
+    import pytest
+
+    with pytest.raises(ValueError, match="MD_DOC_TEST_SECRET"):
+        expand_env("${MD_DOC_TEST_SECRET}")

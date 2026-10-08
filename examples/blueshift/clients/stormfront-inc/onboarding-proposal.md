@@ -1,6 +1,6 @@
 ---
 title: Blueshift Onboarding Proposal — Stormfront Inc
-output_pdf: Stormfront-Onboarding-Proposal.pdf
+output_filename: "Stormfront-Onboarding-Proposal"
 date: 1 April 2026
 product: Nova Analytics + Pulse Monitor
 contract_start: 1 May 2026

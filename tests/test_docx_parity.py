@@ -122,6 +122,11 @@ def test_nested_lists_are_indented(tmp_repo):
 # ── PDF↔DOCX page-break / structural parity ─────────────────────────────────
 
 
+def _has_page_break(xml: str) -> bool:
+    """A hard page break: an explicit break run or ``pageBreakBefore`` on a paragraph."""
+    return 'w:type="page"' in xml or "<w:pageBreakBefore" in xml
+
+
 def test_appendix_h2_forces_page_break(tmp_repo):
     # APPENDIX section H2s break the page in both PDF and docx (shared markers).
     # The leading "# Doc" title H1 is what _strip_leading_h1 removes, leaving the
@@ -130,14 +135,14 @@ def test_appendix_h2_forces_page_break(tmp_repo):
         _build(tmp_repo, "# Doc\n\n## Intro\n\ntext\n\n# APPENDIX\n\n## A1\n\none\n", {}),
         "word/document.xml",
     )
-    assert 'w:type="page"' in with_appendix
+    assert _has_page_break(with_appendix)
     without = _part(_build(tmp_repo, "# Doc\n\n## Intro\n\ntext\n", {}), "word/document.xml")
-    assert 'w:type="page"' not in without
+    assert not _has_page_break(without)
 
 
 def test_explicit_pagebreak_marker(tmp_repo):
     xml = _part(_build(tmp_repo, "a\n\n<!-- pagebreak -->\n\nb\n", {}), "word/document.xml")
-    assert 'w:type="page"' in xml
+    assert _has_page_break(xml)
 
 
 def test_headings_keep_with_next(tmp_repo):
@@ -323,6 +328,18 @@ def test_docx_page_size_matches_theme(tmp_repo):
     assert round(section.page_height / 36000, 1) == 279.4
 
 
+def starts_new_page(paragraph) -> bool:
+    """True if *paragraph* begins a page: it, or the spacer line carrying its top
+    margin directly before it, has ``pageBreakBefore``."""
+    from docx.oxml.ns import qn
+
+    def flagged(p_el) -> bool:
+        pPr = p_el.find(qn("w:pPr")) if p_el is not None else None
+        return pPr is not None and pPr.find(qn("w:pageBreakBefore")) is not None
+
+    return flagged(paragraph._p) or flagged(paragraph._p.getprevious())
+
+
 def test_h1_page_break_before_from_theme(tmp_repo):
     # The PDF theme forces every report-body H1 onto a new page; the docx
     # builder mirrors that — but never on the first content element (a forced
@@ -337,8 +354,8 @@ def test_h1_page_break_before_from_theme(tmp_repo):
     d = Document(str(out))
     first = next(p for p in d.paragraphs if p.text == "First")
     second = next(p for p in d.paragraphs if p.text == "Second")
-    assert first.paragraph_format.page_break_before is not True
-    assert second.paragraph_format.page_break_before is True
+    assert not starts_new_page(first)
+    assert starts_new_page(second)
 
 
 def test_theme_default_footers_render_in_word(tmp_repo):

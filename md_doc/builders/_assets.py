@@ -242,6 +242,11 @@ def _page_geometry(css_text: str | None) -> dict[str, float]:
             mm = _length_to_mm(dm.group(1).strip())
             if mm is not None:
                 geom[key] = mm
+    # The PDF centres @bottom-* margin boxes vertically in the bottom margin;
+    # Word anchors the footer a fixed distance from the page edge. Reproduce the
+    # centring by default (one ~12.5pt footer line), unless the theme overrides.
+    if "footer_distance" not in geom:
+        geom["footer_distance"] = max(0.0, geom["bottom"] / 2 - (12.5 / 2) * 25.4 / 72)
     return geom
 
 

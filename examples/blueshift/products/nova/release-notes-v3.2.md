@@ -1,6 +1,6 @@
 ---
 title: Nova Analytics — Release Notes v3.2
-output_pdf: Nova-Release-Notes-3.2.pdf
+output_filename: "Nova-Release-Notes-3.2"
 date: 1 April 2026
 ---
 

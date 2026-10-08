@@ -81,3 +81,20 @@ def iter_field_specs(md_content: str) -> list[tuple[str, str, list[str], dict[st
         if parsed is not None:
             out.append(parsed)
     return out
+
+
+_SELECT_BLOCK_RE = re.compile(r"<select\b[^>]*>.*?</select>", re.IGNORECASE | re.DOTALL)
+_BETWEEN_TAGS_RE = re.compile(r">\s+<")
+
+
+def collapse_select_markup(md_content: str) -> str:
+    """Join a multi-line raw ``<select>`` onto one line.
+
+    Python-Markdown splits an indented, multi-line ``<select>`` into a stray
+    ``<p>`` fragment plus loose ``<option>`` lines. The HTML parser then
+    swallows the next closing tags, so wrapper elements (such as the PDF's
+    heading keep-together container) never close and fold the rest of the
+    document into themselves. Whitespace *between* tags carries no meaning
+    inside a select, so collapsing it keeps the element in one piece.
+    """
+    return _SELECT_BLOCK_RE.sub(lambda m: _BETWEEN_TAGS_RE.sub("><", m.group(0)), md_content)

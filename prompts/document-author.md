@@ -36,8 +36,9 @@ cover_page: true
 - `pdf` — styled PDF, best for formal reports and documents sent as attachments
 - `docx` — Word document, best for content staff copy into emails
 - `dotx` — Word merge template, best for personalised letters, proposals, and invoices sent to many recipients
+- Slide decks (`pptx`) use a different file shape — use the deck prompt (`docs/llm-deck-prompt.md`) instead
 
-**`cover_page`** — `true` adds a branded cover page (title, author, date). `false` starts with the body immediately. Default is `true` for pdf, ask for dotx.
+**`cover_page`** — `true` adds a branded cover page (title, author, date). `false` starts with the body immediately. The pipeline default is `false`, but a project's `_meta.yml` often sets `true` for formal documents — set it explicitly: `true` for reports and proposals, `false` for letters, forms and templates.
 
 ## Three variable types — never mix them up
 
@@ -54,6 +55,28 @@ cover_page: true
 - `###` H3 for subsections
 - Standard Markdown for tables, bullet lists, numbered lists, **bold**, *italic*
 - For `.dotx` documents, recipient-specific data always uses `[[field]]` syntax
+
+## Page breaks and fillable forms
+
+- `<!-- pagebreak -->` on its own line forces a new page in PDF and Word.
+- For a fillable PDF form, add `pdf_forms: true` (and `cover_page: false`) to the frontmatter and use the field shorthand, one field per line or inside a `?[box]` grid. Only use the shorthand when the user asks for a fillable form.
+
+```markdown
+**Full name** ?[text: full_name, required]
+?[textarea: notes, rows=4]
+?[checkbox: agree, required] I agree to the terms
+?[yesno: consent]
+?[select: department | Engineering | Sales | Operations]
+?[radio-inline: urgency | Standard | Urgent]
+?[signature: applicant_signature]
+
+?[box]
+**Insured name** ?[text: insured_name]
+**City** ?[text: city] | **State** ?[text: state] | **Post code** ?[text: post_code]
+?[/box]
+```
+
+Every field needs a unique snake_case name. Do not mix `{{ }}`, `[[ ]]` and `?[ ]` for the same value: `?[ ]` fields are filled in the PDF, `[[ ]]` fields in a Word template.
 
 ## Example document (dotx proposal)
 

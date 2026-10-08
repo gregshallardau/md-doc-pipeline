@@ -6,6 +6,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+- Documentation for every feature: new CLI reference, theming guide, Markdown reference and
+  export guide; a complete key index in the config reference; and `tests/test_docs_coverage.py`,
+  which fails when a config key, CLI command or option, or `--mddoc-*` property is undocumented.
+- `${NAME}` references in `sync_config` are now expanded from the environment (as the docs
+  already described), so credentials can stay out of `_meta.yml`.
+
+### Fixed
+- Browser editors (standalone and Filament): the CSS preview now uses the PDF theme order
+  (`_pdf-theme.css`, then `_theme.css`; the Word-only `_docx-theme.css` is ignored) and inlines
+  workspace-local `@import`s, so themes written as `@import '_theme.css';` preview styled. Their
+  config-key highlighters gained the eight keys they were missing, and a test keeps them complete.
+  The standalone editor serves `.dotx` builds with the Word template media type.
+- Neovim plugin README: documented `show_winbar`, every keymap, the `_meta.yml` project-root
+  fallback and the plugin's flat-YAML limitation; "four" display modes.
+- `output_pdf` was documented and used in examples but ignored; the documented key is
+  `output_filename`, and the examples use it.
+- `md-doc lint` no longer warns about a variable used as `{{ var | default(...) }}`.
+
+### Changed
+- Agent instructions are now tool-neutral: `CLAUDE.md` is renamed `AGENTS.md` (root and
+  `workspace/`), with a one-line `CLAUDE.md` shim that imports it so Claude Code still
+  loads the same guidance. The build and the register skip `AGENTS.md`, `CLAUDE.md` and
+  `GEMINI.md`, and `.gitignore` no longer hides `AGENTS.md`/`GEMINI.md`.
+
+### Changed
+- Word form tables take their row heights from the PDF: the PDF builder's own table
+  markup is laid out with the real theme CSS and each Word row is given that
+  height as a minimum, so row pitch follows theme padding, input display and font
+  sizes. Empty-input spacing follows the body font; signature fields (standalone
+  and in `?[row]`) get the PDF's rule, caption and em-scaled height.
+- Form PDFs: every form-control dimension is now em-based, so controls, grids,
+  labels and signature rows scale with the theme's font size. Grids use the
+  theme's primary colour (tinted rules, uppercase labels) and ordinary tables
+  keep the report styling. A size/weight sweep test guards control alignment.
+- Word export: form geometry (input line, descent relief, choice lines, cell
+  input heights) scales with the theme's input/table/body font sizes and uses
+  the theme's input margins; form grids follow the new PDF styling, cells that
+  are blank in the PDF stay blank, page-number fields take the footer style,
+  and form documents omit the running date like the PDF.
+
+### Changed
+- Word export parity: CSS-measured table column widths, form controls as sized
+  boxes/grids (incl. flex rows, colspans, textareas), collapsed paragraph margins,
+  code line pitch, hr/blockquote/pre box models, cover z-order, header-bar slot
+  widths, section-bar padding, and valid square roots in Office Math. PDF:
+  multi-line `<select>` and keep-with-next wrappers no longer corrupt markup.
+
 ### Fixed
 - Cover pages follow physical page dimensions in landscape and custom themes;
   bottom bands sit against the page edge. Word cover spacing and indents no

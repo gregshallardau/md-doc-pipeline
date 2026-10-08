@@ -3,7 +3,7 @@ title: Project Report — Alpha Initiative
 client: Beta Systems Ltd
 product: Software Delivery Project
 project_number: PRJ-2026-001
-output_pdf: Alpha-Project-Report-2026.pdf
+output_filename: "Alpha-Project-Report-2026"
 output_docx: Alpha-Project-Report-2026.docx
 ---
 

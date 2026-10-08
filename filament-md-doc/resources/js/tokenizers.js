@@ -47,6 +47,11 @@
         'sync_target', 'sync_config',
         // Export / vault
         'export', 'export_format', 'export_path', 'export_filename', 'draft', 'tags',
+        // Layout, tables and slides
+        'table_col_widths', 'css_vars', 'header_logo_height', 'page_header_bar_offset',
+        'pptx_template', 'slide_size', 'slide_split',
+        // Export destination
+        'export_folder',
         // Client / engagement fields (common user-defined cascade keys)
         'client', 'client_abn', 'client_contact', 'account_manager',
         'support_email', 'alert_email',

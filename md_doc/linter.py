@@ -67,7 +67,7 @@ def _frontmatter_jinja_vars(
                 ast = env.parse(value)
             except TemplateSyntaxError:
                 return
-            for var in meta.find_undeclared_variables(ast):
+            for var in _unguarded_undeclared(ast):
                 found.setdefault(var, key_path)
         elif isinstance(value, dict):
             for k, v in value.items():
@@ -80,6 +80,37 @@ def _frontmatter_jinja_vars(
         _walk(v, str(k))
 
     return found
+
+
+def _unguarded_undeclared(ast: Any) -> set[str]:
+    """Undeclared variables that are not only used as ``{{ var | default(...) }}``.
+
+    A variable whose every use is the direct operand of ``default``/``d`` cannot
+    render empty, so reporting it as undefined would be a false positive.
+    """
+    from jinja2 import nodes
+
+    guarded: set[str] = set()
+    unguarded: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if (
+            isinstance(node, nodes.Filter)
+            and node.name in ("default", "d")
+            and isinstance(node.node, nodes.Name)
+        ):
+            guarded.add(node.node.name)
+            for child in node.iter_child_nodes():
+                if child is not node.node:
+                    visit(child)
+            return
+        if isinstance(node, nodes.Name):
+            unguarded.add(node.name)
+        for child in node.iter_child_nodes():
+            visit(child)
+
+    visit(ast)
+    return {v for v in meta.find_undeclared_variables(ast) if v in unguarded or v not in guarded}
 
 
 def _check_table_separators(body: str, path: Path, issues: list[LintIssue]) -> None:
@@ -418,7 +449,7 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
         return issues
 
     # Undefined variables
-    undeclared = meta.find_undeclared_variables(ast)
+    undeclared = _unguarded_undeclared(ast)
     known_vars = set(config.keys())
     for var in sorted(undeclared - known_vars):
         issues.append(

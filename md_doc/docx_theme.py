@@ -59,6 +59,22 @@ def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+def _parse_box_model(theme: dict[str, Any], prefix: str, props: dict[str, str]) -> None:
+    """Margins and padding (pt) of a block rule, as ``<prefix>_margin_top`` etc."""
+    for kind in ("margin", "padding"):
+        sides: dict[str, float | None] = {}
+        if kind in props:
+            sides = dict(_parse_margin(props[kind]))
+        for side in ("top", "right", "bottom", "left"):
+            value = props.get(f"{kind}-{side}")
+            if value is not None:
+                sides[side] = 0.0 if value.strip() == "0" else _parse_pt(value)
+        for side, pt in sides.items():
+            key = f"{prefix}_{kind}_{side}"
+            if pt is not None and key not in theme:
+                theme[key] = pt
+
+
 def _parse_pt(value: str) -> float | None:
     """Convert an absolute CSS length to points (pt, px, mm, cm or inches)."""
     m = re.search(r"(-?[\d.]+)\s*(pt|px|mm|cm|in)\b", value, re.IGNORECASE)
@@ -233,6 +249,108 @@ def parse_css_for_word(css_path: Path) -> dict[str, Any]:
         return {}
 
 
+_TEXT_INPUT_SELECTORS = (
+    'input[type="text"]',
+    'input[type="email"]',
+    'input[type="date"]',
+    "textarea",
+    "select",
+)
+
+
+def _parse_form_css(
+    theme: dict[str, Any], blocks: dict[str, dict[str, str]], first_color: Any
+) -> None:
+    """Form-related theme rules: input boxes, field labels and ``display: flex`` rows.
+
+    * ``form_input``: padding / border / fill of a text input (so the Word field
+      boxes are as tall and as coloured as the PDF's).
+    * ``form_label``: size, colour, weight, case, tracking of ``label`` text.
+    * ``flex_rows``: single-class selectors with ``display: flex``, as
+      ``{class: {"gap": pt, "wrap": bool}}`` (rendered as table rows / wrapped runs).
+    """
+    props: dict[str, str] = {}
+    for selector in _TEXT_INPUT_SELECTORS:
+        if selector in blocks:
+            props = blocks[selector]
+            break
+    if props:
+        box: dict[str, float | str] = {}
+        if "padding" in props:
+            pad = _parse_margin(props["padding"])
+            if pad.get("top") is not None:
+                box["pad_y"] = float(pad["top"] or 0.0)
+            if pad.get("left") is not None:
+                box["pad_x"] = float(pad["left"] or 0.0)
+        border = props.get("border", "")
+        border_pt = _parse_pt(border) if border else None
+        if border_pt is not None:
+            box["border_pt"] = border_pt
+            color = first_color(border)
+            if color:
+                box["border_color"] = color
+        if "background" in props:
+            fill = first_color(props["background"])
+            if fill:
+                box["fill"] = fill
+        # WeasyPrint sizes a form control with border-box sizing to its intrinsic
+        # height (padding is absorbed), so such a box is much shorter.
+        if props.get("box-sizing", "").strip() == "border-box":
+            box["border_box"] = True
+        font = _parse_pt(props.get("font-size", ""))
+        if font is not None:
+            box["font_pt"] = font
+        margin = _parse_margin(props["margin"]) if "margin" in props else {}
+        if margin.get("top") is not None:
+            box["margin_top"] = float(margin["top"] or 0.0)
+        if margin.get("bottom") is not None:
+            box["margin_bottom"] = float(margin["bottom"] or 0.0)
+        minimum = _parse_pt(blocks.get("textarea", {}).get("min-height", ""))
+        if minimum is not None:
+            box["textarea_min"] = minimum
+        if box:
+            theme["form_input"] = box
+
+    label_props: dict[str, str] = {}
+    for selector, rule in blocks.items():
+        if selector == "label" or selector.endswith(" label"):
+            label_props = {**label_props, **rule}
+    if label_props:
+        label: dict[str, float | str | bool] = {}
+        size = _parse_pt(label_props.get("font-size", ""))
+        if size is not None:
+            label["size"] = size
+        color = first_color(label_props["color"]) if "color" in label_props else None
+        if color:
+            label["color"] = color
+        weight = label_props.get("font-weight", "").strip()
+        if weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600):
+            label["bold"] = True
+        if label_props.get("text-transform", "").strip() == "uppercase":
+            label["upper"] = True
+        tracking = _parse_pt(label_props.get("letter-spacing", ""))
+        if tracking is not None:
+            label["tracking"] = tracking
+        gap = _parse_pt(label_props.get("margin-bottom", ""))
+        if gap is not None:
+            label["gap"] = gap
+        if label:
+            theme["form_label"] = label
+
+    flex: dict[str, dict[str, float | bool]] = {}
+    for selector, rule in blocks.items():
+        match = re.fullmatch(r"\.([\w-]+)", selector.strip())
+        if not match or rule.get("display", "").strip() not in ("flex", "inline-flex"):
+            continue
+        gap_pt = _parse_pt(rule.get("gap", "")) or 0.0
+        flex[match.group(1)] = {
+            "gap": gap_pt,
+            "wrap": rule.get("flex-wrap", "").strip() == "wrap",
+        }
+    if flex:
+        theme["flex_rows"] = flex
+
+
 def _do_parse(css_path: Path) -> dict[str, Any]:
     raw_css = _load_css_with_imports(css_path)
     clean = _strip_comments(raw_css)
@@ -387,8 +505,23 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if col:
             theme["pre_background_color"] = col
 
+    # pre / blockquote box model (vertical rhythm + padding the PDF applies)
+    _parse_box_model(theme, "pre", pre_props)
+    _parse_box_model(theme, "blockquote", blocks.get("blockquote", {}))
+    # Paragraphs inside a blockquote carry their own (usually smaller) margins.
+    _parse_box_model(theme, "blockquote_p", blocks.get("blockquote p", {}))
+    if "line-height" in pre_props:
+        try:
+            theme["pre_line_height"] = float(pre_props["line-height"].strip())
+        except ValueError:
+            pass
+
     # blockquote — left border, text colour, italic
     bq_props = blocks.get("blockquote", {})
+    if "background" in bq_props:
+        col = _first_color(bq_props["background"])
+        if col:
+            theme["blockquote_background_color"] = col
     if "border-left" in bq_props:
         val = bq_props["border-left"]
         col = _first_color(val)
@@ -413,6 +546,23 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             pt = _parse_pt(val)
             if pt is not None and "size_hr" not in theme:
                 theme["size_hr"] = pt
+    # hr margins collapse with the neighbouring paragraphs' margins in CSS.
+    if "margin" in hr_props:
+        margin = _parse_margin(hr_props["margin"])
+        if margin.get("top") is not None and "hr_space_before" not in theme:
+            theme["hr_space_before"] = margin["top"]
+        if margin.get("bottom") is not None and "hr_space_after" not in theme:
+            theme["hr_space_after"] = margin["bottom"]
+    for css_prop, theme_key in (
+        ("margin-top", "hr_space_before"),
+        ("margin-bottom", "hr_space_after"),
+    ):
+        if css_prop in hr_props and theme_key not in theme:
+            pt = _parse_pt(hr_props[css_prop])
+            if pt is not None:
+                theme[theme_key] = pt
+
+    _parse_form_css(theme, blocks, _first_color)
 
     # a — hyperlink colour
     a_props = blocks.get("a", {})
@@ -644,6 +794,12 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if "color_body" in theme:
             r, g, b = _hex_to_rgb(theme["color_body"])
             lp.font.color.rgb = RGBColor(r, g, b)
+        if "li_space_after" in theme or "li_space_before" in theme:
+            # Word's list styles suppress spacing between items of the same
+            # style (contextualSpacing); CSS li margins always apply.
+            pPr = lp.element.get_or_add_pPr()
+            for contextual in pPr.findall(qn("w:contextualSpacing")):
+                pPr.remove(contextual)
         if "li_space_after" in theme:
             lp.paragraph_format.space_after = Pt(theme["li_space_after"])
         if "li_space_before" in theme:
