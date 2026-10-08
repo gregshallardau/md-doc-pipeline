@@ -413,6 +413,21 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             pt = _parse_pt(val)
             if pt is not None and "size_hr" not in theme:
                 theme["size_hr"] = pt
+    # hr margins collapse with the neighbouring paragraphs' margins in CSS.
+    if "margin" in hr_props:
+        margin = _parse_margin(hr_props["margin"])
+        if margin.get("top") is not None and "hr_space_before" not in theme:
+            theme["hr_space_before"] = margin["top"]
+        if margin.get("bottom") is not None and "hr_space_after" not in theme:
+            theme["hr_space_after"] = margin["bottom"]
+    for css_prop, theme_key in (
+        ("margin-top", "hr_space_before"),
+        ("margin-bottom", "hr_space_after"),
+    ):
+        if css_prop in hr_props and theme_key not in theme:
+            pt = _parse_pt(hr_props[css_prop])
+            if pt is not None:
+                theme[theme_key] = pt
 
     # a — hyperlink colour
     a_props = blocks.get("a", {})
@@ -644,6 +659,12 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         if "color_body" in theme:
             r, g, b = _hex_to_rgb(theme["color_body"])
             lp.font.color.rgb = RGBColor(r, g, b)
+        if "li_space_after" in theme or "li_space_before" in theme:
+            # Word's list styles suppress spacing between items of the same
+            # style (contextualSpacing); CSS li margins always apply.
+            pPr = lp.element.get_or_add_pPr()
+            for contextual in pPr.findall(qn("w:contextualSpacing")):
+                pPr.remove(contextual)
         if "li_space_after" in theme:
             lp.paragraph_format.space_after = Pt(theme["li_space_after"])
         if "li_space_before" in theme:

@@ -270,11 +270,10 @@ class TestDotxFormFields:
         xml = self._build_dotx(tmp_repo, "?[box]\nA | ?[text: a]\n?[/box]\n\n?[submit Send]\n")
         assert "?[" not in xml
 
-    def test_docx_still_uses_underscores(self, tmp_repo):
+    def test_docx_renders_field_as_bordered_box_not_form_field(self, tmp_repo):
         from md_doc.builders.docx import build
 
         doc = tmp_repo / "t.md"
-        # Placeholder must be inline (a bare ________ line is a markdown <hr>).
         md = "---\ntitle: T\n---\n\n# T\n\n**Name** ?[text: name]\n"
         doc.write_text(md, encoding="utf-8")
         out = tmp_repo / "t.docx"
@@ -288,7 +287,10 @@ class TestDotxFormFields:
         )
         with zipfile.ZipFile(out) as z:
             xml = z.read("word/document.xml").decode("utf-8")
-        assert "________" in xml and "FORMTEXT" not in xml
+        # A plain .docx shows the input as a PDF-sized bordered box, never a
+        # live Word form field (those belong to the .dotx template).
+        assert 'w:fill="FAFAFA"' in xml and "<w:pBdr>" in xml and "FORMTEXT" not in xml
+        assert "________" not in xml
 
 
 # ── first-H1 page-break fix (docx side) ──────────────────────────────────────

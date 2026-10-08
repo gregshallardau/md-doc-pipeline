@@ -36,6 +36,7 @@ import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
 from ._cover import footer_band_geometry  # noqa: E402
+from ..forms import collapse_select_markup  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 
 
@@ -234,7 +235,9 @@ def _field_to_html(field_spec: str) -> str:
         options = parts[1:] if len(parts) > 1 else []
 
         if ftype == "select":
-            opts_html = "\n".join(
+            # One line: a multi-line <select> is split by the Markdown step and
+            # leaves the surrounding keep-together container unclosed.
+            opts_html = "".join(
                 (
                     f'  <option value="{_escape_html(o.lower().replace(" ", "_"))}">{_escape_html(o)}</option>'
                     if not o.startswith("--")
@@ -243,7 +246,7 @@ def _field_to_html(field_spec: str) -> str:
                 for o in options
             )
             req = " required" if name_attrs.get("required") else ""
-            return f'<select name="{_escape_html(name)}"{req}>\n{opts_html}\n</select>'
+            return f'<select name="{_escape_html(name)}"{req}>{opts_html}</select>'
 
         elif ftype in ("radio", "radio-inline"):
             # Span-level markup: block-level <div>s inside generated table
@@ -479,6 +482,40 @@ _BLOCK_RE = re.compile(rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL)
 _BREAK_DIV_MARKERS = ("md-doc-page-break", "appendix-template-break")
 
 
+_LABEL_TEXTAREA_RE = re.compile(
+    r"(<p>(?:(?!</p>).)*</p>)(\s*)(<textarea\b.*?</textarea>)", re.DOTALL
+)
+
+
+def _group_label_with_textarea(html_body: str) -> str:
+    """Wrap ``<p>label</p><textarea>`` pairs so a label is never stranded.
+
+    Python-Markdown emits a ``<textarea>`` as its own block after the label's
+    paragraph, so nothing ties the two together across a page break.
+    """
+    return _LABEL_TEXTAREA_RE.sub(
+        lambda m: f'<div class="field-group">{m.group(1)}{m.group(2)}{m.group(3)}</div>',
+        html_body,
+    )
+
+
+_PAIRED_TAGS = ("div", "select", "textarea", "form", "table", "ul", "ol", "blockquote", "pre", "dl")
+
+
+def _balanced_html(fragment: str) -> bool:
+    """True when every paired tag in *fragment* is opened and closed equally often.
+
+    A keep-together wrapper around a fragment that opens a tag it never closes
+    (a ``<select>`` split by the Markdown step, say) would be unable to close
+    its own ``</div>`` and would swallow the rest of the document.
+    """
+    lowered = fragment.lower()
+    return all(
+        len(re.findall(rf"<{tag}\b", lowered)) == len(re.findall(rf"</{tag}\s*>", lowered))
+        for tag in _PAIRED_TAGS
+    )
+
+
 def _keep_heading_with_next(html_body: str) -> str:
     """Wrap each heading + up to two following block elements in a keep-together div.
 
@@ -486,6 +523,10 @@ def _keep_heading_with_next(html_body: str) -> str:
     element is large.  Wrapping both in a container with break-inside:avoid
     forces them onto the same page.  We grab up to two siblings to handle
     the common pattern: heading → short intro paragraph → code/table block.
+
+    Everything between the heading and the last grouped block stays inside the
+    container in document order. A horizontal rule ends a section, so grouping
+    stops there rather than binding a heading to the next section's content.
     """
     heading_re = re.compile(r"(<h[2-4][^>]*>.*?</h[2-4]>)", re.DOTALL)
     parts = heading_re.split(html_body)
@@ -496,35 +537,32 @@ def _keep_heading_with_next(html_body: str) -> str:
         if heading_re.fullmatch(parts[i]):
             heading = parts[i]
             tail = parts[i + 1] if i + 1 < len(parts) else ""
-            blocks = _BLOCK_RE.findall(tail)
+            grouped: list[re.Match[str]] = []
+            previous_end = 0
+            for match in _BLOCK_RE.finditer(tail):
+                if "<hr" in tail[previous_end : match.start()]:
+                    break
+                grouped.append(match)
+                previous_end = match.end()
+                if len(grouped) == 2:
+                    break
+            while grouped and not _balanced_html("".join(m.group(0) for m in grouped)):
+                grouped.pop()
             # Stop collecting at the first forced page-break div.
             cut = next(
                 (
                     idx
-                    for idx, blk in enumerate(blocks)
-                    if any(marker in blk for marker in _BREAK_DIV_MARKERS)
+                    for idx, m in enumerate(grouped)
+                    if any(marker in m.group(0) for marker in _BREAK_DIV_MARKERS)
                 ),
                 None,
             )
             if cut is not None:
-                blocks = blocks[:cut]
-            if len(blocks) >= 2:
-                rest = tail[
-                    tail.index(blocks[0])
-                    + len(blocks[0])
-                    + tail[tail.index(blocks[0]) + len(blocks[0]) :].index(blocks[1])
-                    + len(blocks[1]) :
-                ]
-                before = tail[: tail.index(blocks[0])]
-                result.append(before)
-                result.append(f'<div class="keep-with-next">{heading}{blocks[0]}{blocks[1]}</div>')
-                result.append(rest)
-            elif len(blocks) == 1:
-                before = tail[: tail.index(blocks[0])]
-                after = tail[tail.index(blocks[0]) + len(blocks[0]) :]
-                result.append(before)
-                result.append(f'<div class="keep-with-next">{heading}{blocks[0]}</div>')
-                result.append(after)
+                grouped = grouped[:cut]
+            if grouped:
+                end = grouped[-1].end()
+                result.append(f'<div class="keep-with-next">{heading}{tail[:end]}</div>')
+                result.append(tail[end:])
             else:
                 result.append(heading)
                 result.append(tail)
@@ -841,6 +879,8 @@ _BASE_FIXES_CSS = (
 _FORM_SUPPORT_CSS = """<style>
 /* Forms don't show the running date used by report footers */
 .running-date { display: none; }
+/* A label and its separate textarea block never split across pages */
+.report-body .field-group { page-break-inside: avoid; break-inside: avoid; }
 /* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
    the cells, deterministic row heights so the grid has an even rhythm */
 table.field-box { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; margin: 3pt 0 10pt 0; page-break-inside: auto; }
@@ -1693,7 +1733,7 @@ def build(
     body = _inject_page_breaks(body)
 
     is_form = bool(config.get("pdf_forms"))
-    body = _expand_form_fields(body, is_form)
+    body = _expand_form_fields(collapse_select_markup(body), is_form)
 
     from ..math import markdown_html, render_math
 
@@ -1752,7 +1792,7 @@ def build(
             except Exception:
                 theme_body_justify = False
 
-    html_body = _keep_heading_with_next(html_body)
+    html_body = _keep_heading_with_next(_group_label_with_textarea(html_body))
     html = _build_html(
         title,
         date_str,

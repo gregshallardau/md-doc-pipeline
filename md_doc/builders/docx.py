@@ -38,12 +38,14 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
 
 from ..config import coerce_bool
+from ..forms import collapse_select_markup
+from ..table_layout import css_column_weights
 from ..docx_theme import (
     _apply_font_name,
     _hex_to_rgb,
@@ -53,7 +55,7 @@ from ..docx_theme import (
     set_cell_shading,
     set_para_shading,
 )
-from .pdf import _inject_appendix_breaks, _inject_page_breaks
+from .pdf import _inject_appendix_breaks, _inject_page_breaks, _keep_heading_with_next
 from ._assets import (
     _DEFAULT_GEOMETRY,
     _drop_empty_table_headers,
@@ -167,6 +169,37 @@ def _insert_hyperlink(paragraph: Any, text: str, url: str, *, superscript: bool 
 # ---------------------------------------------------------------------------
 # Field helpers — MERGEFIELD and Text Form Field
 # ---------------------------------------------------------------------------
+
+
+# Geometry of a text input in the PDF theme (``padding: 4pt 6pt; border: 1pt;
+# margin: 2pt 0 8pt``, 10pt text on a 12pt line). Word field boxes use the same
+# numbers so a form page consumes the same vertical space in both formats.
+_FIELD_LINE_PT = 12.0
+_FIELD_PAD_X_PT = 6.0
+_FIELD_PAD_Y_PT = 4.0
+_FIELD_BORDER_PT = 1.0
+_FIELD_MARGIN_TOP_PT = 2.0
+_FIELD_MARGIN_BOTTOM_PT = 8.0
+_FIELD_BORDER_COLOR = "5D6D7E"
+_FIELD_FILL = "FAFAFA"
+_TEXTAREA_MIN_PT = 48.0
+
+# w:pPr children that must follow w:pBdr / w:shd in schema order.
+_PPR_AFTER_SHD = (
+    "tabs suppressAutoHyphens kinsoku wordWrap overflowPunct topLinePunct autoSpaceDE "
+    "autoSpaceDN bidi adjustRightInd snapToGrid spacing ind contextualSpacing mirrorIndents "
+    "suppressOverlap jc textDirection textAlignment textboxTightWrap outlineLvl divId "
+    "cnfStyle rPr sectPr pPrChange"
+).split()
+
+
+def _insert_ppr_in_order(pPr: Any, element: Any, successors: list[str]) -> None:
+    """Insert *element* into ``w:pPr`` before the first schema successor."""
+    for child in pPr:
+        if child.tag in {qn(f"w:{name}") for name in successors}:
+            child.addprevious(element)
+            return
+    pPr.append(element)
 
 
 def _insert_merge_field(
@@ -516,6 +549,7 @@ class _DocxBuilder(HTMLParser):
         doc_path: Path | None = None,
         repo_root: Path | None = None,
         section_bar: dict[str, Any] | None = None,
+        layout_css: Path | None = None,
     ) -> None:
         super().__init__()
         self.convert_charrefs = True
@@ -529,6 +563,7 @@ class _DocxBuilder(HTMLParser):
         self._doc_path = doc_path
         self._repo_root = repo_root
         self._section_bar = section_bar  # None or parsed section_bar config
+        self._layout_css = layout_css  # PDF theme CSS used for table auto-layout
 
         apply_theme_to_doc(self.doc, self._theme)
 
@@ -562,7 +597,9 @@ class _DocxBuilder(HTMLParser):
         self._in_th = False
         self._table_form_kind: str | None = None
         self._table_rows: list[list[tuple[bool, str, str | None]]] = []
-        self._current_row: list[tuple[bool, str, str | None]] = []
+        self._current_row: list[tuple[bool, str, str | None, dict[str, str]]] = []
+        self._table_style: dict[str, str] = {}
+        self._current_cell_style: dict[str, str] = {}
         self._current_cell_html = ""
         self._current_cell_align: str | None = None  # per-cell text-align from markdown :--:
         # Set by <!-- col-widths: 30, 70 --> comments; consumed by the next table
@@ -583,6 +620,9 @@ class _DocxBuilder(HTMLParser):
 
         # Alignment context stack — pushed/popped by <div style="text-align: ...">
         self._alignment_stack: list[str | None] = []
+        self._div_stack: list[int | None] = []
+        # Margins (before, after) that must not collapse with a neighbour.
+        self._fixed_margins: dict[Any, tuple[float, float]] = {}
 
         # Hyperlink state — set while inside <a href="...">
         self._current_href: str | None = None
@@ -714,6 +754,178 @@ class _DocxBuilder(HTMLParser):
         if self._paragraph is None:
             self._new_para()
         return self._paragraph
+
+    def _style_signature_line(self, para: Any) -> None:
+        """Signature field: a 40pt-high slot ruled underneath, 60% of the width."""
+        fmt = para.paragraph_format
+        fmt.space_before = Pt(8)
+        fmt.space_after = Pt(12)
+        fmt.left_indent = Pt(0)
+        text_width_pt = self._text_width_emu() / 12700
+        fmt.right_indent = Pt(text_width_pt * 0.4)
+        pPr = para._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "12")
+        bottom.set(qn("w:space"), "1")
+        bottom.set(qn("w:color"), "1A1A2E")
+        pBdr.append(bottom)
+        _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+
+    def _add_rule(self) -> None:
+        """A horizontal rule: a hairline paragraph carrying the CSS ``hr`` margins.
+
+        The PDF draws ``hr`` as a thin ruled line with ``margin: 12pt 0``. A
+        Word rule paragraph would otherwise keep a full text-line height, so
+        use an exact 1pt line; neighbouring margins collapse in
+        :func:`_collapse_paragraph_margins`.
+        """
+        para = self.doc.add_paragraph()
+        self._paragraph = para
+        fmt = para.paragraph_format
+        fmt.space_before = Pt(float(self._theme.get("hr_space_before", 6.0)))
+        fmt.space_after = Pt(float(self._theme.get("hr_space_after", 6.0)))
+        fmt.line_spacing = Pt(1)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        fmt.keep_with_next = True
+        para.add_run().font.size = Pt(1)
+        hr_color = (self._theme.get("color_hr") or "#aaaaaa").lstrip("#").upper()
+        hr_sz = str(max(1, round(self._theme.get("size_hr", 0.75) * 8)))
+        pPr = para._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), hr_sz)
+        bottom.set(qn("w:space"), "0")
+        bottom.set(qn("w:color"), hr_color)
+        pBdr.append(bottom)
+        _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+
+    def _body_blocks(self) -> list[Any]:
+        return [el for el in self.doc.element.body if el.tag != qn("w:sectPr")]
+
+    def _block_count(self) -> int:
+        return len(self._body_blocks())
+
+    def _keep_blocks_together(self, start: int) -> None:
+        """Chain every block added since *start* so Word keeps them on one page.
+
+        Mirrors the PDF's ``break-inside: avoid`` container: each paragraph (and
+        each table row) except the very last is kept with the next one.
+        """
+        blocks = self._body_blocks()[start:]
+        if not blocks:
+            return
+        last = blocks[-1]
+        for el in blocks:
+            if el.tag == qn("w:p"):
+                if el is not last:
+                    self._set_keep_next(el)
+            elif el.tag == qn("w:tbl"):
+                rows = el.findall(qn("w:tr"))
+                for idx, row in enumerate(rows):
+                    if el is last and idx == len(rows) - 1:
+                        continue
+                    for para in row.iter(qn("w:p")):
+                        self._set_keep_next(para)
+
+    @staticmethod
+    def _set_keep_next(p_el: Any) -> None:
+        pPr = p_el.get_or_add_pPr()
+        if pPr.find(qn("w:keepNext")) is None:
+            keep = OxmlElement("w:keepNext")
+            # keepNext follows pStyle in the schema sequence.
+            style = pPr.find(qn("w:pStyle"))
+            if style is not None:
+                style.addnext(keep)
+            else:
+                pPr.insert(0, keep)
+
+    def _last_paragraph_any(self) -> Any | None:
+        """The paragraph directly before the insertion point (any style)."""
+        from docx.text.paragraph import Paragraph
+
+        blocks = [el for el in self.doc.element.body if el.tag != qn("w:sectPr")]
+        if blocks and blocks[-1].tag == qn("w:p"):
+            return Paragraph(blocks[-1], self.doc._body)
+        return None
+
+    def _last_body_paragraph(self) -> Any | None:
+        """The paragraph that directly precedes the insertion point, if any."""
+        from docx.text.paragraph import Paragraph
+
+        body = self.doc.element.body
+        blocks = [el for el in body if el.tag != qn("w:sectPr")]
+        if blocks and blocks[-1].tag == qn("w:p"):
+            para = Paragraph(blocks[-1], self.doc._body)
+            if para.text.strip() and para.style.name == "Normal":
+                return para
+        return None
+
+    def _start_field_box(self, attrs: dict[str, str | None]) -> None:
+        """Open a full-width bordered paragraph standing in for an input.
+
+        The PDF draws every text input as a bordered, shaded box that fills the
+        text column (``padding: 4pt 6pt; border: 1pt; margin: 2pt 0 8pt``), so
+        a fill-in underline in Word would make form pages physically shorter.
+        This reproduces that box with paragraph borders and an exact line
+        height so both formats consume the same vertical space.
+        """
+        try:
+            content_pt = float(attrs.get("data-h") or _FIELD_LINE_PT)
+        except ValueError:
+            content_pt = _FIELD_LINE_PT
+        label = self._last_body_paragraph()
+        self._new_para("Normal")
+        para = self._paragraph
+        fmt = para.paragraph_format
+        fmt.space_before = Pt(_FIELD_MARGIN_TOP_PT)
+        # The PDF input lives inside its paragraph, so that paragraph's bottom
+        # margin falls after the box rather than between label and box.
+        # The box margin lives inside the PDF's line box and never collapses
+        # with neighbours; the enclosing paragraph's own bottom margin does.
+        fixed_after = _FIELD_MARGIN_BOTTOM_PT
+        fmt.space_after = Pt(fixed_after + float(self._theme.get("para_space_after", 0)))
+        self._fixed_margins[para._p] = (_FIELD_MARGIN_TOP_PT, fixed_after)
+        if label is not None:
+            # Never strand a label from its input across a page break.
+            label.paragraph_format.keep_with_next = True
+        fmt.line_spacing = Pt(content_pt)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        fmt.keep_together = True
+        fmt.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        # Word draws side borders outside the indent; indent by border + space
+        # so the visible box lines up with the text column.
+        edge_pt = _FIELD_PAD_X_PT + _FIELD_BORDER_PT
+        fmt.left_indent = Pt(edge_pt)
+        fmt.right_indent = Pt(edge_pt)
+        pPr = para._p.get_or_add_pPr()
+        if attrs.get("data-style") == "line":
+            self._style_signature_line(para)
+            return
+        pBdr = OxmlElement("w:pBdr")
+        for side, space in (
+            ("top", _FIELD_PAD_Y_PT),
+            ("left", _FIELD_PAD_X_PT),
+            ("bottom", _FIELD_PAD_Y_PT),
+            ("right", _FIELD_PAD_X_PT),
+        ):
+            edge = OxmlElement(f"w:{side}")
+            edge.set(qn("w:val"), "single")
+            edge.set(qn("w:sz"), str(round(_FIELD_BORDER_PT * 8)))
+            edge.set(qn("w:space"), str(round(space)))
+            edge.set(qn("w:color"), _FIELD_BORDER_COLOR)
+            pBdr.append(edge)
+        _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), _FIELD_FILL)
+        _insert_ppr_in_order(pPr, shd, _PPR_AFTER_SHD)
+        if attrs.get("data-arrow"):
+            width_twips = round(self._text_width_emu() / 914400 * 1440) - round(edge_pt * 40)
+            fmt.tab_stops.add_tab_stop(Emu(width_twips * 635), WD_TAB_ALIGNMENT.RIGHT)
 
     def _style_inline_run(
         self,
@@ -931,6 +1143,9 @@ class _DocxBuilder(HTMLParser):
             # page break so the two formats break at the same points.
             if "md-doc-page-break" in classes or "appendix-template-break" in classes:
                 self.doc.add_page_break()
+            if "docx-field" in classes:
+                self._start_field_box(dict(attrs))
+            self._div_stack.append(self._block_count() if "keep-with-next" in classes else None)
 
         elif tag == "a":
             self._current_href = dict(attrs).get("href") or ""
@@ -1050,24 +1265,7 @@ class _DocxBuilder(HTMLParser):
                 self._embed_image(dict(attrs))
 
         elif tag == "hr":
-            self._paragraph = self.doc.add_paragraph()
-            self._paragraph.paragraph_format.space_before = Pt(6)
-            self._paragraph.paragraph_format.space_after = Pt(6)
-            hr_color = (self._theme.get("color_hr") or "#aaaaaa").lstrip("#").upper()
-            hr_sz = str(max(1, round(self._theme.get("size_hr", 0.75) * 8)))
-            pPr = self._paragraph._p.get_or_add_pPr()
-            pBdr = pPr.find(qn("w:pBdr"))
-            if pBdr is None:
-                pBdr = OxmlElement("w:pBdr")
-                pPr.append(pBdr)
-            bottom = pBdr.find(qn("w:bottom"))
-            if bottom is None:
-                bottom = OxmlElement("w:bottom")
-                pBdr.append(bottom)
-            bottom.set(qn("w:val"), "single")
-            bottom.set(qn("w:sz"), hr_sz)
-            bottom.set(qn("w:space"), "1")
-            bottom.set(qn("w:color"), hr_color)
+            self._add_rule()
 
         elif tag == "table":
             classes = (dict(attrs).get("class") or "").split()
@@ -1075,6 +1273,7 @@ class _DocxBuilder(HTMLParser):
                 (c for c in classes if c in ("field-row", "field-box")), None
             )
             self._in_table = True
+            self._table_style = _parse_inline_style(dict(attrs).get("style"))
             self._table_rows = []
             self._current_row = []
             self._current_cell_html = ""
@@ -1094,6 +1293,7 @@ class _DocxBuilder(HTMLParser):
             # Markdown column alignment (:--:, --:) arrives as an inline
             # style="text-align: …" on the cell — capture it for _flush_table.
             self._current_cell_align = self._parse_text_align(attrs)
+            self._current_cell_style = _parse_inline_style(dict(attrs).get("style"))
 
     def handle_endtag(self, tag: str) -> None:
         if self._tag_stack and self._tag_stack[-1] == tag:
@@ -1198,6 +1398,10 @@ class _DocxBuilder(HTMLParser):
             if self._alignment_stack:
                 self._alignment_stack.pop()
             self._paragraph = None
+            if self._div_stack:
+                keep_from = self._div_stack.pop()
+                if keep_from is not None:
+                    self._keep_blocks_together(keep_from)
 
         elif tag == "a":
             if self._link_text_buf and self._paragraph is not None:
@@ -1231,7 +1435,12 @@ class _DocxBuilder(HTMLParser):
         elif tag in ("th", "td"):
             if self._in_table:
                 self._current_row.append(
-                    (self._in_th, self._current_cell_html, self._current_cell_align)
+                    (
+                        self._in_th,
+                        self._current_cell_html,
+                        self._current_cell_align,
+                        self._current_cell_style,
+                    )
                 )
             self._in_cell = False
 
@@ -1377,6 +1586,14 @@ class _DocxBuilder(HTMLParser):
         if max_cols == 0:
             return
 
+        # An inline ``border: none`` marks a layout table (side-by-side form
+        # fields); it must not pick up the report table's rules and shading.
+        border_style = self._table_style.get("border", "").lower()
+        form_kind = self._table_form_kind or (
+            "field-row"
+            if border_style in ("none", "0") or border_style.startswith("none")
+            else None
+        )
         self._add_table_spacer_if_needed()
         table = self.doc.add_table(rows=len(rows), cols=max_cols)
         try:
@@ -1405,6 +1622,17 @@ class _DocxBuilder(HTMLParser):
         # table > table_col_widths config key > equal distribution.
         col_widths_twips: list[int]
         weights = self._active_table_col_widths or self._table_col_widths
+        if not weights:
+            declared = [_style_width_percent(cell[3]) for cell in rows[0]]
+            if len(declared) == max_cols and all(w is not None for w in declared):
+                weights = [float(w) for w in declared if w is not None]
+        if not weights and not form_kind:
+            # Size columns to their content exactly as the PDF's CSS layout does.
+            weights = css_column_weights(
+                [[(cell[0], cell[1]) for cell in row] for row in rows],
+                self._layout_css,
+                text_width_twips / 20,
+            )
         self._active_table_col_widths = None
         if weights and len(weights) == max_cols and sum(weights) > 0:
             total = sum(weights)
@@ -1451,8 +1679,8 @@ class _DocxBuilder(HTMLParser):
         # Cell margins from CSS td { padding }
         tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
         lr_pt = self._theme.get("padding_cell_lr_pt", 9.0)
-        if self._table_form_kind:
-            tb_pt, lr_pt = (2.0, 5.0) if self._table_form_kind == "field-box" else (2.0, 8.0)
+        if form_kind:
+            tb_pt, lr_pt = (2.0, 5.0) if form_kind == "field-box" else (2.0, 8.0)
         tblCellMar = OxmlElement("w:tblCellMar")
         for side_name, pt_val in (
             ("top", tb_pt),
@@ -1480,12 +1708,12 @@ class _DocxBuilder(HTMLParser):
         uppercase_th = self._theme.get("uppercase_th", False)
         letter_spacing_th = self._theme.get("letter_spacing_th_pt")
 
-        if self._table_form_kind:
+        if form_kind:
             header_bg = row_alt_bg = None
             borders = OxmlElement("w:tblBorders")
             for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
                 edge = OxmlElement(f"w:{side}")
-                edge.set(qn("w:val"), "single" if self._table_form_kind == "field-box" else "nil")
+                edge.set(qn("w:val"), "single" if form_kind == "field-box" else "nil")
                 edge.set(qn("w:sz"), "4")
                 edge.set(qn("w:color"), "000000")
                 borders.append(edge)
@@ -1502,7 +1730,7 @@ class _DocxBuilder(HTMLParser):
                 trPr.append(OxmlElement("w:cantSplit"))
             if r_idx == 0 and all(cell[0] for cell in row_cells):
                 trPr.append(OxmlElement("w:tblHeader"))
-            for c_idx, (is_header, cell_html, cell_align) in enumerate(row_cells):
+            for c_idx, (is_header, cell_html, cell_align, cell_style) in enumerate(row_cells):
                 if c_idx >= max_cols:
                     break
                 cell = table.cell(r_idx, c_idx)
@@ -1517,6 +1745,9 @@ class _DocxBuilder(HTMLParser):
                 tcW_el.set(qn("w:w"), str(col_widths_twips[c_idx]))
                 tcW_el.set(qn("w:type"), "dxa")
                 tcPr.append(tcW_el)
+                padding = _style_padding_pt(cell_style)
+                if padding:
+                    _set_cell_margins(cell, padding)
                 para = cell.paragraphs[0]
                 # Zero paragraph spacing so cell padding alone controls whitespace
                 para.paragraph_format.space_before = Pt(0)
@@ -1596,7 +1827,7 @@ class _DocxBuilder(HTMLParser):
                     if row_alt_bg and r_idx % 2 == 1:
                         set_cell_shading(cell, row_alt_bg)
                     # Bottom border
-                    if not self._table_form_kind:
+                    if not form_kind:
                         _set_cell_bottom_border(
                             cell,
                             color=last_border_color if is_last_row else cell_border_color,
@@ -2298,6 +2529,12 @@ def _word_html_forms(source: str, field_type: str | None) -> str:
             self.options: list[str] = []
             self.text = ""
             self.index = 0
+            self.cells = 0
+            self.selected: int | None = None
+
+        def box(self, text: str, **flags: str) -> str:
+            """Inline-safe field box: no blank lines inside a raw HTML block."""
+            return _field_box(text, **flags).strip()
 
         def field_name(self, attrs: dict[str, str | None]) -> str:
             self.index += 1
@@ -2305,10 +2542,14 @@ def _word_html_forms(source: str, field_type: str | None) -> str:
 
         def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
             values = dict(attrs)
+            if tag in ("td", "th"):
+                self.cells += 1
             if self.control:
                 if tag == "option":
                     if self.text.strip():
                         self.options.append(self.text.strip())
+                    if "selected" in values:
+                        self.selected = len(self.options)
                     self.text = ""
                 return
             if tag == "input":
@@ -2322,9 +2563,14 @@ def _word_html_forms(source: str, field_type: str | None) -> str:
                     text = "☑" if "checked" in values else ("○" if kind == "radio" else "☐")
                 else:
                     text = values.get("value") or "________"
-                self.parts.append(escape(text))
+                if kind not in ("checkbox", "radio") and not self.cells:
+                    shown = text if field_type else (values.get("value") or "")
+                    self.parts.append(self.box(shown))
+                else:
+                    self.parts.append(escape(text))
             elif tag in ("select", "textarea"):
                 self.control, self.attrs, self.options, self.text = tag, values, [], ""
+                self.selected = None
             else:
                 self.parts.append(self.get_starttag_text())
 
@@ -2349,9 +2595,24 @@ def _word_html_forms(source: str, field_type: str | None) -> str:
                     text = "________ (" + " / ".join(self.options) + ")"
                 else:
                     text = self.text or "________"
-                self.parts.append(escape(unescape(text)))
+                if self.cells:
+                    self.parts.append(escape(unescape(text)))
+                elif self.control == "select":
+                    chosen = self.options[self.selected or 0] if self.options else ""
+                    shown = text if field_type else chosen
+                    self.parts.append(self.box(unescape(shown), arrow="1"))
+                else:
+                    try:
+                        rows = float(self.attrs.get("rows") or 4)
+                    except ValueError:
+                        rows = 4.0
+                    height = max(_TEXTAREA_MIN_PT, rows * _FIELD_LINE_PT)
+                    shown = text if field_type else self.text
+                    self.parts.append(self.box(unescape(shown), height=height))
                 self.control = None
             else:
+                if tag in ("td", "th"):
+                    self.cells = max(0, self.cells - 1)
                 self.parts.append(f"</{tag}>")
 
         def handle_data(self, data: str) -> None:
@@ -2404,34 +2665,127 @@ def _word_form_layout(md_content: str) -> str:
     return pattern.sub(table, md_content)
 
 
-def _strip_form_fields_for_docx(md_content: str) -> str:
-    """Render PDF ``?[...]`` form markers as a plain fill-in line for Word.
+_CHOICE_TYPES = frozenset({"checkbox", "yesno", "checkbox-inline", "radio", "radio-inline"})
 
-    Plain ``.docx`` retains fill-in lines, choice labels, defaults and grids.
+_FORM_BLOCK_RE = re.compile(
+    r"^\?\[(row|box)(?::([^\]]*))?\]\s*\n(.*?)^\?\[/\1\]\s*$", re.MULTILINE | re.DOTALL
+)
+
+
+def _field_box(text: str = "", *, height: float | None = None, **flags: str) -> str:
+    """Block-level HTML for a bordered input box (see ``_start_field_box``)."""
+    attrs = f' data-h="{height:g}"' if height else ""
+    attrs += "".join(f' data-{k}="{v}"' for k, v in flags.items())
+    return f'\n\n<div class="docx-field"{attrs}>{escape(text)}</div>\n\n'
+
+
+def _textarea_height(attrs: dict[str, str | bool]) -> float:
+    """Content height of a textarea: ``rows`` x 12pt, never under the 48pt minimum."""
+    try:
+        rows = float(attrs.get("rows") or 4)
+    except (TypeError, ValueError):
+        rows = 4.0
+    return max(_TEXTAREA_MIN_PT, rows * _FIELD_LINE_PT)
+
+
+def _convert_form_markup(md_content: str, inline: Any, boxed: Any) -> str:
+    """Rewrite ``?[...]`` markers: *boxed* for body fields, *inline* inside grids.
+
+    Fields in prose become stand-alone bordered boxes, as the PDF draws them.
+    Fields inside ``?[row]``/``?[box]`` grids and pipe-table rows stay inline:
+    the PDF renders those borderless, filling their cell.
+    """
+    from ..forms import FIELD_RE
+
+    def prose(segment: str) -> str:
+        lines: list[str] = []
+        previous = ""
+        for line in segment.split("\n"):
+            fn = inline if line.lstrip().startswith("|") else boxed
+
+            def convert(match: re.Match, line: str = line, previous: str = previous) -> str:
+                text = fn(match)
+                if fn is not boxed or 'class="docx-field"' not in text:
+                    return text
+                # The PDF draws the input inside the paragraph that holds its
+                # label; remember that so Word can drop the gap between them.
+                before = line[: match.start()].strip()
+                prior = previous.strip()
+                # Block syntax (headings, rules, quotes, lists, tables, HTML) never
+                # shares a paragraph with the field on the next line; emphasis does.
+                prior_is_text = bool(prior) and (
+                    prior.startswith(("**", "_"))
+                    or (prior.startswith("*") and not prior.startswith("* "))
+                    or not prior.startswith(("#", "<", "|", ">", "-", "+", "`", "!"))
+                )
+                joined = bool(before) or prior_is_text
+                return (
+                    text.replace(
+                        '<div class="docx-field"', '<div class="docx-field" data-join="1"', 1
+                    )
+                    if joined
+                    else text
+                )
+
+            lines.append(FIELD_RE.sub(convert, line))
+            previous = line
+        return "\n".join(lines)
+
+    out: list[str] = []
+    pos = 0
+    for block in _FORM_BLOCK_RE.finditer(md_content):
+        out.append(prose(md_content[pos : block.start()]))
+        out.append(FIELD_RE.sub(inline, block.group(0)))
+        pos = block.end()
+    out.append(prose(md_content[pos:]))
+    return _STRUCT_MARKER_RE.sub("", _word_form_layout("".join(out)))
+
+
+def _strip_form_fields_for_docx(md_content: str) -> str:
+    """Render PDF ``?[...]`` form markers as visible, PDF-sized boxes for Word.
+
+    Plain ``.docx`` retains the boxes, choice labels, defaults and grids.
     Interactive fields are available in the companion DOTX template.
     """
-    from ..forms import FIELD_RE, OPTION_TYPES, parse_field_spec
+    from ..forms import INPUT_TYPES, OPTION_TYPES, parse_field_spec
 
-    def convert(match: re.Match) -> str:
+    def inline(match: re.Match) -> str:
         parsed = parse_field_spec(match.group(1))
         if parsed is None:
             return match.group(0) if _STRUCT_MARKER_RE.fullmatch(match.group(0)) else ""
         ftype, _name, options, attrs = parsed
         if ftype == "checkbox":
-            return ("☑" if attrs.get("checked") else "☐") + (
+            return ("\u2611" if attrs.get("checked") else "\u2610") + (
                 " " + str(attrs["label"]) if attrs.get("label") else ""
             )
         if ftype == "yesno":
-            return "☐ Yes   ☐ No"
+            return "\u2610 Yes   \u2610 No"
         if ftype in ("checkbox-inline", "radio", "radio-inline"):
-            mark = "☐" if ftype == "checkbox-inline" else "○"
+            mark = "\u2610" if ftype == "checkbox-inline" else "\u25cb"
             return "   ".join(f"{mark} {option}" for option in options)
         if ftype in OPTION_TYPES:
             return "\\_" * 8 + " (" + " / ".join(options) + ")"
         value = attrs.get("value")
         return str(value) if value is not None else "\\_" * 8
 
-    return _STRUCT_MARKER_RE.sub("", _word_form_layout(FIELD_RE.sub(convert, md_content)))
+    def boxed(match: re.Match) -> str:
+        parsed = parse_field_spec(match.group(1))
+        if parsed is None:
+            return inline(match)
+        ftype, _name, options, attrs = parsed
+        value = "" if attrs.get("value") is None else str(attrs["value"])
+        if ftype == "textarea":
+            return _field_box(value, height=_textarea_height(attrs))
+        if ftype == "signature":
+            return _field_box(value, height=40.0, style="line")
+        if ftype == "select":
+            first = options[0] if options else ""
+            return _field_box(first, arrow="1")
+        if ftype in INPUT_TYPES or ftype not in _CHOICE_TYPES:
+            return _field_box(value)
+        return inline(match)
+
+    return _convert_form_markup(md_content, inline, boxed)
 
 
 def _convert_form_fields_for_dotx(md_content: str) -> str:
@@ -2444,7 +2798,7 @@ def _convert_form_fields_for_dotx(md_content: str) -> str:
     checkboxes. Row/box layout markers become Word tables;
     submit buttons have no Word equivalent and are removed.
     """
-    from ..forms import FIELD_RE, OPTION_TYPES, parse_field_spec
+    from ..forms import INPUT_TYPES, OPTION_TYPES, parse_field_spec
 
     def convert(m: re.Match) -> str:
         spec = m.group(1).strip()
@@ -2469,7 +2823,21 @@ def _convert_form_fields_for_dotx(md_content: str) -> str:
         # text / email / date / number / tel / url / textarea / signature / unknown
         return f"[[{name}]]"
 
-    return _STRUCT_MARKER_RE.sub("", _word_form_layout(FIELD_RE.sub(convert, md_content)))
+    def boxed(m: re.Match) -> str:
+        parsed = parse_field_spec(m.group(1).strip())
+        if parsed is None:
+            return convert(m)
+        ftype, name, options, attrs = parsed
+        marker = convert(m)
+        if ftype == "textarea":
+            return _field_box(marker, height=_textarea_height(attrs))
+        if ftype == "signature":
+            return _field_box(marker, height=40.0, style="line")
+        if ftype == "select" or ftype in INPUT_TYPES or ftype not in _CHOICE_TYPES:
+            return _field_box(marker)
+        return marker
+
+    return _convert_form_markup(md_content, convert, boxed)
 
 
 def _resolve_docx_theme(
@@ -3004,6 +3372,117 @@ def _add_plain_header(
 # ---------------------------------------------------------------------------
 
 
+def _parse_inline_style(style: str | None) -> dict[str, str]:
+    """``style="a: b; c: d"`` -> ``{"a": "b", "c": "d"}`` (lower-cased names)."""
+    out: dict[str, str] = {}
+    for part in (style or "").split(";"):
+        name, sep, value = part.partition(":")
+        if sep and name.strip():
+            out[name.strip().lower()] = value.strip()
+    return out
+
+
+def _style_padding_pt(style: dict[str, str]) -> dict[str, float] | None:
+    """Resolve inline ``padding`` (shorthand and per-side) to top/right/bottom/left pt."""
+    from ..docx_theme import _parse_margin, _parse_pt
+
+    sides: dict[str, float] = {}
+    if "padding" in style:
+        sides = {k: v for k, v in _parse_margin(style["padding"]).items() if v is not None}
+    for side in ("top", "right", "bottom", "left"):
+        value = style.get(f"padding-{side}")
+        if value is not None:
+            pt = 0.0 if value.strip() == "0" else _parse_pt(value)
+            if pt is not None:
+                sides[side] = pt
+    return sides or None
+
+
+def _style_width_percent(style: dict[str, str]) -> float | None:
+    match = re.fullmatch(r"([\d.]+)%", style.get("width", "").strip())
+    return float(match.group(1)) if match else None
+
+
+def _set_cell_margins(cell: Any, padding: dict[str, float]) -> None:
+    """Per-cell padding (``w:tcMar``), inserted in schema order within ``w:tcPr``."""
+    tcPr = cell._tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn("w:tcMar")):
+        tcPr.remove(old)
+    mar = OxmlElement("w:tcMar")
+    for side in ("top", "left", "bottom", "right"):
+        if side in padding:
+            edge = OxmlElement(f"w:{side}")
+            edge.set(qn("w:w"), str(round(padding[side] * 20)))
+            edge.set(qn("w:type"), "dxa")
+            mar.append(edge)
+    successors = {qn(f"w:{n}") for n in ("textDirection", "tcFitText", "vAlign", "hideMark")}
+    for child in tcPr:
+        if child.tag in successors:
+            child.addprevious(mar)
+            return
+    tcPr.append(mar)
+
+
+def _effective_spacing(para: Any, which: str) -> float:
+    """Paragraph ``space_before``/``space_after`` in pt, following style inheritance."""
+    attr = f"space_{which}"
+    value = getattr(para.paragraph_format, attr)
+    style = para.style
+    while value is None and style is not None:
+        value = getattr(style.paragraph_format, attr)
+        style = style.base_style
+    return float(value.pt) if value is not None else 0.0
+
+
+def _collapse_paragraph_margins(doc: Any, fixed: dict[Any, tuple[float, float]]) -> None:
+    """Make adjacent paragraph margins collapse the way CSS does.
+
+    CSS gives two touching vertical margins the *larger* of the two. Word adds
+    the first paragraph's space-after to the next one's space-before, so a 7pt
+    paragraph margin above a 14pt heading margin came out 21pt tall instead of
+    14pt. Move the shared gap onto the first paragraph as the larger value and
+    zero the second; the total is then correct whether a renderer adds or maxes.
+    ``fixed`` holds margins that sit inside a line box (form-field boxes) and
+    must be left alone.
+    """
+    from docx.text.paragraph import Paragraph
+
+    blocks = [el for el in doc.element.body if el.tag != qn("w:sectPr")]
+    for first, second in zip(blocks, blocks[1:]):
+        if first.tag != qn("w:p") or second.tag != qn("w:p"):
+            continue
+        if first.find(f".//{qn('w:br')}[@{qn('w:type')}='page']") is not None:
+            continue  # margins never collapse across a page break
+        a = Paragraph(first, doc._body)
+        b = Paragraph(second, doc._body)
+        fixed_after = fixed.get(first, (0.0, 0.0))[1]
+        fixed_before = fixed.get(second, (0.0, 0.0))[0]
+        after = max(0.0, _effective_spacing(a, "after") - fixed_after)
+        before = max(0.0, _effective_spacing(b, "before") - fixed_before)
+        if after <= 0 or before <= 0:
+            continue
+        a.paragraph_format.space_after = Pt(fixed_after + max(after, before))
+        b.paragraph_format.space_before = Pt(fixed_before)
+
+
+_JOINED_BOX_RE = re.compile(
+    r'</p>\s*(<div class="docx-field" data-join="1"[^>]*>.*?</div>)', re.DOTALL
+)
+
+
+def _merge_joined_field_boxes(html: str) -> str:
+    """Move a field box into the label paragraph it continues.
+
+    The PDF draws an input inside the paragraph holding its label, so the pair
+    is one block for the heading keep-together rule; keep it one block here.
+    """
+    previous = None
+    while previous != html:
+        previous = html
+        html = _JOINED_BOX_RE.sub(lambda m: m.group(1) + "</p>", html)
+    return html
+
+
 def build(
     rendered_md: str,
     config: dict[str, Any],
@@ -3072,6 +3551,7 @@ def build(
     # identical points: APPENDIX section H2s and explicit <!-- pagebreak -->.
     body = _inject_appendix_breaks(body)
     body = _inject_page_breaks(body)
+    body = collapse_select_markup(body)
     if output_format == "dotx":
         # Same source, fillable Word template: ?[...] → Word form fields.
         body = _convert_form_fields_for_dotx(body)
@@ -3090,6 +3570,7 @@ def build(
     # code block if cairosvg is unavailable.
     mermaid_theme = None
     css_text: str | None = None
+    layout_css_path: Path | None = None
     try:
         from .pdf import _resolve_css
         from ..mermaid import extract_theme_from_css
@@ -3097,6 +3578,7 @@ def build(
         css_path = _resolve_css(config, repo_root, doc_path=doc_path)
         if css_path and css_path.exists():
             css_text = css_path.read_text(encoding="utf-8")
+            layout_css_path = css_path
             mermaid_theme = extract_theme_from_css(css_text)
     except Exception:
         mermaid_theme = None
@@ -3176,6 +3658,7 @@ def build(
         doc_path=doc_path,
         repo_root=repo_root,
         section_bar=section_bar,
+        layout_css=layout_css_path,
     )
 
     if cover_page:
@@ -3191,7 +3674,11 @@ def build(
     # Content after the cover starts the pagination baseline — the first body
     # heading must not force an extra page break on top of the cover's.
     builder.mark_content_start()
+    # Mirror the PDF's "heading + next two blocks stay together" rule so both
+    # formats break pages at the same places.
+    html = _keep_heading_with_next(_merge_joined_field_boxes(html))
     builder.feed(html)
+    _collapse_paragraph_margins(doc, builder._fixed_margins)
 
     doc.save(str(out_path))
 
