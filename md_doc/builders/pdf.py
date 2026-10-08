@@ -989,6 +989,7 @@ table td > textarea, table td > select {
 input[type="checkbox"], input[type="radio"] {
   display: inline-block; width: 11pt; height: 11pt;
   margin: 1pt 5pt 1pt 1pt; vertical-align: middle;
+  position: relative; top: -1pt; /* box centre on the label cap-height centre, not the x-height */
 }
 /* Checkbox / radio items — span-level so table cells survive md_in_html */
 label.option-item { display: inline-block; margin: 2pt 12pt 2pt 0; }

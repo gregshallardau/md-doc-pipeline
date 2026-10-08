@@ -404,3 +404,10 @@ def test_trailing_checkbox_text_folds_into_label():
     html = _expand_form_fields("?[checkbox: agree] I agree to terms\n", is_form=True)
     assert "option-solo" in html
     assert "I agree to terms</label>" in html
+
+
+def test_option_controls_are_centred_on_label_caps():
+    from md_doc.builders.pdf import _form_support_css
+
+    css = _form_support_css(None)
+    assert "position: relative; top: -1pt" in css
