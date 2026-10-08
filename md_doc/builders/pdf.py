@@ -188,11 +188,6 @@ def _parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
 # Input types the ?[...] shorthand passes through verbatim; anything else
 # falls back to a plain text input.
 _INPUT_TYPES = ("text", "email", "date", "number", "tel", "url")
-# Every field type the shorthand understands (used by the linter too).
-KNOWN_FORM_FIELD_TYPES = frozenset(
-    (*_INPUT_TYPES, "textarea", "checkbox", "signature", "select", "radio")
-    + ("radio-inline", "checkbox-inline", "yesno")
-)
 
 
 def _extra_attrs_html(attrs: dict[str, str | bool], skip: tuple[str, ...] = ()) -> str:

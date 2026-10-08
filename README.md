@@ -397,6 +397,7 @@ Every command and option, the remote-workspaces file and the environment variabl
 - [Config reference](docs/config-reference.md) — every `_meta.yml` / frontmatter key, with a complete key index
 - [Theming guide](docs/theming-guide.md) — theme files and cascade, `--mddoc-*` brand properties, `css_vars`, what Word reads, form styling
 - [Markdown reference](docs/markdown-reference.md) — extensions, tables, images, page breaks, Mermaid, differences between formats
+- [Word and PDF parity](docs/word-pdf-parity.md) — what the two formats keep in step, how it is checked, known differences
 - [Export guide](docs/export-guide.md) — `md-doc export` and its frontmatter keys
 - [Extraction guide](docs/extraction-guide.md) — `md-doc extract`
 - [Authoring guide](docs/authoring-guide.md) — Markdown authoring conventions

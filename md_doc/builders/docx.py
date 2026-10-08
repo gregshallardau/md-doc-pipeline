@@ -183,9 +183,6 @@ _FIELD_PAD_Y_PT = 4.0
 _FIELD_BORDER_PT = 1.0
 _FIELD_MARGIN_TOP_PT = 2.0
 _FIELD_MARGIN_BOTTOM_PT = 8.0
-# An empty PDF input sits on the baseline with the line's descent below it; one
-# holding text is baseline-aligned to that text, so the row is this much shorter.
-_FILLED_RELIEF_PT = 5.1
 _FIELD_BORDER_COLOR = "5D6D7E"
 _FIELD_FILL = "FAFAFA"
 _TEXTAREA_MIN_PT = 48.0
@@ -1156,15 +1153,6 @@ class _DocxBuilder(HTMLParser):
                 style.addnext(keep)
             else:
                 pPr.insert(0, keep)
-
-    def _last_paragraph_any(self) -> Any | None:
-        """The paragraph directly before the insertion point (any style)."""
-        from docx.text.paragraph import Paragraph
-
-        blocks = [el for el in self.doc.element.body if el.tag != qn("w:sectPr")]
-        if blocks and blocks[-1].tag == qn("w:p"):
-            return Paragraph(blocks[-1], self.doc._body)
-        return None
 
     def _last_body_paragraph(self) -> Any | None:
         """The paragraph that directly precedes the insertion point, if any."""

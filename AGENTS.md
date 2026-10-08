@@ -93,6 +93,7 @@ Every user-facing feature must be documented before it ships. Where things live:
 | Fillable forms | `docs/pdf-forms-guide.md` |
 | Slides | `docs/slides-guide.md`, `docs/llm-deck-prompt.md` |
 | Export and extract | `docs/export-guide.md`, `docs/extraction-guide.md` |
+| Word/PDF parity and known differences | `docs/word-pdf-parity.md` |
 | Troubleshooting, Python API | `docs/troubleshooting.md`, `docs/python-api.md` |
 | Agent prompts | `prompts/` |
 

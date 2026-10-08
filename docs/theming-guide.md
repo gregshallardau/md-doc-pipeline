@@ -152,7 +152,7 @@ Both builders insert the same page breaks (`<!-- pagebreak -->`, APPENDIX sectio
 theme's `h1 { page-break-before: always }`), the same cover geometry, header bars, section bars
 and footers, and a spacer between adjacent tables. Exact line-for-line pagination is not
 guaranteed because WeasyPrint and Word lay text out differently. The
-[sample parity audit](sample-parity-audit.md) lists the known differences.
+[Word and PDF parity](word-pdf-parity.md) page lists the known differences.
 
 ## Forms
 

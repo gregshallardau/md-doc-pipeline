@@ -13,7 +13,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `${NAME}` references in `sync_config` are now expanded from the environment (as the docs
   already described), so credentials can stay out of `_meta.yml`.
 
+### Removed
+- Shipped-feature planning records (`docs/superpowers/`, `docs/pdf-forms-plan.md`), the unreferenced
+  `docs/_theme.example.css` (`md-doc theme init` generates a theme), and dead code in the
+  builders. `docs/sample-parity-audit.md` became the evergreen `docs/word-pdf-parity.md`, and the
+  sample documents moved from `docs/examples/` to `examples/starter/` so `docs/` holds only docs.
+
 ### Fixed
+- `cover_text_align: center` is valid (both builders and the docs support it) but `md-doc lint`
+  rejected it; the validator now accepts `left`, `center` and `right`.
 - Browser editors (standalone and Filament): the CSS preview now uses the PDF theme order
   (`_pdf-theme.css`, then `_theme.css`; the Word-only `_docx-theme.css` is ignored) and inlines
   workspace-local `@import`s, so themes written as `@import '_theme.css';` preview styled. Their
