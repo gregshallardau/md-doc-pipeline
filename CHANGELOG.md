@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 ### Changed
+- Form PDFs: every form-control dimension is now em-based, so controls, grids,
+  labels and signature rows scale with the theme's font size. Grids use the
+  theme's primary colour (tinted rules, uppercase labels) and ordinary tables
+  keep the report styling. A size/weight sweep test guards control alignment.
+- Word export: form geometry (input line, descent relief, choice lines, cell
+  input heights) scales with the theme's input/table/body font sizes and uses
+  the theme's input margins; form grids follow the new PDF styling, cells that
+  are blank in the PDF stay blank, page-number fields take the footer style,
+  and form documents omit the running date like the PDF.
+
+### Changed
 - Word export parity: CSS-measured table column widths, form controls as sized
   boxes/grids (incl. flex rows, colspans, textareas), collapsed paragraph margins,
   code line pitch, hr/blockquote/pre box models, cover z-order, header-bar slot

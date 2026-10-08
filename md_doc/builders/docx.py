@@ -30,6 +30,7 @@ import logging
 import re
 import shutil
 import zipfile
+from contextvars import ContextVar
 from html import escape, unescape
 from ._cover import footer_band_geometry
 from io import BytesIO
@@ -38,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -189,7 +191,7 @@ _FIELD_FILL = "FAFAFA"
 _TEXTAREA_MIN_PT = 48.0
 # A line holding a checkbox or radio is taller in the PDF (16pt control plus
 # 1pt margins, rounded up by the line box).
-_CHOICE_LINE_PT = 20.5
+_CHOICE_LINE_PT = 23.5
 # Height of an input line inside a form-grid cell (PDF: 14pt; a bare write-in
 # cell with nothing else in it gets a 19pt band).
 _CELL_INPUT_PT = 14.7
@@ -199,6 +201,46 @@ _CELL_PLAIN_INPUT_PT = 15.2
 _CELL_CHOICE_LINE_PT = 18.3
 _CELL_PLAIN_BARE_PT = 13.0
 _CHOICE_MARKS = "\u2610\u2611\u25cb"
+
+# The constants above were fitted against themes with a 10pt input font, 9.5pt
+# table text and 10.5pt body text. A theme with other sizes scales them (line
+# boxes, descent relief and control sizes are all proportional to font size),
+# and its own input margins / textarea minimum replace the defaults.
+_REF_INPUT_FONT_PT = 10.0
+_REF_TABLE_FONT_PT = 9.5
+_REF_BODY_FONT_PT = 10.5
+
+
+def _compute_form_dims(theme: dict[str, Any]) -> dict[str, float]:
+    box = theme.get("form_input") or {}
+    inp = float(box.get("font_pt") or _REF_INPUT_FONT_PT) / _REF_INPUT_FONT_PT
+    tab = float(theme.get("font_size_table") or _REF_TABLE_FONT_PT) / _REF_TABLE_FONT_PT
+    body = float(theme.get("font_size_body") or _REF_BODY_FONT_PT) / _REF_BODY_FONT_PT
+    return {
+        "line": _FIELD_LINE_PT * inp,
+        "margin_top": float(box.get("margin_top", _FIELD_MARGIN_TOP_PT)),
+        "margin_bottom": float(box.get("margin_bottom", _FIELD_MARGIN_BOTTOM_PT)),
+        "relief": _FILLED_RELIEF_PT * inp,
+        "textarea_min": float(box.get("textarea_min", _TEXTAREA_MIN_PT)),
+        "choice_line": _CHOICE_LINE_PT * body,
+        "cell_input": _CELL_INPUT_PT * tab,
+        "cell_bare": _CELL_BARE_INPUT_PT * tab,
+        "cell_plain": _CELL_PLAIN_INPUT_PT * tab,
+        "cell_plain_bare": _CELL_PLAIN_BARE_PT * tab,
+        "cell_choice": _CELL_CHOICE_LINE_PT * tab,
+    }
+
+
+_FORM_DIMS: ContextVar[dict[str, float] | None] = ContextVar("md_doc_form_dims", default=None)
+
+
+def _dim(name: str) -> float:
+    """Form-geometry value for the document being built (theme-scaled)."""
+    dims = _FORM_DIMS.get()
+    if dims is None:
+        dims = _compute_form_dims({})
+    return dims[name]
+
 
 # w:pPr children that must follow w:pBdr / w:shd in schema order.
 _PPR_AFTER_SHD = (
@@ -523,7 +565,7 @@ def _render_cell_html(
             if paragraph.text.strip() or paragraph._p.xpath(".//w:drawing"):
                 br_run = paragraph.add_run()
                 br_run._r.append(OxmlElement("w:br"))
-            height = (bare_input_pt if bare_input else input_pt) or _CELL_INPUT_PT
+            height = (bare_input_pt if bare_input else input_pt) or _dim("cell_input")
             if declared:
                 height = max(height, float(declared))
             strut = paragraph.add_run("\u00a0")
@@ -1083,23 +1125,21 @@ class _DocxBuilder(HTMLParser):
         height so both formats consume the same vertical space.
         """
         try:
-            content_pt = float(attrs.get("data-h") or _FIELD_LINE_PT)
+            content_pt = float(attrs.get("data-h") or _dim("line"))
         except ValueError:
-            content_pt = _FIELD_LINE_PT
+            content_pt = _dim("line")
         label = self._last_body_paragraph()
         self._new_para("Normal")
         para = self._paragraph
         fmt = para.paragraph_format
-        fmt.space_before = Pt(_FIELD_MARGIN_TOP_PT)
+        fmt.space_before = Pt(_dim("margin_top"))
         # The PDF input lives inside its paragraph, so that paragraph's bottom
         # margin falls after the box rather than between label and box.
         # The box margin lives inside the PDF's line box and never collapses
         # with neighbours; the enclosing paragraph's own bottom margin does.
-        fixed_after = _FIELD_MARGIN_BOTTOM_PT - (
-            _FILLED_RELIEF_PT if attrs.get("data-filled") else 0.0
-        )
+        fixed_after = _dim("margin_bottom") - (_dim("relief") if attrs.get("data-filled") else 0.0)
         fmt.space_after = Pt(fixed_after + float(self._theme.get("para_space_after", 0)))
-        self._fixed_margins[para._p] = (_FIELD_MARGIN_TOP_PT, fixed_after)
+        self._fixed_margins[para._p] = (_dim("margin_top"), fixed_after)
         if label is not None:
             # Never strand a label from its input across a page break.
             label.paragraph_format.keep_with_next = True
@@ -1815,7 +1855,7 @@ class _DocxBuilder(HTMLParser):
                 fmt.keep_with_next = True
             else:
                 attrs, text = _parse_box_segment(piece)
-                content = float(attrs.get("h") or _FIELD_LINE_PT)
+                content = float(attrs.get("h") or _dim("line"))
                 _style_field_box_paragraph(
                     para, content, metrics, width_pt, arrow=bool(attrs.get("arrow"))
                 )
@@ -1823,6 +1863,49 @@ class _DocxBuilder(HTMLParser):
                 run.font.size = Pt(body_pt)
                 if font_body:
                     run.font.name = font_body
+
+    def _form_colors(self) -> tuple[str, str, str]:
+        """Label / outer-rule / inner-rule colours of the form grids (same as the PDF's)."""
+        cached = self.__dict__.get("_form_colors_cache")
+        if cached is None:
+            from ..mermaid import extract_theme_from_css
+            from .pdf import form_rule_colors
+
+            primary = None
+            path = self._layout_css
+            if path is not None and path.is_file():
+                try:
+                    primary = extract_theme_from_css(path.read_text(encoding="utf-8")).get(
+                        "primary"
+                    )
+                except Exception:  # noqa: BLE001 - colours fall back to the neutral slate
+                    primary = None
+            cached = self.__dict__["_form_colors_cache"] = form_rule_colors(primary)
+        return cached  # type: ignore[no-any-return]
+
+    @staticmethod
+    def _blank_fill_lines(para: Any) -> None:
+        """The PDF's cell inputs are blank until filled: drop the ``____`` stand-ins."""
+        for run in para.runs:
+            if run.text and set(run.text) <= {"_"}:
+                run.text = ""
+
+    def _style_field_box_cell(self, para: Any, size: float, label_color: str) -> None:
+        """Match the PDF's field-box cell text: small-caps-style labels, smaller hints,
+        and no fill-in underscores (the PDF cell is blank until filled)."""
+        r, g, b = _hex_to_rgb(label_color)
+        for run in para.runs:
+            if run.bold:
+                run.text = run.text.upper()
+                run.font.color.rgb = RGBColor(r, g, b)
+                if size:
+                    run.font.size = Pt(size * 0.85)
+                rPr = run._r.get_or_add_rPr()
+                spacing = OxmlElement("w:spacing")
+                spacing.set(qn("w:val"), str(int(size * 0.04 * 20)))
+                rPr.append(spacing)
+            elif run.italic and size:
+                run.font.size = Pt(size * 0.8)
 
     def _flush_table(self) -> None:
         rows = self._table_rows
@@ -1838,7 +1921,7 @@ class _DocxBuilder(HTMLParser):
         form_kind = self._table_form_kind or (
             "field-row"
             if border_style in ("none", "0") or border_style.startswith("none")
-            else ("form-grid" if self._form_document else None)
+            else None
         )
         self._add_table_spacer_if_needed()
         table = self.doc.add_table(rows=len(rows), cols=max_cols)
@@ -1926,10 +2009,12 @@ class _DocxBuilder(HTMLParser):
         tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
         lr_pt = self._theme.get("padding_cell_lr_pt", 9.0)
         if form_kind:
-            # PDF: table.field-box td { padding: 3pt 5pt; line-height: 1.25 }
-            tb_pt, lr_pt = (3.0, 5.0) if form_kind in ("field-box", "form-grid") else (2.0, 8.0)
+            # PDF: field-box cells keep the theme's td padding; borderless rows
+            # carry their own inline padding.
             if form_kind == "flex-row":
                 tb_pt = lr_pt = 0.0
+            elif form_kind != "field-box":
+                tb_pt, lr_pt = 2.0, 8.0
         tblCellMar = OxmlElement("w:tblCellMar")
         for side_name, pt_val in (
             ("top", tb_pt),
@@ -1959,19 +2044,17 @@ class _DocxBuilder(HTMLParser):
 
         if form_kind:
             header_bg = row_alt_bg = None
-            ruled = form_kind in ("field-box", "form-grid")
-            if form_kind == "form-grid":
-                # PDF: th { background: none; color: inherit; text-transform: none;
-                #   letter-spacing: 0; font-size: inherit }
-                header_text_color = header_font_size = letter_spacing_th = None
-                uppercase_th = False
+            ruled = form_kind == "field-box"
+            form_label_color, form_rule, form_soft = self._form_colors()
             borders = OxmlElement("w:tblBorders")
             for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
                 edge = OxmlElement(f"w:{side}")
                 edge.set(qn("w:val"), "single" if ruled else "nil")
-                # 1.5pt outer rule, 0.5pt inner rules (PDF: border 1.5pt / cells 0.5pt)
-                edge.set(qn("w:sz"), "12" if ruled and not side.startswith("inside") else "4")
-                edge.set(qn("w:color"), "000000")
+                # 1pt outer rule, 0.5pt inner rules in the theme's tints
+                # (PDF: table.field-box border / td border)
+                inner = side.startswith("inside")
+                edge.set(qn("w:sz"), "4" if inner else "8")
+                edge.set(qn("w:color"), (form_soft if inner else form_rule).lstrip("#"))
                 borders.append(edge)
             tblPr.append(borders)
         n_rows = len(rows)
@@ -1979,6 +2062,11 @@ class _DocxBuilder(HTMLParser):
 
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
+            # Question/answer rows (no bold label in any cell) centre vertically,
+            # as in the PDF; labelled rows keep the label at the top of the cell.
+            qa_row = form_kind == "field-box" and not any(
+                "<strong" in c[1] or "<b>" in c[1] for c in row_cells
+            )
             # Keep each row on one page (mirrors the PDF theme's
             # `tr { page-break-inside: avoid }`).
             trPr = table.rows[r_idx]._tr.get_or_add_trPr()
@@ -2039,9 +2127,9 @@ class _DocxBuilder(HTMLParser):
                     bold_override=is_header,
                     insert_math=self._insert_math,
                     insert_image=self._embed_image,
-                    input_pt=_CELL_INPUT_PT if form_kind == "field-box" else _CELL_PLAIN_INPUT_PT,
+                    input_pt=_dim("cell_input") if form_kind == "field-box" else _dim("cell_plain"),
                     bare_input_pt=(
-                        _CELL_BARE_INPUT_PT if form_kind == "field-box" else _CELL_PLAIN_BARE_PT
+                        _dim("cell_bare") if form_kind == "field-box" else _dim("cell_plain_bare")
                     ),
                 )
 
@@ -2074,7 +2162,7 @@ class _DocxBuilder(HTMLParser):
                 size = header_font_size if is_header else body_font_size
                 if size:
                     cell_line_height = (
-                        1.25
+                        1.3
                         if form_kind == "field-box"
                         else self._theme.get("line_height_body", 1.65)
                     )
@@ -2089,8 +2177,15 @@ class _DocxBuilder(HTMLParser):
                     if form_kind and any(mark in para.text for mark in _CHOICE_MARKS):
                         # A checkbox/radio makes the PDF line taller than its text.
                         para.paragraph_format.line_spacing = Pt(
-                            max(size * cell_line_height, _CELL_CHOICE_LINE_PT)
+                            max(size * cell_line_height, _dim("cell_choice"))
                         )
+
+                if self._form_document and form_kind not in ("field-row", "flex-row"):
+                    self._blank_fill_lines(para)
+                if form_kind == "field-box" and not is_header:
+                    self._style_field_box_cell(para, size or 0.0, form_label_color)
+                    if qa_row:
+                        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
                 # Header styling
                 if is_header:
@@ -2918,7 +3013,7 @@ def _word_html_forms(source: str, field_type: str | None) -> str:
                         rows = float(self.attrs.get("rows") or 4)
                     except ValueError:
                         rows = 4.0
-                    height = max(_TEXTAREA_MIN_PT, rows * _FIELD_LINE_PT)
+                    height = max(_dim("textarea_min"), rows * _dim("line"))
                     shown = text if field_type else self.text
                     self.parts.append(self.box(unescape(shown), height=height))
                 self.control = None
@@ -3002,7 +3097,7 @@ def _field_metrics(theme: dict[str, Any]) -> dict[str, Any]:
     border_box = bool(box.get("border_box"))
     return {
         "border_box": border_box,
-        "textarea_min": float(box.get("textarea_min", _TEXTAREA_MIN_PT + 10.0)),
+        "textarea_min": float(box.get("textarea_min", _dim("textarea_min") + 10.0)),
         "pad_x": float(box.get("pad_x", _FIELD_PAD_X_PT)),
         # border-box controls ignore vertical padding (see _parse_form_css)
         "pad_y": 0.0 if border_box else float(box.get("pad_y", _FIELD_PAD_Y_PT)),
@@ -3028,7 +3123,7 @@ def _style_field_box_paragraph(
     fmt = para.paragraph_format
     if metrics["border_box"]:
         # Total box height: one text line for an input, ``min-height`` for a textarea.
-        total = metrics["textarea_min"] if content_pt > _FIELD_LINE_PT else _FIELD_LINE_PT + 1.0
+        total = metrics["textarea_min"] if content_pt > _dim("line") else _dim("line") + 1.0
         content_pt = total - 2 * metrics["border"]
     fmt.line_spacing = Pt(content_pt)
     fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
@@ -3119,7 +3214,7 @@ def _textarea_height(attrs: dict[str, str | bool]) -> float:
         rows = float(attrs.get("rows") or 4)
     except (TypeError, ValueError):
         rows = 4.0
-    return max(_TEXTAREA_MIN_PT, rows * _FIELD_LINE_PT)
+    return max(_dim("textarea_min"), rows * _dim("line"))
 
 
 def _convert_form_markup(md_content: str, inline: Any, boxed: Any) -> str:
@@ -3600,8 +3695,12 @@ def _css_footer_defaults(css_text: str | None, date_str: str) -> dict[str, tuple
     return result
 
 
-def _add_simple_field(paragraph: Any, instr: str) -> Any:
-    """Append a simple Word field (e.g. ``PAGE``/``NUMPAGES``); return its value run."""
+def _add_simple_field(paragraph: Any, instr: str) -> list[Any]:
+    """Append a simple Word field (e.g. ``PAGE``/``NUMPAGES``); return all its runs.
+
+    Every run (not just the result) is returned so the caller can style them:
+    renderers take the field result's formatting from the field's first run.
+    """
     run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
@@ -3624,7 +3723,7 @@ def _add_simple_field(paragraph: Any, instr: str) -> Any:
     end = OxmlElement("w:fldChar")
     end.set(qn("w:fldCharType"), "end")
     run5._r.append(end)
-    return value_run
+    return [run, run2, run3, value_run, run5]
 
 
 def _emit_footer_segment(paragraph: Any, text: str, lead_tabs: int = 0) -> list[Any]:
@@ -3640,9 +3739,9 @@ def _emit_footer_segment(paragraph: Any, text: str, lead_tabs: int = 0) -> list[
     runs: list[Any] = []
     for part in _FOOTER_TOKEN_RE.split(text):
         if part == "{page}":
-            runs.append(_add_simple_field(paragraph, "PAGE"))
+            runs.extend(_add_simple_field(paragraph, "PAGE"))
         elif part == "{pages}":
-            runs.append(_add_simple_field(paragraph, "NUMPAGES"))
+            runs.extend(_add_simple_field(paragraph, "NUMPAGES"))
         elif part:
             for i, line in enumerate(part.split("\n")):
                 if i > 0:
@@ -3664,6 +3763,7 @@ def _add_footer(
     *,
     css_text: str | None = None,
     date_str: str = "",
+    hide_running_date: bool = False,
 ) -> None:
     """Populate the document footer from footer_left/center/right.
 
@@ -3678,6 +3778,9 @@ def _add_footer(
     to the theme CSS's ``@bottom-*`` default box (its own font-size/colour).
     """
     defaults = _css_footer_defaults(css_text, date_str)
+    if hide_running_date:
+        # Form PDFs hide the running date (``.running-date { display: none }``).
+        defaults = {slot: v for slot, v in defaults.items() if not (date_str and v[0] == date_str)}
 
     slots: dict[str, tuple[str, float, str] | None] = {}
     for slot in ("left", "center", "right"):
@@ -3912,7 +4015,7 @@ def _size_choice_lines(doc: Any) -> None:
         if not any(mark in para.text for mark in _CHOICE_MARKS):
             continue
         fmt = para.paragraph_format
-        fmt.line_spacing = Pt(_CHOICE_LINE_PT)
+        fmt.line_spacing = Pt(_dim("choice_line"))
         fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
 
 
@@ -4127,6 +4230,7 @@ def build(
 
     theme = _resolve_docx_theme(doc_path, repo_root, config)
     _merge_pdf_form_css(theme, config, repo_root, doc_path)
+    _FORM_DIMS.set(_compute_form_dims(theme))
     html, math_equations = render_math(
         _word_html_forms(
             _flex_rows_to_tables(markdown_html(body, _MD_EXTENSIONS), theme.get("flex_rows")),
@@ -4187,7 +4291,13 @@ def build(
 
     _add_page_header_bar(doc, config, doc_path, repo_root)
     _add_plain_header(doc, config, doc_path, repo_root)
-    _add_footer(doc, config, css_text=css_text, date_str=date_str)
+    _add_footer(
+        doc,
+        config,
+        css_text=css_text,
+        date_str=date_str,
+        hide_running_date=coerce_bool(config.get("pdf_forms", False)),
+    )
 
     if cover_page:
         # The PDF's @page cover rule suppresses every header/footer margin box

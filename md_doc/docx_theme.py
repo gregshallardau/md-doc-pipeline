@@ -297,6 +297,14 @@ def _parse_form_css(
         # height (padding is absorbed), so such a box is much shorter.
         if props.get("box-sizing", "").strip() == "border-box":
             box["border_box"] = True
+        font = _parse_pt(props.get("font-size", ""))
+        if font is not None:
+            box["font_pt"] = font
+        margin = _parse_margin(props["margin"]) if "margin" in props else {}
+        if margin.get("top") is not None:
+            box["margin_top"] = float(margin["top"] or 0.0)
+        if margin.get("bottom") is not None:
+            box["margin_bottom"] = float(margin["bottom"] or 0.0)
         minimum = _parse_pt(blocks.get("textarea", {}).get("min-height", ""))
         if minimum is not None:
             box["textarea_min"] = minimum

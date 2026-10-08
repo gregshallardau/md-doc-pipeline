@@ -1016,14 +1016,22 @@ input[type="checkbox"], input[type="radio"] { border: 0.75pt solid __RULE__; }
 </style>"""
 
 
-def _form_support_css(primary: str | None) -> str:
+def form_rule_colors(primary: str | None) -> tuple[str, str, str]:
+    """``(label/primary, outer rule, inner rule)`` colours of the form grids.
+
+    Shared with the Word builder so both formats draw the same tints.
+    """
     from ..mermaid import _lighten
 
     try:
         base = primary or "#2c3e50"
-        rule, soft = _lighten(base, 0.45), _lighten(base, 0.7)
+        return base, _lighten(base, 0.45), _lighten(base, 0.7)
     except ValueError:
-        base, rule, soft = "#2c3e50", "#8a97a3", "#c5ccd3"
+        return "#2c3e50", "#8a97a3", "#c5ccd3"
+
+
+def _form_support_css(primary: str | None) -> str:
+    base, rule, soft = form_rule_colors(primary)
     return (
         _FORM_SUPPORT_CSS.replace("__RULE_SOFT__", soft)
         .replace("__RULE__", rule)
