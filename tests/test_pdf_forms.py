@@ -384,3 +384,9 @@ def test_submit_colon_does_not_create_a_word_field(tmp_repo):
     from md_doc.builders.docx import _convert_form_fields_for_dotx
 
     assert _convert_form_fields_for_dotx("?[submit: Send]") == ""
+
+
+def test_signature_row_labels_become_captions():
+    md = "?[row]\n?[signature: sig] | **Date** ?[date: d]\n?[/row]\n"
+    html = _expand_form_fields(md, is_form=True)
+    assert '<div class="signature-label">Date</div>' in html

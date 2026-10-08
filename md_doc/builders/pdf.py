@@ -339,13 +339,13 @@ def _cell_to_html(cell: str) -> str:
 _ROW_LABELLED_FIELD_RE = re.compile(r"^\*\*([^*]+)\*\*\s*(\?\[[^\]]*\])$")
 
 
-def _row_cell_to_html(cell: str) -> str:
+def _row_cell_to_html(cell: str, captions: bool) -> str:
     """A ``**Label** ?[field]`` row cell becomes field + caption beneath the rule.
 
-    That matches the signature field's caption, so side-by-side signature and
-    date cells line up instead of one label above and one below.
+    Only in rows holding a signature: it matches the signature caption, so
+    side-by-side signature and date cells line up instead of one label above and one below.
     """
-    m = _ROW_LABELLED_FIELD_RE.match(cell)
+    m = _ROW_LABELLED_FIELD_RE.match(cell) if captions else None
     if not m:
         return _cell_to_html(cell)
     return (
@@ -372,6 +372,7 @@ def _expand_row_block(row_content: str) -> str:
         if not cells:
             continue
 
+        captions = any(c.startswith("?[signature") for c in cells)
         n = len(cells)
         width = f"{100 // n}%"
         tds = []
@@ -382,7 +383,7 @@ def _expand_row_block(row_content: str) -> str:
             tds.append(
                 f'<td style="border: none; width: {width}; '
                 f'padding: {padding}; vertical-align: top;">'
-                f"{_row_cell_to_html(cell)}</td>"
+                f"{_row_cell_to_html(cell, captions)}</td>"
             )
         rows_html.append(f'<tr style="background: none;">{"".join(tds)}</tr>')
 
