@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+- Documentation for every feature: new CLI reference, theming guide, Markdown reference and
+  export guide; a complete key index in the config reference; and `tests/test_docs_coverage.py`,
+  which fails when a config key, CLI command or option, or `--mddoc-*` property is undocumented.
+- `${NAME}` references in `sync_config` are now expanded from the environment (as the docs
+  already described), so credentials can stay out of `_meta.yml`.
+
+### Fixed
+- `output_pdf` was documented and used in examples but ignored; the documented key is
+  `output_filename`, and the examples use it.
+- `md-doc lint` no longer warns about a variable used as `{{ var | default(...) }}`.
+
 ### Changed
 - Agent instructions are now tool-neutral: `CLAUDE.md` is renamed `AGENTS.md` (root and
   `workspace/`), with a one-line `CLAUDE.md` shim that imports it so Claude Code still

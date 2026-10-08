@@ -79,6 +79,27 @@ uv run black --check .
 uv run mypy md_doc/
 ```
 
+## Documentation
+
+Every user-facing feature must be documented before it ships. Where things live:
+
+| Topic | File |
+|-------|------|
+| Install and first steps | `README.md`, `docs/quickstart.md` |
+| Every command, option, env var, remote workspaces | `docs/cli-reference.md` |
+| Every config key (with a complete key index) | `docs/config-reference.md` |
+| Writing documents, variables, includes, page breaks, maths | `docs/authoring-guide.md`, `docs/markdown-reference.md` |
+| Themes, `--mddoc-*`, `css_vars`, what Word reads, form styling | `docs/theming-guide.md` |
+| Fillable forms | `docs/pdf-forms-guide.md` |
+| Slides | `docs/slides-guide.md`, `docs/llm-deck-prompt.md` |
+| Export and extract | `docs/export-guide.md`, `docs/extraction-guide.md` |
+| Troubleshooting, Python API | `docs/troubleshooting.md`, `docs/python-api.md` |
+| Agent prompts | `prompts/` |
+
+`tests/test_docs_coverage.py` fails when a config key, CLI command or option, or `--mddoc-*`
+property is undocumented, when a guide is not linked from the README, or when a relative link in
+the docs is broken. Update the docs in the same change as the feature.
+
 ## Architecture
 
 md-doc-pipeline converts Markdown files into PDF/DOCX documents with cascading configuration, Jinja2 template composition, and pluggable cloud sync.

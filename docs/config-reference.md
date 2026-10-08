@@ -21,7 +21,7 @@ outputs: [pdf]
 | `author` | string | `"Document Producer"` | Author name. Shown on cover page and page footer. |
 | `date` | string | Today's date | Date string for cover page (free-form, e.g. `"April 2026"`). |
 | `outputs` | list | `[pdf]` | Output formats to generate. Values: `pdf`, `docx`, `dotx`, `pptx`. |
-| `output_pdf` | string | `<filename>.pdf` | Override the output PDF filename. |
+| `output_filename` | string | `<source name>` | Override the output file name for every format. Jinja2 variables are allowed (`"{{ product }}-proposal"`); the extension is added automatically. |
 | `output_dir` | string | *(alongside source)* | Directory to write built outputs into. Set at any `_meta.yml` level — cascades down, overridden by deeper levels or document frontmatter. CLI `--output` always takes precedence. Supports `~` expansion. |
 | `pdf_theme` | string | Auto-resolved | Path to a custom theme file (absolute or relative to repo root). Point to `_theme.css` (shared base, used for all formats) or `_pdf-theme.css` (PDF-specific overrides that `@import '_theme.css'`). For Word output, place a `_docx-theme.css` alongside `_pdf-theme.css` — the builder picks it up automatically. |
 | `css_vars` | mapping | *(none)* | PDF only. Inject CSS custom properties on `:root` so a theme can keep its styling in CSS while the asset/value is overridden per-document. A value ending in an image extension is resolved via the asset cascade and wrapped as `url("file://…")`; other values are injected literally. E.g. theme has `background: var(--cover-watermark)`, document sets `css_vars: {cover-watermark: assets/logo.png}`. |
@@ -734,3 +734,90 @@ when building just one document or a subfolder. For example, `clients/acme/doc.m
 with `output_dir: build` writes `build/clients/acme/doc.pdf` in every build mode.
 CLI `--output` still takes precedence; its directory is resolved relative to the
 current working directory. With neither setting, outputs stay beside the source.
+
+---
+
+## Key index
+
+Every recognised key in one table. Any other key you add is allowed and becomes a
+`{{ variable }}`; `md-doc lint` warns only when a key is a near-miss of one below (a likely typo),
+with a "did you mean …?" hint. Keys can be set in document frontmatter or any `_meta.yml`; deeper levels
+override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `title` | string | first H1 | Document title (cover page, metadata). |
+| `author` | string | `"Document Producer"` | Author name for the cover and footer. |
+| `date` | string | today | Date shown on the cover and as the running date. |
+| `product` | string | — | Free metadata; available as `{{ product }}`. |
+| `document_type` | string | — | Informational label used in the document register. |
+| `version` | string | — | Free metadata; available as `{{ version }}`. |
+| `status` | string | — | `draft`, `final` or `superseded`; shown in the register. |
+| `outputs` | list | `[pdf]` | Formats to build: `pdf`, `docx`, `dotx`, `pptx`. |
+| `output_filename` | string | source name | Output file name for every format; Jinja2 allowed; extension added. |
+| `output_dir` | string | next to source | Directory for outputs, mirroring the source tree; `--output` wins. |
+| `pdf_forms` | boolean | `false` | Interactive PDF form fields; output gets a `-form` suffix. |
+| `include_md_in_share` | boolean | `false` | Include `.md` sources when syncing. |
+| `pdf_theme` | string | cascade | Theme file overriding the normal search for all formats. |
+| `dotx_field_type` | enum | `form` | `form` (fillable Word fields) or `merge` (MERGEFIELDs). |
+| `body_text_align` | enum | theme | Word body alignment: `justify`, `left`, `center`, `right`. |
+| `table_col_widths` | list | auto | Relative column widths for every table, e.g. `[30, 70]`; per table use `<!-- col-widths: 30, 70 -->`. |
+| `css_vars` | mapping | — | PDF only: per-document CSS custom properties; image paths resolved by the asset cascade. |
+| `pptx_template` | string | built-in | `.pptx`/`.potx` base for slide output. |
+| `slide_size` | enum | `16:9` | `16:9` or `4:3` (quote it). |
+| `slide_split` | enum | `h2` | Slide boundaries: `h1`, `h2` or `marker`. |
+| `cover_page` | boolean | `false` | Add a branded cover page. |
+| `cover_label` | string | `Report` | Text above the cover title. |
+| `cover_text_align` | enum | `left` | Cover content alignment: `left` or `right`. |
+| `cover_background` | string | `white` | Cover page background (PDF only). |
+| `cover_divider` | boolean | `true` | Rule under the cover title. |
+| `cover_meta_label` | string | `Prepared by` | Label before the author on the cover. |
+| `cover_meta_author` | string | `author` | Author shown on the cover only. |
+| `cover_footer` | boolean | `true` | Show the cover footer. |
+| `cover_footer_text` | string | `{author} · Confidential` | Cover footer text; `\n` for line breaks. |
+| `cover_footer_line` | boolean | `true` | Rule above the cover footer. |
+| `cover_footer_color` | string | theme | Cover footer text colour. |
+| `cover_logo` | path | — | Logo on the cover (resolved like `header_logo`). |
+| `cover_bar` | boolean | `true` | Coloured bar(s) on the cover. |
+| `cover_bar_position` | enum | `top` | `top`, `bottom` or `both`. |
+| `cover_bar_height` | length | `10mm` | Bar height for both bars. |
+| `cover_bar_top_height` | length | `cover_bar_height` | Top bar height. |
+| `cover_bar_bottom_height` | length | `cover_bar_height` | Bottom bar height. |
+| `cover_bar_logo` | path | — | Logo inside the cover bar. |
+| `cover_text_on_bar` | boolean | `false` | Place the cover text inside the top bar. |
+| `cover_stripe` | boolean | `false` | Vertical accent stripe on the cover. |
+| `cover_stripe_height` | length | `120mm` | Stripe height. |
+| `cover_stripe_width` | length | `6mm` | Stripe width. |
+| `header_logo` | path | — | Logo in the page header (document folder, ancestors, repo root). |
+| `header_logo_position` | enum | `right` | `left`, `center` or `right`. |
+| `header_logo_height` | length | intrinsic, max 8mm | Exact logo height. |
+| `header_text` | string | — | Text in the page header. |
+| `header_text_position` | enum | `left` | `left`, `center` or `right`. |
+| `footer_left` | string | theme | Left footer slot; `{page}` and `{pages}` insert live page numbers; empty string hides it. |
+| `footer_center` | string | theme | Centre footer slot. |
+| `footer_right` | string | theme | Right footer slot. |
+| `page_header_bar` | boolean | `false` | Solid coloured bar on every content page. |
+| `page_header_bar_color` | string | `#2563eb` | Bar colour. |
+| `page_header_bar_text_color` | string | `#ffffff` | Text colour in the bar. |
+| `page_header_bar_height` | length | `12mm` | Bar height. |
+| `page_header_bar_padding` | length | `6mm` | Gap between bar and content. |
+| `page_header_bar_offset` | length | `0mm` | Distance from the physical page top to the bar. |
+| `page_header_bar_logo` | path | `header_logo` | Single logo in the bar. |
+| `page_header_bar_logo_position` | enum | `right` | `left`, `center` or `right`. |
+| `page_header_bar_logos` | list | — | Several logos: list of `{path, position}`. |
+| `section_bar` | boolean | `false` | Coloured bars behind headings. |
+| `section_bar_color` | string | `#2563eb` | Bar colour. |
+| `section_bar_text_on_bar` | boolean | `true` | Text on the bar (`true`) or a rule above the heading (`false`). |
+| `section_bar_text_color` | string | `#ffffff` | Text colour when on the bar. |
+| `section_bar_headings` | string | `h1,h2` | Which headings get bars. |
+| `sync_target` | enum | — | `azure`, `s3` or `local`. |
+| `sync_config` | mapping | — | Backend settings; `${NAME}` is replaced from the environment. |
+| `export` | boolean | `false` | Mark a note for `md-doc export` (inheritable from `_meta.yml`). |
+| `export_format` | enum | `pdf` | Format an exported note is built to. |
+| `export_path` | string | mirrors source | Sub-folder inside the export destination. |
+| `export_filename` | string | source name | Output name for an exported note. |
+| `export_folder` | string | `SOURCE/Exports` | Default export destination (in `_meta.yml`); relative paths resolve against the source. |
+| `tags` | list | — | Tags for `md-doc export --tag`. |
+| `draft` | boolean | `false` | Skip this note when exporting. |
+
+Details and examples for each group are in the sections above, the [authoring guide](authoring-guide.md), the [theming guide](theming-guide.md), the [slides guide](slides-guide.md), the [PDF forms guide](pdf-forms-guide.md) and the [export guide](export-guide.md).
