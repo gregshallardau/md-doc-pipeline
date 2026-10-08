@@ -307,11 +307,11 @@ def create_app(workspace: Path) -> FastAPI:
         path = Path(entry["path"])
         if not path.is_file():
             raise HTTPException(status_code=404, detail="build artefact missing")
-        media = (
-            "application/pdf"
-            if entry["format"] == "pdf"
-            else ("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        )
+        media = {
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "dotx": "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+        }[entry["format"]]
         return FileResponse(
             path,
             media_type=media,
@@ -387,17 +387,47 @@ def _config_layers(doc_path: Path, workspace: Path) -> dict[str, Any]:
     return {"merged": merged, "layers": layers}
 
 
+_CSS_IMPORT_RE = re.compile(r"""@import\s+(?:url\(\s*)?['"]([^'"]+)['"]\s*\)?\s*;""")
+_MAX_CSS_IMPORT_DEPTH = 5
+
+
+def _inline_css_imports(path: Path, workspace: Path, depth: int = 0) -> str:
+    """Return *path*'s CSS with ``@import 'file.css';`` replaced by that file's contents.
+
+    The PDF builder follows relative ``@import`` chains, but a preview iframe cannot,
+    so a theme written as ``@import '_theme.css';`` would render unstyled. Imports are
+    only followed inside the workspace (never outside it) and to a bounded depth.
+    """
+    css = path.read_text(encoding="utf-8")
+    if depth >= _MAX_CSS_IMPORT_DEPTH:
+        return _CSS_IMPORT_RE.sub("", css)
+
+    def replace(match: re.Match[str]) -> str:
+        target = (path.parent / match.group(1)).resolve()
+        if target.is_file() and target.is_relative_to(workspace):
+            return _inline_css_imports(target, workspace, depth + 1) + "\n"
+        return ""
+
+    return _CSS_IMPORT_RE.sub(replace, css)
+
+
 def _resolve_css(doc_path: Path, workspace: Path) -> dict[str, Any]:
-    """Walk up from doc_path looking for a theme CSS file."""
-    candidates = ("_pdf-theme.css", "_docx-theme.css", "_theme.css")
+    """Walk up from doc_path to the theme the PDF builder would use.
+
+    At each folder ``_pdf-theme.css`` comes before the shared ``_theme.css``; the
+    Word-only ``_docx-theme.css`` is not a PDF theme and is ignored. ``@import``s are
+    inlined so the preview matches the PDF.
+    """
+    candidates = ("_pdf-theme.css", "_theme.css")
+    workspace = workspace.resolve()
     current = doc_path.parent
     while True:
         for name in candidates:
             f = current / name
             if f.is_file() and f.resolve().is_relative_to(workspace):
-                rel = f.relative_to(workspace).as_posix() if f.is_relative_to(workspace) else str(f)
-                return {"css": f.read_text(encoding="utf-8"), "source": rel}
-        if current.resolve() == workspace.resolve():
+                rel = f.resolve().relative_to(workspace).as_posix()
+                return {"css": _inline_css_imports(f.resolve(), workspace), "source": rel}
+        if current.resolve() == workspace:
             break
         parent = current.parent
         if parent == current:

@@ -120,6 +120,9 @@ require("md-doc").setup({
   -- warnings (requires Neovim 0.10+).
   disable_marksman = true,
 
+  -- Show the project-relative path of the file in the window's winbar
+  show_winbar = true,
+
   -- Buffer-local keymaps (only active inside md-doc .md files)
   keymaps = {
     toggle_float       = "<leader>mf",
@@ -128,6 +131,13 @@ require("md-doc").setup({
     toggle_document    = "<leader>mD",
     toggle_frontmatter = "<leader>mr",
     show_now           = "K",   -- force-show float immediately
+    debug_context      = "<leader>m?",  -- dump the resolved variable context
+    goto_source        = "<leader>mg",  -- jump to where a variable/include is defined
+    show_dependents    = "<leader>mu",  -- quickfix list of files that include this one
+    build_file         = "<leader>mb",  -- md-doc build <current file>
+    lint_file          = "<leader>ml",  -- md-doc lint <current file>
+    build_workspace    = "<leader>mB",  -- md-doc build <workspace> --force
+    lint_workspace     = "<leader>mL",  -- md-doc lint <workspace>
   },
 })
 ```
@@ -201,7 +211,7 @@ Or for variables defined in the document's own frontmatter:
 
 ## Display modes
 
-All three modes can be active at the same time.
+All four modes can be active at the same time.
 
 | Mode | Description | Toggle |
 |---|---|---|
@@ -236,9 +246,20 @@ Output streams live into the split pane. A notification fires on completion.
 
 ## How project detection works
 
-The plugin looks for a `.git` directory or `pyproject.toml` by walking up from
-the directory of the current file. If neither is found, the buffer is treated as
-a plain Markdown file and the plugin stays inactive.
+The plugin walks up from the directory of the current file looking for a `.git`
+(directory or file) or a `pyproject.toml`; the first one found is the project root.
+If there is none, the topmost folder on the way up that contains a `_meta.yml` is
+used instead. If neither exists the buffer is treated as plain Markdown and the
+plugin stays inactive.
+
+### What the plugin can and cannot resolve
+
+The plugin reads `_meta.yml` files and frontmatter with its own small YAML reader,
+not the pipeline's. It merges them the same way (root to document, deeper wins,
+frontmatter last) but understands only top-level `key: value` scalars (quoted or
+plain). Nested mappings, lists and multi-line values are not resolved, `{% set %}`
+variables and `--mddoc-*` theme defaults are not seen, and Jinja filters are stripped
+before lookup. Use `md-doc lint --render` for the authoritative answer.
 
 ---
 

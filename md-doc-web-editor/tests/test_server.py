@@ -223,3 +223,64 @@ class TestBuildEnvironment:
         response = client.get("/api/build/" + result.json()["token"])
         assert response.status_code == 200
         assert response.content.startswith(b"PK")
+
+
+class TestCssThemeResolution:
+    """The preview CSS must be what the PDF builder would use."""
+
+    def _client(self, root):
+        return TestClient(create_app(root))
+
+    def test_word_only_theme_is_not_used_for_the_pdf_preview(self, tmp_path):
+        (tmp_path / "_docx-theme.css").write_text("body { color: red; }\n", encoding="utf-8")
+        (tmp_path / "_theme.css").write_text("body { color: blue; }\n", encoding="utf-8")
+        (tmp_path / "doc.md").write_text("# T\n", encoding="utf-8")
+        data = self._client(tmp_path).get("/api/css?path=doc.md").json()
+        assert data["source"] == "_theme.css"
+        assert "blue" in data["css"] and "red" not in data["css"]
+
+    def test_pdf_theme_wins_over_shared_theme_in_the_same_folder(self, tmp_path):
+        (tmp_path / "_pdf-theme.css").write_text("body { color: green; }\n", encoding="utf-8")
+        (tmp_path / "_theme.css").write_text("body { color: blue; }\n", encoding="utf-8")
+        (tmp_path / "doc.md").write_text("# T\n", encoding="utf-8")
+        assert (
+            self._client(tmp_path).get("/api/css?path=doc.md").json()["source"] == "_pdf-theme.css"
+        )
+
+    def test_imports_are_inlined_so_the_preview_is_styled(self, tmp_path):
+        (tmp_path / "_theme.css").write_text("h1 { color: #123456; }\n", encoding="utf-8")
+        (tmp_path / "_pdf-theme.css").write_text(
+            "@import '_theme.css';\nbody { font-size: 11pt; }\n", encoding="utf-8"
+        )
+        (tmp_path / "doc.md").write_text("# T\n", encoding="utf-8")
+        css = self._client(tmp_path).get("/api/css?path=doc.md").json()["css"]
+        assert "#123456" in css and "font-size: 11pt" in css and "@import" not in css
+
+    def test_imports_never_leave_the_workspace(self, tmp_path):
+        outside = tmp_path / "outside.css"
+        outside.write_text("body { background: url(secret); }\n", encoding="utf-8")
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        (workspace / "_pdf-theme.css").write_text("@import '../outside.css';\n", encoding="utf-8")
+        (workspace / "doc.md").write_text("# T\n", encoding="utf-8")
+        css = self._client(workspace).get("/api/css?path=doc.md").json()["css"]
+        assert "secret" not in css
+
+
+def test_dotx_build_is_served_with_the_template_media_type(tmp_path, monkeypatch):
+    import subprocess as sp
+
+    (tmp_path / "doc.md").write_text("# T\n", encoding="utf-8")
+    client = TestClient(create_app(tmp_path))
+
+    def fake_run(cmd, **kwargs):
+        out = cmd[cmd.index("--output") + 1]
+        from pathlib import Path
+
+        (Path(out) / "doc.dotx").write_bytes(b"x")
+        return sp.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("md_doc_web_editor.server.subprocess.run", fake_run)
+    token = client.post("/api/build", json={"path": "doc.md", "format": "dotx"}).json()["token"]
+    response = client.get(f"/api/build/{token}")
+    assert response.headers["content-type"].endswith("wordprocessingml.template")

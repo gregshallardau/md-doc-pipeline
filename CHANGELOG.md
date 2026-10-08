@@ -14,6 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   already described), so credentials can stay out of `_meta.yml`.
 
 ### Fixed
+- Browser editors (standalone and Filament): the CSS preview now uses the PDF theme order
+  (`_pdf-theme.css`, then `_theme.css`; the Word-only `_docx-theme.css` is ignored) and inlines
+  workspace-local `@import`s, so themes written as `@import '_theme.css';` preview styled. Their
+  config-key highlighters gained the eight keys they were missing, and a test keeps them complete.
+  The standalone editor serves `.dotx` builds with the Word template media type.
+- Neovim plugin README: documented `show_winbar`, every keymap, the `_meta.yml` project-root
+  fallback and the plugin's flat-YAML limitation; "four" display modes.
 - `output_pdf` was documented and used in examples but ignored; the documented key is
   `output_filename`, and the examples use it.
 - `md-doc lint` no longer warns about a variable used as `{{ var | default(...) }}`.

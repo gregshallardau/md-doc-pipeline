@@ -27,9 +27,9 @@ A self-contained browser editor for [md-doc-pipeline](https://github.com/gregsha
   - Known md-doc config keys highlighted distinctly
 - **Live HTML preview** rendered client-side (marked.js) with the resolved CSS theme injected
 - **Config cascade panel** — every `_meta.yml` layer from repo root down to the doc, plus frontmatter, plus the merged result
-- **CSS theme panel** — the resolved `_pdf-theme.css` / `_theme.css` cascade, with a one-click "open this file" shortcut
+- **CSS theme panel** — the theme the PDF builder would use, with a one-click "open this file" shortcut. In each folder from the document up to the workspace, `_pdf-theme.css` comes before the shared `_theme.css`; `@import`s inside the workspace are inlined so the preview is styled, and the Word-only `_docx-theme.css` is ignored
 - **Included templates** bar — every `{% include "..." %}` becomes a clickable button to jump to the included file
-- **Build PDF / DOCX** buttons — runs `md-doc build` via subprocess; PDF renders inline in the preview pane, DOCX provides a download link
+- **Build PDF / DOCX** buttons — runs `md-doc build` via subprocess; PDF renders inline in the preview pane, DOCX provides a download link. The API also builds `.dotx` templates (`format: "dotx"`)
 
 No database, no auth, no Laravel — just a single Python process, a static SPA, and the `md-doc` CLI as a sidecar for builds.
 
@@ -50,7 +50,7 @@ uv sync --group editor
 uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser
 ```
 
-Open http://127.0.0.1:8765/. `--offline --no-sync` uses the installed environment
+Open http://127.0.0.1:8765/. `md-doc-edit serve [WORKSPACE]` takes `--host` (default `127.0.0.1`), `--port` (default `8765`) and `--no-browser`. `--offline --no-sync` uses the installed environment
 without resolving or downloading dependencies. Include `--group editor` when
 explicitly syncing again to retain the optional editor.
 Omit `--no-browser` to launch a browser automatically.
@@ -118,8 +118,8 @@ The SPA is the only client, but the API is plain JSON if you want to script agai
 | GET | `/api/config?path=...` | Cascade layers + merged config for the doc |
 | GET | `/api/css?path=...` | Resolved theme CSS + source path |
 | GET | `/api/includes?path=...` | `{% include "..." %}` references and their resolved paths |
-| POST | `/api/build` | Run `md-doc build`: body `{path, format}` returns `{token, filename, format}` |
-| GET | `/api/build/{token}` | Stream the built artefact (PDF/DOCX) |
+| POST | `/api/build` | Run `md-doc build --no-lint`: body `{path, format}` with `format` one of `pdf`, `docx`, `dotx` returns `{token, filename, format}` |
+| GET | `/api/build/{token}` | Stream the built artefact (PDF inline; DOCX/DOTX as downloads) |
 | GET | `/static/...` | Bundled JS / CSS / fonts / Monaco workers (all local) |
 
 All file paths are workspace-relative; `..` traversal is rejected with HTTP 400.

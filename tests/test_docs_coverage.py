@@ -78,3 +78,18 @@ def test_relative_links_in_docs_resolve() -> None:
             if not (md.parent / target).resolve().exists():
                 broken.append(f"{md.relative_to(ROOT)} -> {target}")
     assert not broken, f"broken relative links: {broken}"
+
+
+_TOKENIZERS = [
+    ROOT / "md-doc-web-editor" / "md_doc_web_editor" / "static" / "tokenizers.js",
+    ROOT / "filament-md-doc" / "resources" / "js" / "tokenizers.js",
+]
+
+
+def test_editor_highlighters_know_every_config_key() -> None:
+    """The browser editors colour config keys from a hand-kept list; keep it complete."""
+    keys = set(KNOWN_KEYS) | set(BOOL_KEYS) | set(ENUM_KEYS)
+    for path in _TOKENIZERS:
+        listed = set(re.findall(r"'([a-z_]+)'", path.read_text()))
+        missing = sorted(keys - listed)
+        assert not missing, f"{path.relative_to(ROOT)} does not highlight: {missing}"
