@@ -20,12 +20,12 @@ _log = logging.getLogger(__name__)
 _IMG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 
 
-def table_html(rows: list[tuple[bool, str]] | list[list[tuple[bool, str]]]) -> str:
+def table_html(rows: list[list[tuple[bool, str]]]) -> str:
     """Build a plain ``<table>`` from rows of ``(is_header, cell_html)`` pairs."""
     out = ["<table>"]
     for row in rows:
         cells = []
-        for is_header, html in row:  # type: ignore[misc]
+        for is_header, html in row:
             tag = "th" if is_header else "td"
             cells.append(f"<{tag}>{_IMG_RE.sub('', html)}</{tag}>")
         out.append("<tr>" + "".join(cells) + "</tr>")

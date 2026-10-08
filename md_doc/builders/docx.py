@@ -189,6 +189,14 @@ _TEXTAREA_MIN_PT = 48.0
 # A line holding a checkbox or radio is taller in the PDF (16pt control plus
 # 1pt margins, rounded up by the line box).
 _CHOICE_LINE_PT = 20.5
+# Height of an input line inside a form-grid cell (PDF: 14pt; a bare write-in
+# cell with nothing else in it gets a 19pt band).
+_CELL_INPUT_PT = 14.7
+_CELL_BARE_INPUT_PT = 19.0
+# ... and in borderless rows / ordinary tables (PDF: table td > input { height: 13pt }).
+_CELL_PLAIN_INPUT_PT = 15.2
+_CELL_CHOICE_LINE_PT = 18.3
+_CELL_PLAIN_BARE_PT = 13.0
 _CHOICE_MARKS = "\u2610\u2611\u25cb"
 
 # w:pPr children that must follow w:pBdr / w:shd in schema order.
@@ -457,6 +465,8 @@ def _render_cell_html(
     bold_override: bool = False,
     insert_math: Any = None,
     insert_image: Any = None,
+    input_pt: float = 0.0,
+    bare_input_pt: float = 0.0,
 ) -> None:
     """Parse the inner HTML of a table cell and write runs into *paragraph*.
 
@@ -466,6 +476,10 @@ def _render_cell_html(
     field conversion and bookmark tracking work identically to body text.
     """
     from html.parser import HTMLParser as _HP
+
+    bare_input = bool(
+        re.fullmatch(r'\s*<span class="docx-input"[^>]*>.*</span>\s*', html, re.DOTALL)
+    )
 
     class _CellParser(_HP):
         def __init__(self) -> None:
@@ -496,6 +510,21 @@ def _render_cell_html(
             elif tag == "br":
                 br_run = paragraph.add_run()
                 br_run._r.append(OxmlElement("w:br"))
+            elif tag == "span" and "docx-input" in (dict(attrs).get("class") or ""):
+                self._start_input(dict(attrs).get("data-h"))
+
+        def _start_input(self, declared: str | None = None) -> None:
+            """An input sits on its own line, as tall as the PDF's input."""
+            if paragraph.text.strip() or paragraph._p.xpath(".//w:drawing"):
+                br_run = paragraph.add_run()
+                br_run._r.append(OxmlElement("w:br"))
+            height = (bare_input_pt if bare_input else input_pt) or _CELL_INPUT_PT
+            if declared:
+                height = max(height, float(declared))
+            strut = paragraph.add_run("\u00a0")
+            # The line grows to the input's height; remembered so the cell's
+            # blanket font-size pass can restore it (see _flush_table).
+            paragraph.__dict__.setdefault("_struts", []).append((strut, height / 1.17))
 
         def handle_endtag(self, tag: str) -> None:
             tag = tag.lower()
@@ -557,6 +586,7 @@ class _DocxBuilder(HTMLParser):
         repo_root: Path | None = None,
         section_bar: dict[str, Any] | None = None,
         layout_css: Path | None = None,
+        form_document: bool = False,
     ) -> None:
         super().__init__()
         self.convert_charrefs = True
@@ -571,6 +601,8 @@ class _DocxBuilder(HTMLParser):
         self._repo_root = repo_root
         self._section_bar = section_bar  # None or parsed section_bar config
         self._layout_css = layout_css  # PDF theme CSS used for table auto-layout
+        # pdf_forms documents draw ordinary tables as plain black grids.
+        self._form_document = form_document
 
         apply_theme_to_doc(self.doc, self._theme)
 
@@ -1407,6 +1439,8 @@ class _DocxBuilder(HTMLParser):
             # style="text-align: …" on the cell — capture it for _flush_table.
             self._current_cell_align = self._parse_text_align(attrs)
             self._current_cell_style = _parse_inline_style(dict(attrs).get("style"))
+            if dict(attrs).get("colspan"):
+                self._current_cell_style["colspan"] = str(dict(attrs)["colspan"])
 
     def handle_endtag(self, tag: str) -> None:
         if self._tag_stack and self._tag_stack[-1] == tag:
@@ -1680,7 +1714,7 @@ class _DocxBuilder(HTMLParser):
         rows = self._table_rows
         if not rows:
             return
-        max_cols = max(len(r) for r in rows)
+        max_cols = max(sum(_cell_colspan(c[3]) for c in r) for r in rows)
         if max_cols == 0:
             return
 
@@ -1690,7 +1724,7 @@ class _DocxBuilder(HTMLParser):
         form_kind = self._table_form_kind or (
             "field-row"
             if border_style in ("none", "0") or border_style.startswith("none")
-            else None
+            else ("form-grid" if self._form_document else None)
         )
         self._add_table_spacer_if_needed()
         table = self.doc.add_table(rows=len(rows), cols=max_cols)
@@ -1724,7 +1758,7 @@ class _DocxBuilder(HTMLParser):
             declared = [_style_width_percent(cell[3]) for cell in rows[0]]
             if len(declared) == max_cols and all(w is not None for w in declared):
                 weights = [float(w) for w in declared if w is not None]
-        if not weights and not form_kind:
+        if not weights and form_kind in (None, "form-grid"):
             # Size columns to their content exactly as the PDF's CSS layout does.
             weights = css_column_weights(
                 [[(cell[0], cell[1]) for cell in row] for row in rows],
@@ -1778,7 +1812,8 @@ class _DocxBuilder(HTMLParser):
         tb_pt = self._theme.get("padding_cell_tb_pt", 5.0)
         lr_pt = self._theme.get("padding_cell_lr_pt", 9.0)
         if form_kind:
-            tb_pt, lr_pt = (2.0, 5.0) if form_kind == "field-box" else (2.0, 8.0)
+            # PDF: table.field-box td { padding: 3pt 5pt; line-height: 1.25 }
+            tb_pt, lr_pt = (3.0, 5.0) if form_kind in ("field-box", "form-grid") else (2.0, 8.0)
         tblCellMar = OxmlElement("w:tblCellMar")
         for side_name, pt_val in (
             ("top", tb_pt),
@@ -1808,11 +1843,18 @@ class _DocxBuilder(HTMLParser):
 
         if form_kind:
             header_bg = row_alt_bg = None
+            ruled = form_kind in ("field-box", "form-grid")
+            if form_kind == "form-grid":
+                # PDF: th { background: none; color: inherit; text-transform: none;
+                #   letter-spacing: 0; font-size: inherit }
+                header_text_color = header_font_size = letter_spacing_th = None
+                uppercase_th = False
             borders = OxmlElement("w:tblBorders")
             for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
                 edge = OxmlElement(f"w:{side}")
-                edge.set(qn("w:val"), "single" if form_kind == "field-box" else "nil")
-                edge.set(qn("w:sz"), "4")
+                edge.set(qn("w:val"), "single" if ruled else "nil")
+                # 1.5pt outer rule, 0.5pt inner rules (PDF: border 1.5pt / cells 0.5pt)
+                edge.set(qn("w:sz"), "12" if ruled and not side.startswith("inside") else "4")
                 edge.set(qn("w:color"), "000000")
                 borders.append(edge)
             tblPr.append(borders)
@@ -1820,7 +1862,6 @@ class _DocxBuilder(HTMLParser):
 
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
-            n_row_cells = len(row_cells)
             # Keep each row on one page (mirrors the PDF theme's
             # `tr { page-break-inside: avoid }`).
             trPr = table.rows[r_idx]._tr.get_or_add_trPr()
@@ -1828,10 +1869,15 @@ class _DocxBuilder(HTMLParser):
                 trPr.append(OxmlElement("w:cantSplit"))
             if r_idx == 0 and all(cell[0] for cell in row_cells):
                 trPr.append(OxmlElement("w:tblHeader"))
-            for c_idx, (is_header, cell_html, cell_align, cell_style) in enumerate(row_cells):
+            c_idx = 0
+            for is_header, cell_html, cell_align, cell_style in row_cells:
                 if c_idx >= max_cols:
                     break
-                cell = table.cell(r_idx, c_idx)
+                span = min(_cell_colspan(cell_style), max_cols - c_idx)
+                start, c_idx = c_idx, c_idx + span
+                cell = table.cell(r_idx, start)
+                if span > 1:
+                    cell = cell.merge(table.cell(r_idx, start + span - 1))
                 cell.text = ""
                 # Explicitly set cell width so fixed-layout tables honour the
                 # grid widths rather than falling back to Word's own heuristic.
@@ -1840,7 +1886,7 @@ class _DocxBuilder(HTMLParser):
                 for old in tcPr.findall(qn("w:tcW")):
                     tcPr.remove(old)
                 tcW_el = OxmlElement("w:tcW")
-                tcW_el.set(qn("w:w"), str(col_widths_twips[c_idx]))
+                tcW_el.set(qn("w:w"), str(sum(col_widths_twips[start : start + span])))
                 tcW_el.set(qn("w:type"), "dxa")
                 tcPr.append(tcW_el)
                 padding = _style_padding_pt(cell_style)
@@ -1861,6 +1907,10 @@ class _DocxBuilder(HTMLParser):
                     bold_override=is_header,
                     insert_math=self._insert_math,
                     insert_image=self._embed_image,
+                    input_pt=_CELL_INPUT_PT if form_kind == "field-box" else _CELL_PLAIN_INPUT_PT,
+                    bare_input_pt=(
+                        _CELL_BARE_INPUT_PT if form_kind == "field-box" else _CELL_PLAIN_BARE_PT
+                    ),
                 )
 
                 # Apply alignment — the cell's own text-align (markdown column
@@ -1891,14 +1941,24 @@ class _DocxBuilder(HTMLParser):
                 # Apply font sizes
                 size = header_font_size if is_header else body_font_size
                 if size:
-                    para.paragraph_format.line_spacing = Pt(
-                        size * self._theme.get("line_height_body", 1.65)
+                    cell_line_height = (
+                        1.25
+                        if form_kind == "field-box"
+                        else self._theme.get("line_height_body", 1.65)
                     )
+                    para.paragraph_format.line_spacing = Pt(size * cell_line_height)
                     # Cell text uses its own size; pictures/equations may expand
                     # the minimum line box rather than getting clipped.
                     para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
                     for run in para.runs:
                         run.font.size = Pt(size)
+                    for strut, strut_size in para.__dict__.get("_struts", []):
+                        strut.font.size = Pt(strut_size)
+                    if form_kind and any(mark in para.text for mark in _CHOICE_MARKS):
+                        # A checkbox/radio makes the PDF line taller than its text.
+                        para.paragraph_format.line_spacing = Pt(
+                            max(size * cell_line_height, _CELL_CHOICE_LINE_PT)
+                        )
 
                 # Header styling
                 if is_header:
@@ -1934,7 +1994,7 @@ class _DocxBuilder(HTMLParser):
 
             # Rows shorter than max_cols still have Word cells that need
             # explicit tcW; without it fixed-layout tables render incorrectly.
-            for c_idx in range(min(n_row_cells, max_cols), max_cols):
+            for c_idx in range(c_idx, max_cols):
                 cell = table.cell(r_idx, c_idx)
                 tc = cell._tc
                 tcPr = tc.get_or_add_tcPr()
@@ -2769,9 +2829,19 @@ def _word_form_layout(md_content: str) -> str:
                 )
         width = re.search(r"widths\s*=\s*([\d.,\s]+)", args or "")
         prefix = f"<!-- col-widths: {width.group(1).strip()} -->\n" if width else ""
-        body = "".join(
-            "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows
-        )
+        columns = max((len(row) for row in rows), default=0)
+
+        def row_html(row: list[str]) -> str:
+            cells = []
+            for index, cell in enumerate(row):
+                # A short row in a ?[box] grid spans the remaining columns, as in the PDF.
+                last = index == len(row) - 1
+                span = columns - len(row) + 1 if kind == "box" and last else 1
+                attr = f' colspan="{span}"' if span > 1 else ""
+                cells.append(f"<td{attr}>{cell}</td>")
+            return "<tr>" + "".join(cells) + "</tr>"
+
+        body = "".join(row_html(row) for row in rows)
         return f'\n\n{prefix}<table class="field-{kind}">{body}</table>\n\n'
 
     return pattern.sub(table, md_content)
@@ -2782,6 +2852,21 @@ _CHOICE_TYPES = frozenset({"checkbox", "yesno", "checkbox-inline", "radio", "rad
 _FORM_BLOCK_RE = re.compile(
     r"^\?\[(row|box)(?::([^\]]*))?\]\s*\n(.*?)^\?\[/\1\]\s*$", re.MULTILINE | re.DOTALL
 )
+
+
+def _cell_textarea_height(attrs: dict[str, str | bool]) -> float:
+    """A textarea in a grid cell: ``rows`` lines at the cell's 1.25 line height + padding."""
+    try:
+        rows = float(attrs.get("rows") or 4)
+    except (TypeError, ValueError):
+        rows = 4.0
+    return rows * 12.5 + 2.0
+
+
+def _cell_input(text: str, height: float | None = None) -> str:
+    """Inline marker for an input inside a form-grid cell (see ``_render_cell_html``)."""
+    attr = f' data-h="{height:g}"' if height else ""
+    return f'<span class="docx-input"{attr}>{text}</span>'
 
 
 def _field_box(
@@ -2886,9 +2971,10 @@ def _strip_form_fields_for_docx(md_content: str) -> str:
             separator = "<br>" if ftype == "radio" else "   "
             return separator.join(f"{mark} {option}" for option in options)
         if ftype in OPTION_TYPES:
-            return "\\_" * 8 + " (" + " / ".join(options) + ")"
+            return _cell_input("\\_" * 8 + " (" + " / ".join(options) + ")")
         value = attrs.get("value")
-        return str(value) if value is not None else "\\_" * 8
+        shown = escape(str(value)) if value is not None else "\\_" * 8
+        return _cell_input(shown, _cell_textarea_height(attrs) if ftype == "textarea" else None)
 
     def boxed(match: re.Match) -> str:
         parsed = parse_field_spec(match.group(1))
@@ -2941,9 +3027,11 @@ def _convert_form_fields_for_dotx(md_content: str) -> str:
             return f"[[?cb:{name}_yes]] Yes   [[?cb:{name}_no]] No"
         if ftype in OPTION_TYPES:  # select / radio / radio-inline
             opts = "|".join(o for o in options if not o.startswith("--"))
-            return f"[[?dd:{name}|{opts}]]" if opts else f"[[{name}]]"
+            return _cell_input(f"[[?dd:{name}|{opts}]]" if opts else f"[[{name}]]")
         # text / email / date / number / tel / url / textarea / signature / unknown
-        return f"[[{name}]]"
+        return _cell_input(
+            f"[[{name}]]", _cell_textarea_height(attrs) if ftype == "textarea" else None
+        )
 
     def boxed(m: re.Match) -> str:
         parsed = parse_field_spec(m.group(1).strip())
@@ -3520,6 +3608,13 @@ def _style_padding_pt(style: dict[str, str]) -> dict[str, float] | None:
     return sides or None
 
 
+def _cell_colspan(style: dict[str, str]) -> int:
+    try:
+        return max(1, int(style.get("colspan", "1")))
+    except ValueError:
+        return 1
+
+
 def _style_width_percent(style: dict[str, str]) -> float | None:
     match = re.fullmatch(r"([\d.]+)%", style.get("width", "").strip())
     return float(match.group(1)) if match else None
@@ -3797,6 +3892,7 @@ def build(
         repo_root=repo_root,
         section_bar=section_bar,
         layout_css=layout_css_path,
+        form_document=coerce_bool(config.get("pdf_forms", False)),
     )
 
     if cover_page:
