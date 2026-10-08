@@ -59,6 +59,22 @@ def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+def _parse_box_model(theme: dict[str, Any], prefix: str, props: dict[str, str]) -> None:
+    """Margins and padding (pt) of a block rule, as ``<prefix>_margin_top`` etc."""
+    for kind in ("margin", "padding"):
+        sides: dict[str, float | None] = {}
+        if kind in props:
+            sides = dict(_parse_margin(props[kind]))
+        for side in ("top", "right", "bottom", "left"):
+            value = props.get(f"{kind}-{side}")
+            if value is not None:
+                sides[side] = 0.0 if value.strip() == "0" else _parse_pt(value)
+        for side, pt in sides.items():
+            key = f"{prefix}_{kind}_{side}"
+            if pt is not None and key not in theme:
+                theme[key] = pt
+
+
 def _parse_pt(value: str) -> float | None:
     """Convert an absolute CSS length to points (pt, px, mm, cm or inches)."""
     m = re.search(r"(-?[\d.]+)\s*(pt|px|mm|cm|in)\b", value, re.IGNORECASE)
@@ -387,8 +403,21 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if col:
             theme["pre_background_color"] = col
 
+    # pre / blockquote box model (vertical rhythm + padding the PDF applies)
+    _parse_box_model(theme, "pre", pre_props)
+    _parse_box_model(theme, "blockquote", blocks.get("blockquote", {}))
+    if "line-height" in pre_props:
+        try:
+            theme["pre_line_height"] = float(pre_props["line-height"].strip())
+        except ValueError:
+            pass
+
     # blockquote — left border, text colour, italic
     bq_props = blocks.get("blockquote", {})
+    if "background" in bq_props:
+        col = _first_color(bq_props["background"])
+        if col:
+            theme["blockquote_background_color"] = col
     if "border-left" in bq_props:
         val = bq_props["border-left"]
         col = _first_color(val)

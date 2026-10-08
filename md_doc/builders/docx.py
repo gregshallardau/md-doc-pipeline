@@ -180,9 +180,16 @@ _FIELD_PAD_Y_PT = 4.0
 _FIELD_BORDER_PT = 1.0
 _FIELD_MARGIN_TOP_PT = 2.0
 _FIELD_MARGIN_BOTTOM_PT = 8.0
+# An empty PDF input sits on the baseline with the line's descent below it; one
+# holding text is baseline-aligned to that text, so the row is this much shorter.
+_FILLED_RELIEF_PT = 5.1
 _FIELD_BORDER_COLOR = "5D6D7E"
 _FIELD_FILL = "FAFAFA"
 _TEXTAREA_MIN_PT = 48.0
+# A line holding a checkbox or radio is taller in the PDF (16pt control plus
+# 1pt margins, rounded up by the line box).
+_CHOICE_LINE_PT = 20.5
+_CHOICE_MARKS = "\u2610\u2611\u25cb"
 
 # w:pPr children that must follow w:pBdr / w:shd in schema order.
 _PPR_AFTER_SHD = (
@@ -621,6 +628,8 @@ class _DocxBuilder(HTMLParser):
         # Alignment context stack — pushed/popped by <div style="text-align: ...">
         self._alignment_stack: list[str | None] = []
         self._div_stack: list[int | None] = []
+        self._page_break_pending = False
+        self._bq_paras: list[Any] = []
         # Margins (before, after) that must not collapse with a neighbour.
         self._fixed_margins: dict[Any, tuple[float, float]] = {}
 
@@ -749,6 +758,9 @@ class _DocxBuilder(HTMLParser):
         if after_table and self._theme.get("table_space_after"):
             self._paragraph.paragraph_format.space_before = Pt(self._theme["table_space_after"])
         self._run = None
+        if self._page_break_pending:
+            self._page_break_pending = False
+            self._paragraph.paragraph_format.page_break_before = True
 
     def _current_para(self) -> Any:
         if self._paragraph is None:
@@ -801,6 +813,81 @@ class _DocxBuilder(HTMLParser):
         bottom.set(qn("w:color"), hr_color)
         pBdr.append(bottom)
         _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+
+    def _apply_box_model(self, para: Any, kind: str) -> None:
+        """Shade a paragraph like a CSS box: background, left rule, padding, margins.
+
+        ``kind`` is ``"pre"`` or ``"blockquote"``. Vertical padding becomes
+        paragraph-border spacing drawn in the background colour (Word shades the
+        space inside a border), so the filled box is as tall as the PDF's.
+        """
+        theme = self._theme
+        bg = theme.get("pre_background_color" if kind == "pre" else "blockquote_background_color")
+        border_color = theme.get("pre_border_color" if kind == "pre" else "blockquote_border_color")
+        border_pt = float(theme.get(f"{kind}_border_pt", 3.0))
+        pad_left = float(theme.get(f"{kind}_padding_left", 10.0))
+        pad_top = float(theme.get(f"{kind}_padding_top", 0.0))
+        pad_bottom = float(theme.get(f"{kind}_padding_bottom", 0.0))
+        default_top, default_bottom = (6.0, 10.0) if kind == "pre" else (6.0, 8.0)
+        margin_top = float(theme.get(f"{kind}_margin_top", default_top))
+        margin_bottom = float(theme.get(f"{kind}_margin_bottom", default_bottom))
+
+        fmt = para.paragraph_format
+        fmt.space_before = Pt(margin_top)
+        fmt.space_after = Pt(margin_bottom)
+        pPr = para._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        if bg:
+            set_para_shading(para, bg)
+            for side, pad in (("top", pad_top), ("bottom", pad_bottom)):
+                if pad > 0:
+                    edge = OxmlElement(f"w:{side}")
+                    edge.set(qn("w:val"), "single")
+                    edge.set(qn("w:sz"), "2")  # hairline in the fill colour
+                    edge.set(qn("w:space"), str(round(pad)))
+                    edge.set(qn("w:color"), bg.lstrip("#").upper())
+                    pBdr.append(edge)
+        else:
+            fmt.space_before = Pt(margin_top + pad_top)
+            fmt.space_after = Pt(margin_bottom + pad_bottom)
+        if border_color:
+            left = OxmlElement("w:left")
+            left.set(qn("w:val"), "single")
+            left.set(qn("w:sz"), str(max(1, round(border_pt * 8))))
+            left.set(qn("w:space"), str(round(pad_left)))
+            left.set(qn("w:color"), border_color.lstrip("#").upper())
+            pBdr.append(left)
+            # Word draws the rule *outside* the indent: indent by rule + padding
+            # so the rule sits on the text margin as it does in the PDF.
+            fmt.left_indent = Pt(border_pt + pad_left)
+        elif bg:
+            fmt.left_indent = Pt(pad_left)
+        if len(pBdr):
+            order = {"top": 0, "left": 1, "bottom": 2, "right": 3}
+            for edge in sorted(pBdr, key=lambda e: order[e.tag.split("}")[1]]):
+                pBdr.remove(edge)
+                pBdr.append(edge)
+            _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+
+    def _finish_blockquote(self) -> None:
+        """A blockquote's own margins sit outside its padding and inner paragraphs."""
+        paras, self._bq_paras = self._bq_paras, []
+        if not paras:
+            return
+        theme = self._theme
+        inner_after = float(theme.get("para_space_after", 0.0))
+        margin_after = float(theme.get("blockquote_margin_bottom", 8.0))
+        last = paras[-1]
+        # The last paragraph's own bottom margin stays inside the box (padding
+        # separates it from the blockquote margin), so only the latter collapses.
+        last.paragraph_format.space_after = Pt(inner_after + margin_after)
+        self._fixed_margins[last._p] = (0.0, inner_after)
+
+    def _flush_pending_break(self) -> None:
+        """Emit a deferred page break as its own paragraph (no paragraph follows)."""
+        if self._page_break_pending:
+            self._page_break_pending = False
+            self.doc.add_page_break()
 
     def _body_blocks(self) -> list[Any]:
         return [el for el in self.doc.element.body if el.tag != qn("w:sectPr")]
@@ -885,7 +972,9 @@ class _DocxBuilder(HTMLParser):
         # margin falls after the box rather than between label and box.
         # The box margin lives inside the PDF's line box and never collapses
         # with neighbours; the enclosing paragraph's own bottom margin does.
-        fixed_after = _FIELD_MARGIN_BOTTOM_PT
+        fixed_after = _FIELD_MARGIN_BOTTOM_PT - (
+            _FILLED_RELIEF_PT if attrs.get("data-filled") else 0.0
+        )
         fmt.space_after = Pt(fixed_after + float(self._theme.get("para_space_after", 0)))
         self._fixed_margins[para._p] = (_FIELD_MARGIN_TOP_PT, fixed_after)
         if label is not None:
@@ -1059,6 +1148,12 @@ class _DocxBuilder(HTMLParser):
         self._tag_stack.append(tag)
         tag = tag.lower()
 
+        # A deferred page break rides on the next heading/paragraph; anything
+        # else (lists, tables, rules, code) gets an explicit break paragraph.
+        if self._page_break_pending and tag not in ("h1", "h2", "h3", "h4", "p", "div", "strong"):
+            if not (tag == "em" or tag == "span" or tag == "br"):
+                self._flush_pending_break()
+
         # Inside a cell, collect all inline tags as raw HTML instead of processing them
         if self._in_cell:
             attr_str = ""
@@ -1117,23 +1212,9 @@ class _DocxBuilder(HTMLParser):
             word_align = self._effective_alignment(inline_align)
             if word_align is not None and self._paragraph is not None:
                 self._paragraph.alignment = word_align
-            if self._in_blockquote:
-                # Apply left border accent from theme
-                bq_color = self._theme.get("blockquote_border_color")
-                bq_pt = self._theme.get("blockquote_border_pt", 3.0)
-                if bq_color:
-                    pPr = self._paragraph._p.get_or_add_pPr()
-                    pBdr = OxmlElement("w:pBdr")
-                    left = OxmlElement("w:left")
-                    left.set(qn("w:val"), "single")
-                    left.set(qn("w:sz"), str(max(1, round(bq_pt * 8))))
-                    left.set(qn("w:space"), "12")
-                    left.set(qn("w:color"), bq_color.lstrip("#").upper())
-                    pBdr.append(left)
-                    pPr.append(pBdr)
-                # Indentation to match CSS padding-left
-                ind = self._paragraph._p.get_or_add_pPr().get_or_add_ind()
-                ind.set(qn("w:left"), str(int(10 * 20)))  # 10pt indent
+            if self._in_blockquote and self._paragraph is not None:
+                self._apply_box_model(self._paragraph, "blockquote")
+                self._bq_paras.append(self._paragraph)
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
@@ -1142,7 +1223,10 @@ class _DocxBuilder(HTMLParser):
             # auto-break marker (shared with the PDF builder) emit a real Word
             # page break so the two formats break at the same points.
             if "md-doc-page-break" in classes or "appendix-template-break" in classes:
-                self.doc.add_page_break()
+                # Defer: a break on the *next* paragraph keeps that paragraph's
+                # top margin, which an empty break paragraph would swallow.
+                self._flush_pending_break()
+                self._page_break_pending = True
             if "docx-field" in classes:
                 self._start_field_box(dict(attrs))
             self._div_stack.append(self._block_count() if "keep-with-next" in classes else None)
@@ -1229,6 +1313,7 @@ class _DocxBuilder(HTMLParser):
 
         elif tag == "blockquote":
             self._in_blockquote = True
+            self._bq_paras = []
             # Blockquote content is italic by default (CSS font-style: italic)
             self._italic = True
 
@@ -1355,27 +1440,11 @@ class _DocxBuilder(HTMLParser):
             para = self.doc.add_paragraph(style="Normal")
             pre_size = self._theme.get("font_size_pre", 9.0)
             pre_font = self._theme.get("font_code", "Courier New")
-            pre_border_color = self._theme.get("pre_border_color")
-            pre_border_pt = self._theme.get("pre_border_pt", 3.0)
-            pre_bg = self._theme.get("pre_background_color")
-            # Apply background shading (CSS background)
-            if pre_bg:
-                set_para_shading(para, pre_bg)
-            # Apply left accent border (CSS border-left)
-            if pre_border_color:
-                pPr = para._p.get_or_add_pPr()
-                pBdr = OxmlElement("w:pBdr")
-                left = OxmlElement("w:left")
-                left.set(qn("w:val"), "single")
-                left.set(qn("w:sz"), str(max(1, round(pre_border_pt * 8))))
-                left.set(qn("w:space"), "12")
-                left.set(qn("w:color"), pre_border_color.lstrip("#").upper())
-                pBdr.append(left)
-                pPr.append(pBdr)
-                ind = pPr.get_or_add_ind()
-                ind.set(qn("w:left"), str(int(10 * 20)))  # 10pt indent
-            para.paragraph_format.space_before = Pt(6)
-            para.paragraph_format.space_after = Pt(10)
+            self._apply_box_model(para, "pre")
+            pre_line = self._theme.get("pre_line_height")
+            if pre_line:
+                para.paragraph_format.line_spacing = Pt(pre_size * float(pre_line))
+                para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
             # Keep the whole code block on one page (mirrors the PDF theme's
             # `pre { page-break-inside: avoid }`).
             para.paragraph_format.keep_together = True
@@ -1393,6 +1462,7 @@ class _DocxBuilder(HTMLParser):
             self._in_blockquote = False
             self._italic = False
             self._paragraph = None
+            self._finish_blockquote()
 
         elif tag == "div":
             if self._alignment_stack:
@@ -2534,7 +2604,7 @@ def _word_html_forms(source: str, field_type: str | None) -> str:
 
         def box(self, text: str, **flags: str) -> str:
             """Inline-safe field box: no blank lines inside a raw HTML block."""
-            return _field_box(text, **flags).strip()
+            return _field_box(text, filled=False if field_type else None, **flags).strip()
 
         def field_name(self, attrs: dict[str, str | None]) -> str:
             self.index += 1
@@ -2672,9 +2742,17 @@ _FORM_BLOCK_RE = re.compile(
 )
 
 
-def _field_box(text: str = "", *, height: float | None = None, **flags: str) -> str:
-    """Block-level HTML for a bordered input box (see ``_start_field_box``)."""
+def _field_box(
+    text: str = "", *, height: float | None = None, filled: bool | None = None, **flags: str
+) -> str:
+    """Block-level HTML for a bordered input box (see ``_start_field_box``).
+
+    ``filled`` says the PDF input holds default text (so it is baseline-aligned
+    to that text rather than to its bottom edge). It defaults to "has text".
+    """
     attrs = f' data-h="{height:g}"' if height else ""
+    if text.strip() if filled is None else filled:
+        attrs += ' data-filled="1"'
     attrs += "".join(f' data-{k}="{v}"' for k, v in flags.items())
     return f'\n\n<div class="docx-field"{attrs}>{escape(text)}</div>\n\n'
 
@@ -2762,7 +2840,9 @@ def _strip_form_fields_for_docx(md_content: str) -> str:
             return "\u2610 Yes   \u2610 No"
         if ftype in ("checkbox-inline", "radio", "radio-inline"):
             mark = "\u2610" if ftype == "checkbox-inline" else "\u25cb"
-            return "   ".join(f"{mark} {option}" for option in options)
+            # A block radio group lists one option per line, as the PDF does.
+            separator = "<br>" if ftype == "radio" else "   "
+            return separator.join(f"{mark} {option}" for option in options)
         if ftype in OPTION_TYPES:
             return "\\_" * 8 + " (" + " / ".join(options) + ")"
         value = attrs.get("value")
@@ -2830,11 +2910,11 @@ def _convert_form_fields_for_dotx(md_content: str) -> str:
         ftype, name, options, attrs = parsed
         marker = convert(m)
         if ftype == "textarea":
-            return _field_box(marker, height=_textarea_height(attrs))
+            return _field_box(marker, height=_textarea_height(attrs), filled=False)
         if ftype == "signature":
-            return _field_box(marker, height=40.0, style="line")
+            return _field_box(marker, height=40.0, style="line", filled=False)
         if ftype == "select" or ftype in INPUT_TYPES or ftype not in _CHOICE_TYPES:
-            return _field_box(marker)
+            return _field_box(marker, filled=False)
         return marker
 
     return _convert_form_markup(md_content, convert, boxed)
@@ -3423,6 +3503,19 @@ def _set_cell_margins(cell: Any, padding: dict[str, float]) -> None:
     tcPr.append(mar)
 
 
+def _size_choice_lines(doc: Any) -> None:
+    """Give body lines that carry a checkbox/radio mark the PDF's taller line box."""
+    from docx.text.paragraph import Paragraph
+
+    for el in doc.element.body.iterchildren(qn("w:p")):
+        para = Paragraph(el, doc._body)
+        if not any(mark in para.text for mark in _CHOICE_MARKS):
+            continue
+        fmt = para.paragraph_format
+        fmt.line_spacing = Pt(_CHOICE_LINE_PT)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+
+
 def _effective_spacing(para: Any, which: str) -> float:
     """Paragraph ``space_before``/``space_after`` in pt, following style inheritance."""
     attr = f"space_{which}"
@@ -3678,6 +3771,7 @@ def build(
     # formats break pages at the same places.
     html = _keep_heading_with_next(_merge_joined_field_boxes(html))
     builder.feed(html)
+    _size_choice_lines(doc)
     _collapse_paragraph_margins(doc, builder._fixed_margins)
 
     doc.save(str(out_path))

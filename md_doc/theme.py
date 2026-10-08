@@ -362,6 +362,8 @@ input[type="text"],
 input[type="date"],
 input[type="number"],
 input[type="email"],
+input[type="tel"],
+input[type="url"],
 textarea,
 select {
   appearance: auto;

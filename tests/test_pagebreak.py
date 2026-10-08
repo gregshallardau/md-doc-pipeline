@@ -86,7 +86,9 @@ class TestDocxPagebreak:
 
         doc = Document(str(out))
         xml = "\n".join(p._p.xml for p in doc.paragraphs)
-        assert 'w:type="page"' in xml or 'type="page"' in xml
+        # The break is a pageBreakBefore on the paragraph that starts the page
+        # (or an explicit break run when no paragraph follows).
+        assert 'w:type="page"' in xml or "pageBreakBefore" in xml
 
     def test_no_marker_no_page_break(self, tmp_path):
         from md_doc.builders.docx import build as build_docx
