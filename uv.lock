@@ -1313,6 +1313,7 @@ dependencies = [
     { name = "md-doc-pipeline" },
     { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "weasyprint" },
 ]
 
 [package.metadata]
@@ -1321,6 +1322,7 @@ requires-dist = [
     { name = "md-doc-pipeline", editable = "." },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27" },
+    { name = "weasyprint", specifier = ">=68.1,<69" },
 ]
 
 [[package]]

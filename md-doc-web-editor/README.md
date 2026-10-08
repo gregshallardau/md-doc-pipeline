@@ -1,219 +1,117 @@
-# md-doc-web-editor
+# md-doc Document Studio
 
-A self-contained browser editor for [md-doc-pipeline](https://github.com/gregshallardau/md-doc-pipeline) workspaces. The editor and pipeline must be installed in the same virtual environment. Use the source-checkout instructions below; they do not rely on either package being published to PyPI.
+A local browser workspace for the [md-doc pipeline](https://github.com/gregshallardau/md-doc-pipeline). Edit Markdown, inherited metadata and themes, review the actual generated PDF, and export PDF, DOCX, DOTX or PowerPoint. Monaco provides the source editor; PDF.js displays the pipeline's immutable output. All browser assets are bundled locally.
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ Files               │ Monaco editor          │ ● Preview         │
-│                     │                        │   Config          │
-│ workspace/          │ ---                    │   CSS             │
-│ ├── acme/ ▼        │ title: Proposal        │                   │
-│ │  proposal.md      │ ---                    │   <Live HTML>     │
-│ │  _meta.yml        │                        │                   │
-│ │  _theme.css       │ # {{ product }}        │   <PDF iframe>    │
-│ └── blueshift/      │                        │                   │
-│                     │           [Save]       │                   │
-│                     │  [Build PDF] [DOCX]   │                   │
-└──────────────────────────────────────────────────────────────────┘
-```
+## Launch
 
----
-
-## What it does
-
-- **File tree** of any workspace directory (`.md`, `_meta.yml`, `*.css`)
-- **Monaco editor** with syntax highlighting tuned for md-doc:
-  - YAML frontmatter, Jinja2 expressions, `[[fields]]`, `?[forms]`, mermaid blocks
-  - Known md-doc config keys highlighted distinctly
-- **Live HTML preview** rendered client-side (marked.js) with the resolved CSS theme injected
-- **Config cascade panel** — every `_meta.yml` layer from repo root down to the doc, plus frontmatter, plus the merged result
-- **CSS theme panel** — the resolved `_pdf-theme.css` / `_theme.css` cascade, with a one-click "open this file" shortcut
-- **Included templates** bar — every `{% include "..." %}` becomes a clickable button to jump to the included file
-- **Build PDF / DOCX** buttons — runs `md-doc build` via subprocess; PDF renders inline in the preview pane, DOCX provides a download link
-
-No database, no auth, no Laravel — just a single Python process, a static SPA, and the `md-doc` CLI as a sidecar for builds.
-
----
-
-## Quick start
-
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+ first.
-Run these commands from the repository root:
+From the repository root:
 
 ```bash
-git clone https://github.com/gregshallardau/md-doc-pipeline.git
-cd md-doc-pipeline
-uv venv
 uv sync --group editor
-
-# Launch from the project environment without activating it
-uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser
+uv run --offline --no-sync md-doc-edit serve examples/
 ```
 
-Open http://127.0.0.1:8765/. `--offline --no-sync` uses the installed environment
-without resolving or downloading dependencies. Include `--group editor` when
-explicitly syncing again to retain the optional editor.
-Omit `--no-browser` to launch a browser automatically.
-
-If you prefer activated commands, after the sync use:
+The browser opens at **http://127.0.0.1:8765/**. Choose **Open a sample** for a complete branded document. To work on live documents:
 
 ```bash
-# Linux / macOS
-source .venv/bin/activate
-md-doc-edit serve workspace/
+uv run --offline --no-sync md-doc-edit serve workspace/
+uv run --offline --no-sync md-doc-edit serve workspace/acme/ --port 9000
 ```
 
-```powershell
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-md-doc-edit serve workspace/
-```
+Add `--no-browser` to start only the server. The editor and pipeline must be installed in the same Python environment. Include `--group editor` in subsequent `uv sync` commands to keep the editor installed. Installation needs internet access or a populated package cache; running the installed editor does not.
 
-In Windows Command Prompt, activate with `.venv\Scripts\activate.bat`.
-Other launch options (from the repository root):
+## Editing and preview
+
+- **Source**: Monaco with Markdown, Jinja2, Word fields, PDF forms and YAML highlighting. Each tab retains its buffer, cursor, undo stack and scroll position.
+- **Write**: visual editing for supported paragraphs and headings. Frontmatter, templates, forms, tables, HTML, images and other advanced syntax remain protected source blocks. Clicking a protected block opens it in Source. Untouched blocks retain their original source.
+- **Output preview**: the actual PDF, including the complete theme, imported CSS, local fonts and images, cover, page breaks, diagrams, headers and footers. Automatic rendering starts after 800ms of idle time; pause it or refresh manually for large documents.
+- **Unsaved edits**: previews include open unsaved document, YAML, CSS and template buffers. The renderer uses an isolated project snapshot. Preview and export never save these buffers or generate themes in your source project.
+- **Pinned document**: opening its metadata, theme or included template keeps the document visible in the preview. Opening another document selects that document's output.
+- **Current output**: a status label distinguishes current, updating, out-of-date and failed output. The last successful PDF remains visible during updates and errors. Errors and renderer logs are available from the status bar.
+
+Drag either separator to resize navigation or source/preview. Focus a separator and use arrows (Shift for larger steps), Home/End, or double-click to reset. **Change layout** offers side-by-side, stacked, source-only and preview-only. Layouts and appearance persist per workspace. Narrow windows use a single main pane and navigation drawers.
+
+The PDF viewer supports page navigation, fit page/width, zoom, text selection, search, lazy thumbnails, bookmarks and maximised preview. Form test mode is available in Settings; test values do not change source defaults or exported artifacts. Print opens the displayed PDF in a browser tab for the browser's print controls.
+
+## Document tools
+
+The inspector shows editable common properties, the configuration cascade and provenance, the resolved PDF theme, included templates, and documented merge fields. Simple property changes update individual frontmatter lines. Structured YAML is edited in Source to preserve its syntax. Inherited metadata, theme and template files can be opened without changing the selected document.
+
+Use the insertion toolbar for formatting, tables, fields, PDF forms, page breaks, Mermaid, includes and slide directives. Local raster images can be copied into an asset directory; existing filenames are never silently overwritten. New document scaffolds support reports, fillable PDF forms, decks and blank documents. File actions include folder creation, duplicate, rename/move and recoverable trash. After moving a document, review relative asset/include references; the studio preserves them as written.
+
+Workspace search finds text in Markdown, YAML and CSS. The outline navigates source headings. Quick open and the command palette provide access to documents and actions.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl/⌘ P | Quick open |
+| Ctrl/⌘ K | Files and commands |
+| Ctrl/⌘ S | Save active buffer |
+| Ctrl/⌘ B / I | Bold / italic in Source |
+| Escape | Close dialog or leave focus mode |
+| Arrows on a separator | Resize panes |
+
+## Saves and recovery
+
+Save is an explicit action. Atomic, revision-checked writes detect external edits and offer a comparison before choosing the disk version or saving your draft. Switching tabs preserves unsaved changes. Closing an unsaved tab offers Save, Discard or Cancel.
+
+Drafts and session preferences are stored in this browser's local storage, scoped to the workspace path. Reloading or reopening restores drafts without writing them to disk. If the disk revision changed, review the recovered draft before saving. Private browsing, storage limits and clearing browser data can remove these drafts; save important work to disk.
+
+External file changes are checked every four seconds while the tab is visible. Clean buffers refresh; dirty buffers are preserved and offer a comparison. Dependency changes refresh the pinned preview.
+
+## Source control
+
+The Git panel shows the repository branch, workspace changes, staged changes, diffs and recent workspace history. Stage/unstage individual files, create a feature branch, commit staged workspace files, or explicitly pull with `--ff-only`. Git must be installed and the selected workspace must be inside a repository.
+
+Commits use staged content and preserve unstaged edits and staged files outside the selected workspace. Commits, branch changes and pulls run only when selected in the interface. Git authentication and commit identity use the machine's existing configuration. Rename paths and deleted files are represented by Git's status. The editor has no push action.
+
+## Export
+
+Export uses the current editing snapshot, including unsaved dependency buffers. Downloading the displayed PDF reuses that exact immutable artifact. Save remains separate.
+
+PDF has an authoritative visual preview. DOCX and DOTX use the Word theme and native pipeline builders; PPTX uses the slide builder. These formats are downloadable and do not claim exact browser/Word/PowerPoint layout equivalence. No Office conversion service is required.
+
+## Local operation and limits
+
+The editor defaults to loopback and is intended for use on your own machine. It is not an authenticated multi-user hosting service. Browser writes require the local session token and reject cross-origin requests. Document scripts and external links cannot execute in the PDF viewer. PDF assets are restricted to the project snapshot; remote resources are blocked.
+
+Snapshots retain project-relative paths so the CLI's cascade, template resolution, CSS imports and assets continue to work when a subdirectory is selected. Hidden directories, symlinks, dependency packages and generated outputs are excluded. Preview can use inherited project metadata/themes/templates; there is no general filesystem browser.
+
+Limits: 128 MiB / 10,000 snapshot inputs, 20 MiB text files, 100 unsaved buffers, 10 MiB uploaded raster images, two render workers, eight pending/running jobs, and 180 seconds per render. Artifact leases expire after 30 minutes and are refreshed by downloads. Refresh an expired preview to produce it again. Temporary snapshots are discarded after rendering; artifacts are cleaned on expiry/shutdown.
+
+## Service APIs
+
+| Endpoint | Purpose |
+| --- | --- |
+| GET `/api/capabilities` | Workspace, project context, formats, limits and local session token |
+| GET `/api/tree` | Workspace authoring files |
+| GET/PUT `/api/file` | Buffer contents and revision; conditional atomic save |
+| POST `/api/preview/jobs` | Immutable buffer snapshot; format, revision, client and purpose |
+| GET/DELETE `/api/jobs/{id}` | Poll render state, inspection, diagnostics and artifact; cancel |
+| GET `/api/artifacts/{id}` | Display artifact; `?download=true` for attachment |
+| GET `/api/changes` | Dependency change signature |
+| GET `/api/search?q=…` | Workspace text matches |
+| POST `/api/files/action` | Scaffold, duplicate, move, trash, restore |
+| POST `/api/assets` | Validated base64 raster image upload |
+| GET `/api/git/status`, `/api/git/diff` | Workspace source control inspection |
+| POST `/api/git/action` | Explicit stage, unstage, commit, branch or pull |
+
+Snapshot job responses include effective configuration, provenance, theme, fields and includes. Editable inherited resources use scoped `project:` handles. Legacy config/CSS/includes and saved-file `/api/build` endpoints remain available for existing integrations. Browser mutations send `X-Editor-Token` from capabilities; cross-origin requests are rejected.
+
+## Verification
 
 ```bash
-uv run --offline --no-sync md-doc-edit serve .
-uv run --offline --no-sync md-doc-edit serve workspace/ --port 9000
-uv run --offline --no-sync md-doc-edit serve workspace/ --host 0.0.0.0
+.venv/bin/pytest md-doc-web-editor/tests --no-cov
+npm ci --prefix tests/browser
+node tests/browser/studio.cjs
 ```
 
-For an existing virtual environment or an offline source deployment:
+The browser suite uses a disposable Git project and blocks all nonlocal browser requests. It exercises real Monaco, PDF rendering, resizing, drafts, conflicts, visual editing, inspector dependencies, Git and responsive layouts. Set `MD_DOC_TEST_BROWSER` for a locally installed Chromium executable and `MD_DOC_TEST_PYTHON` for a packaged editor environment.
+
+Build distributable assets and run the installed-package smoke check:
 
 ```bash
-uv venv
-uv pip install --python .venv/bin/python -e . -e ./md-doc-web-editor
-.venv/bin/md-doc-edit serve workspace/ --no-browser
+uv build md-doc-web-editor
+python md-doc-web-editor/tests/smoke_installed.py
 ```
 
-On Windows replace `.venv/bin/python` with `.venv/Scripts/python.exe` and
-`.venv/bin/md-doc-edit` with `.venv/Scripts/md-doc-edit.exe`. Packages still
-need network access or a populated local package cache at install time.
-
-
----
-
-## Requirements
-
-| Component | Version | Why |
-|---|---|---|
-| Python | 3.11+ | match md-doc-pipeline |
-| md-doc-pipeline | latest | core library + `md-doc` CLI for builds |
-| FastAPI | 0.110+ | server framework |
-| uvicorn | 0.27+ | ASGI server |
-| Pipeline in editor environment | required | imported at startup; builds use that environment’s Python |
-
----
-
-## API reference
-
-The SPA is the only client, but the API is plain JSON if you want to script against it:
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/` | SPA entry point (HTML) |
-| GET | `/api/tree` | Workspace file tree (recursive) |
-| GET | `/api/file?path=...` | Read a file's contents |
-| PUT | `/api/file` | Write a file: body `{path, content}` |
-| GET | `/api/config?path=...` | Cascade layers + merged config for the doc |
-| GET | `/api/css?path=...` | Resolved theme CSS + source path |
-| GET | `/api/includes?path=...` | `{% include "..." %}` references and their resolved paths |
-| POST | `/api/build` | Run `md-doc build`: body `{path, format}` returns `{token, filename, format}` |
-| GET | `/api/build/{token}` | Stream the built artefact (PDF/DOCX) |
-| GET | `/static/...` | Bundled JS / CSS / fonts / Monaco workers (all local) |
-
-All file paths are workspace-relative; `..` traversal is rejected with HTTP 400.
-
----
-
-## Offline operation
-
-All browser dependencies are shipped with the editor: Monaco 0.52.2 and
-marked 17.0.5, with their licenses in `static/vendor/`. No CDN, telemetry,
-remote fonts or update checks are needed while editing or exporting.
-A Content Security Policy restricts browser resources to the local server;
-PDF rendering rejects network URLs (including remote CSS, fonts and images)
-and network file shares before fetching them. Put document assets in local
-files. Remote resources are omitted; hyperlinks in exports remain links and
-are not fetched during export. Preview links cannot navigate to external sites.
-
-Install once while online, from the repository root:
-
-```bash
-uv venv  # skip if .venv already exists
-uv sync --group editor
-```
-
-Then launch without dependency resolution or downloads:
-
-```bash
-# Linux / macOS
-.venv/bin/md-doc-edit serve workspace/ --no-browser
-```
-
-```powershell
-# Windows PowerShell
-.\.venv\Scripts\md-doc-edit.exe serve workspace/ --no-browser
-```
-
-Alternatively, `uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser`
-uses the existing environment without syncing. Open http://127.0.0.1:8765/.
-The server defaults to loopback. Keep it there for local use.
-
-If packaged Monaco assets are missing, a local text editor preserves basic
-editing, saving and preview without fetching a replacement. Properly installed
-packages include Monaco and its workers, languages and font assets.
-
-Offline operation applies to the local editor and exports. Explicit remote
-storage commands such as `md-doc sync` are separate online operations; do not
-use those in a no-network environment. OS/browser background traffic is outside
-the application's control; workplace network policy remains the outer boundary.
-
-
----
-
-## Concurrent users
-
-This v1 has **no locking** — two users editing the same file will silently overwrite each other on save. If you need locking, use the [Filament v5 plugin](../filament-md-doc/) which has database-backed pessimistic locks. A simple in-process lock for the standalone server is on the roadmap.
-
----
-
-## Architecture
-
-```
-┌──────────────┐     HTTP      ┌─────────────────────────┐
-│  Browser SPA │ ◄────────────►│  md-doc-edit (FastAPI)  │
-│              │               │                         │
-│ - Monaco     │               │ - Workspace file I/O    │
-│ - marked.js  │               │ - Config cascade        │
-│ - tokenizers │               │ - CSS resolver          │
-└──────────────┘               │ - md-doc CLI sidecar    │
-                               └────────────┬────────────┘
-                                            │ subprocess
-                                            ▼
-                                    ┌──────────────┐
-                                    │  md-doc CLI  │
-                                    │ (WeasyPrint) │
-                                    └──────────────┘
-```
-
-Reads/writes are sandboxed: the server resolves every `?path=` against the workspace root and rejects anything that escapes (via `Path.relative_to` check). The build endpoint generates a random URL-safe token and stores artefacts in a per-token tmp dir; tokens expire after 30 minutes.
-
----
-
-## License
-
-MIT
-
-## Save and preview behavior
-
-Switching files prompts before discarding unsaved changes; closing the tab also
-warns when edits are unsaved. A build uses the file and content selected when the
-button was clicked, even if another file is opened while the build runs.
-
-HTML previews use sandboxed frames with scripts, forms and network resources
-blocked. Theme CSS is confined to the frame. Use the PDF/Word build for final
-asset and math rendering. Failed builds are removed immediately; expired builds
-are swept every minute and remaining builds are removed on graceful shutdown.
-Abandoned server directories are recovered on the next startup after the timeout
-and token retention period have passed.
+Run the smoke check with the installed environment's Python. The built wheel includes Monaco, marked, PDF.js, fonts, CMaps, WebAssembly decoders, icons, and vendor licenses; no frontend build or runtime Node installation is needed.
