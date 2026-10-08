@@ -1,64 +1,588 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>md-doc editor</title>
-    <link rel="stylesheet" href="/static/editor.css">
-</head>
-<body>
-
-<div class="md-doc-app">
-
-    <aside class="md-doc-sidebar">
-        <div class="md-doc-sidebar-header">
-            <span class="md-doc-sidebar-title">Files</span>
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>md-doc editor · Document studio</title>
+    <link rel="icon" href="/static/mark.svg" type="image/svg+xml" />
+    <link
+      rel="stylesheet"
+      href="/static/vendor/pdfjs-6.4.299/web/pdf_viewer.css"
+    />
+    <link rel="stylesheet" href="/static/editor.css" />
+  </head>
+  <body>
+    <div class="studio" id="studio">
+      <header class="app-header">
+        <a class="brand" href="/" aria-label="Document studio home"
+          ><img src="/static/mark.svg" alt="" /><span
+            >md-doc<span class="brand-sub">studio</span></span
+          ></a
+        ><span class="header-divider"></span>
+        <button
+          class="workspace-button"
+          id="workspace-button"
+          title="Workspace information"
+        >
+          <span data-icon="folder"></span
+          ><span id="workspace-name">Workspace</span
+          ><span class="local-badge"><i></i> Local</span>
+        </button>
+        <button class="quick-search" data-action="quick-open">
+          <span data-icon="search"></span
+          ><span>Find a document or command…</span><kbd>Ctrl K</kbd>
+        </button>
+        <div class="header-actions">
+          <button
+            class="icon-button"
+            data-action="appearance"
+            title="Switch appearance"
+            aria-label="Switch appearance"
+          >
+            <span data-icon="sun"></span></button
+          ><button
+            class="icon-button"
+            data-action="help"
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+          >
+            <span data-icon="help"></span></button
+          ><button class="button export-button" data-action="export">
+            <span data-icon="download"></span>Export<span
+              data-icon="chevron-down"
+            ></span>
+          </button>
         </div>
-        <div class="md-doc-sidebar-body" id="md-doc-tree"></div>
-    </aside>
-
-    <main class="md-doc-editor-pane">
-        <div class="md-doc-toolbar">
-            <span id="md-doc-filename" class="md-doc-filename">No file selected</span>
-            <button id="md-doc-save-btn" class="md-doc-btn md-doc-btn-primary" disabled>Save</button>
-            <button id="md-doc-build-pdf-btn" class="md-doc-btn md-doc-btn-build" disabled title="Run md-doc build and view the PDF">Build PDF</button>
-            <button id="md-doc-build-docx-btn" class="md-doc-btn md-doc-btn-build" disabled title="Build the document as Word (.docx)">Build DOCX</button>
+      </header>
+      <div class="workbench" id="workbench">
+        <nav class="activity-rail" aria-label="Workspace tools">
+          <button
+            class="rail-button active"
+            data-nav="files"
+            title="Files"
+            aria-label="Files"
+          >
+            <span data-icon="files"></span></button
+          ><button
+            class="rail-button"
+            data-nav="search"
+            title="Search workspace"
+            aria-label="Search workspace"
+          >
+            <span data-icon="search"></span></button
+          ><button
+            class="rail-button"
+            data-nav="outline"
+            title="Document outline"
+            aria-label="Document outline"
+          >
+            <span data-icon="list"></span></button
+          ><button
+            class="rail-button"
+            data-nav="git"
+            title="Source control"
+            aria-label="Source control"
+          >
+            <span data-icon="git"></span></button
+          ><span class="rail-space"></span
+          ><button
+            class="rail-button"
+            data-action="focus"
+            title="Focus mode"
+            aria-label="Focus mode"
+          >
+            <span data-icon="maximize"></span></button
+          ><button
+            class="rail-button"
+            data-action="settings"
+            title="Settings"
+            aria-label="Settings"
+          >
+            <span data-icon="settings"></span>
+          </button>
+        </nav>
+        <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
+          <div class="pane-heading">
+            <span id="sidebar-title">EXPLORER</span>
+            <div class="heading-actions">
+              <button
+                class="icon-button small"
+                data-action="new"
+                title="New document"
+                aria-label="New document"
+              >
+                <span data-icon="file-plus"></span></button
+              ><button
+                class="icon-button small"
+                data-action="refresh-tree"
+                title="Refresh files"
+                aria-label="Refresh files"
+              >
+                <span data-icon="refresh"></span>
+              </button>
+            </div>
+          </div>
+          <div class="sidebar-workspace">
+            <span data-icon="chevron-down"></span
+            ><span id="tree-root-name">Workspace</span
+            ><button
+              class="icon-button small"
+              data-action="file-actions"
+              title="File actions"
+              aria-label="File actions"
+            >
+              <span data-icon="more"></span>
+            </button>
+          </div>
+          <input
+            id="file-filter"
+            class="input tree-filter"
+            placeholder="Filter files…"
+            aria-label="Filter files"
+          />
+          <div class="sidebar-content" id="md-doc-tree"></div>
+          <div class="sidebar-content" id="search-panel" hidden>
+            <label class="field-label" for="workspace-query"
+              >SEARCH IN FILES</label
+            ><input
+              id="workspace-query"
+              class="input"
+              placeholder="Search text…"
+            />
+            <div id="search-results"></div>
+          </div>
+          <div class="sidebar-content" id="outline-panel" hidden></div>
+          <div class="sidebar-content" id="git-panel" hidden></div>
+          <div class="sidebar-footer">
+            <span data-icon="shield"></span
+            ><span
+              >On your machine.<br /><strong
+                >Your files stay yours.</strong
+              ></span
+            >
+          </div>
+        </aside>
+        <div
+          class="splitter nav-splitter"
+          id="nav-splitter"
+          role="separator"
+          tabindex="0"
+          aria-label="Resize navigation"
+          aria-orientation="vertical"
+          aria-valuemin="180"
+          aria-valuemax="420"
+          aria-valuenow="240"
+        ></div>
+        <main class="editor-pane" id="editor-pane">
+          <div
+            class="document-tabs"
+            id="document-tabs"
+            role="tablist"
+            aria-label="Open files"
+          >
+            <span class="tabs-empty">Your documents</span>
+          </div>
+          <div class="editor-toolbar">
+            <div class="breadcrumbs" id="md-doc-filename">No file selected</div>
+            <button
+              id="md-doc-save-btn"
+              class="button save-button"
+              disabled
+              title="Save (Ctrl S)"
+            >
+              <span data-icon="save"></span><span>Save</span>
+            </button>
+          </div>
+          <div
+            class="format-toolbar"
+            id="format-toolbar"
+            aria-label="Document formatting"
+          >
+            <div class="segmented compact" aria-label="Authoring mode">
+              <button data-edit-mode="source" class="active">Source</button
+              ><button
+                data-edit-mode="write"
+                title="Visual editing with protected template blocks"
+              >
+                Write
+              </button>
+            </div>
+            <span class="toolbar-divider"></span
+            ><button
+              class="icon-button small"
+              data-insert="heading"
+              title="Heading"
+              aria-label="Insert heading"
+            >
+              <span data-icon="heading"></span></button
+            ><button
+              class="icon-button small"
+              data-insert="bold"
+              title="Bold (Ctrl B)"
+              aria-label="Bold"
+            >
+              <strong>B</strong></button
+            ><button
+              class="icon-button small"
+              data-insert="italic"
+              title="Italic (Ctrl I)"
+              aria-label="Italic"
+            >
+              <em>I</em></button
+            ><button
+              class="icon-button small"
+              data-insert="list"
+              title="Bullet list"
+              aria-label="Insert bullet list"
+            >
+              <span data-icon="list"></span></button
+            ><button
+              class="icon-button small"
+              data-insert="link"
+              title="Link"
+              aria-label="Insert link"
+            >
+              <span data-icon="link"></span></button
+            ><button
+              class="icon-button small"
+              data-insert="table"
+              title="Table"
+              aria-label="Insert table"
+            >
+              <span data-icon="table"></span></button
+            ><button
+              class="icon-button small"
+              data-action="insert-menu"
+              title="Insert field, form, diagram or template"
+              aria-label="More insert options"
+            >
+              <span data-icon="plus"></span></button
+            ><span class="toolbar-space"></span
+            ><button
+              class="icon-button small"
+              data-action="editor-find"
+              title="Find in document"
+              aria-label="Find in document"
+            >
+              <span data-icon="search"></span>
+            </button>
+          </div>
+          <div class="editor-surface">
+            <div id="md-doc-monaco" class="monaco-container"></div>
+            <div id="write-editor" class="write-editor" hidden></div>
+            <div class="welcome" id="welcome">
+              <div class="welcome-mark">
+                <img src="/static/mark.svg" alt="" />
+              </div>
+              <span class="eyebrow">YOUR DOCUMENT WORKSPACE</span>
+              <h1>Good documents<br />start here.</h1>
+              <p>
+                Write, refine, and see exactly what<br />you’re ready to share.
+              </p>
+              <button class="button primary" data-action="open-sample">
+                <span data-icon="file"></span>Open a sample</button
+              ><button class="button ghost" data-action="new">
+                <span data-icon="plus"></span>Create a document
+              </button>
+              <div class="welcome-shortcuts">
+                <span><kbd>Ctrl P</kbd> Quick open</span
+                ><span><kbd>Ctrl K</kbd> Commands</span>
+              </div>
+            </div>
+          </div>
+          <div class="editor-bottom">
+            <span id="editor-position">Ln 1, Col 1</span
+            ><span id="editor-word-count">0 words</span
+            ><span id="editor-language">Markdown</span>
+          </div>
+        </main>
+        <div
+          class="splitter preview-splitter"
+          id="preview-splitter"
+          role="separator"
+          tabindex="0"
+          aria-label="Resize preview"
+          aria-orientation="vertical"
+          aria-valuemin="320"
+          aria-valuemax="1600"
+          aria-valuenow="600"
+        ></div>
+        <section
+          class="preview-pane"
+          id="preview-pane"
+          aria-label="Document preview"
+        >
+          <div class="preview-heading">
+            <div>
+              <span class="eyebrow">OUTPUT PREVIEW</span
+              ><span class="preview-kind"
+                >PDF <span class="exact-badge">Final output</span></span
+              >
+            </div>
+            <div class="preview-layout-actions">
+              <button
+                class="icon-button small"
+                data-action="layout"
+                title="Change layout"
+                aria-label="Change layout"
+              >
+                <span data-icon="columns"></span></button
+              ><button
+                class="icon-button small"
+                data-action="inspector"
+                title="Document properties"
+                aria-label="Document properties"
+              >
+                <span data-icon="sliders"></span></button
+              ><button
+                class="icon-button small"
+                data-action="maximize-preview"
+                title="Maximise preview"
+                aria-label="Maximise preview"
+              >
+                <span data-icon="maximize"></span>
+              </button>
+            </div>
+          </div>
+          <div class="preview-toolbar">
+            <button
+              class="icon-button small"
+              id="thumbnails-toggle"
+              title="Page thumbnails"
+              aria-label="Page thumbnails"
+            >
+              <span data-icon="panel"></span></button
+            ><button
+              class="icon-button small"
+              id="pdf-prev"
+              title="Previous page"
+              aria-label="Previous page"
+            >
+              <span data-icon="chevron-left"></span></button
+            ><label class="page-label"
+              ><input
+                id="pdf-page"
+                type="number"
+                min="1"
+                value="1"
+                aria-label="Page number"
+              /><span>/ <span id="pdf-total">—</span></span></label
+            ><button
+              class="icon-button small"
+              id="pdf-next"
+              title="Next page"
+              aria-label="Next page"
+            >
+              <span data-icon="chevron-right"></span></button
+            ><span class="toolbar-divider"></span
+            ><select id="pdf-zoom" aria-label="Preview zoom">
+              <option value="page-width">Fit width</option>
+              <option value="page-fit">Fit page</option>
+              <option value="0.5">50%</option>
+              <option value="0.75">75%</option>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5">150%</option>
+              <option value="2">200%</option></select
+            ><span class="toolbar-space"></span
+            ><button
+              class="icon-button small"
+              data-action="pdf-find"
+              title="Search PDF"
+              aria-label="Search PDF"
+            >
+              <span data-icon="search"></span></button
+            ><button
+              class="icon-button small"
+              data-action="refresh-preview"
+              title="Refresh preview"
+              aria-label="Refresh preview"
+            >
+              <span data-icon="refresh"></span>
+            </button>
+          </div>
+          <div class="preview-document-bar">
+            <span data-icon="file"></span
+            ><span id="preview-document">No document selected</span
+            ><button
+              id="preview-status"
+              class="render-state"
+              data-action="diagnostics"
+            >
+              Ready
+            </button>
+          </div>
+          <div class="pdf-find-bar" id="pdf-find-bar" hidden>
+            <input
+              class="input"
+              id="pdf-find-query"
+              placeholder="Find in PDF…"
+              aria-label="Find in PDF"
+            /><span id="pdf-find-count"></span
+            ><button
+              class="icon-button small"
+              id="pdf-find-next"
+              title="Next match"
+              aria-label="Next match"
+            >
+              <span data-icon="chevron-down"></span></button
+            ><button
+              class="icon-button small"
+              data-action="pdf-find"
+              aria-label="Close PDF search"
+            >
+              <span data-icon="close"></span>
+            </button>
+          </div>
+          <div class="preview-body" id="md-doc-preview">
+            <aside
+              id="pdf-thumbnails"
+              class="pdf-thumbnails"
+              hidden
+              aria-label="Page thumbnails"
+            ></aside>
+            <div
+              class="pdf-container"
+              id="pdf-container"
+              tabindex="0"
+              aria-label="PDF pages"
+            >
+              <div class="pdfViewer" id="pdf-viewer"></div>
+            </div>
+            <div class="preview-empty" id="preview-empty">
+              <span class="empty-page"><span data-icon="file"></span></span>
+              <h2>The finished document,<br />as you write.</h2>
+              <p>
+                Your complete theme, cover, and page layout.<br />Choose a
+                document to get started.
+              </p>
+            </div>
+            <div id="preview-loading" class="preview-loading" hidden>
+              <span class="spinner"></span><span>Rendering your document…</span>
+            </div>
+          </div>
+          <div class="preview-footer">
+            <label class="switch-label"
+              ><input id="auto-preview" type="checkbox" checked /><span
+                class="switch-track"
+              ></span
+              >Auto preview</label
+            ><span id="preview-time">Rendered locally</span
+            ><button
+              class="icon-button small"
+              data-action="download-preview"
+              title="Download displayed PDF"
+              aria-label="Download displayed PDF"
+            >
+              <span data-icon="download"></span></button
+            ><button
+              class="icon-button small"
+              data-action="print"
+              title="Print PDF"
+              aria-label="Print PDF"
+            >
+              <span data-icon="printer"></span>
+            </button>
+          </div>
+        </section>
+        <aside
+          class="inspector"
+          id="inspector"
+          hidden
+          aria-label="Document inspector"
+        >
+          <div class="pane-heading">
+            <span>DOCUMENT INSPECTOR</span
+            ><button
+              class="icon-button small"
+              data-action="inspector"
+              aria-label="Close inspector"
+            >
+              <span data-icon="close"></span>
+            </button>
+          </div>
+          <div class="inspector-tabs" role="tablist">
+            <button class="active" data-inspect="properties">Properties</button
+            ><button data-inspect="theme">Theme</button
+            ><button data-inspect="fields">Fields</button>
+          </div>
+          <div id="inspector-content" class="inspector-content"></div>
+        </aside>
+      </div>
+      <section class="diagnostics-panel" id="diagnostics-panel" hidden>
+        <div class="pane-heading">
+          <span>RENDER & DIAGNOSTICS</span
+          ><button
+            class="icon-button small"
+            data-action="diagnostics"
+            aria-label="Close diagnostics"
+          >
+            <span data-icon="close"></span>
+          </button>
         </div>
-        <div id="md-doc-monaco" class="md-doc-monaco-container"></div>
-        <div id="md-doc-includes" class="md-doc-includes" hidden></div>
-    </main>
-
-    <aside class="md-doc-right-panel">
-        <div class="md-doc-tab-bar">
-            <button class="md-doc-tab md-doc-tab-active" data-tab="preview">Preview</button>
-            <button class="md-doc-tab" data-tab="config">Config</button>
-            <button class="md-doc-tab" data-tab="css">CSS</button>
+        <div id="diagnostics-content"></div>
+      </section>
+      <footer class="status-bar">
+        <button data-action="nav-toggle" aria-label="Toggle navigation">
+          <span data-icon="panel"></span></button
+        ><span class="connection-dot" id="connection-dot"></span
+        ><span id="connection-status">Connecting</span
+        ><button data-nav="git" id="git-branch">
+          <span data-icon="git"></span><span>Git</span></button
+        ><span class="status-divider"></span
+        ><span id="save-status">All changes saved</span
+        ><span class="toolbar-space"></span
+        ><button data-action="diagnostics" id="diagnostic-count">
+          <span data-icon="check"></span>No issues</button
+        ><span class="status-divider"></span><span>UTF-8</span
+        ><span class="status-divider"></span><span>Local workspace</span>
+      </footer>
+    </div>
+    <dialog class="command-dialog" id="command-dialog">
+      <div class="command-input-wrap">
+        <span data-icon="search"></span
+        ><input
+          id="command-query"
+          placeholder="Search files and commands…"
+          aria-label="Search files and commands"
+          autocomplete="off"
+        /><kbd>Esc</kbd>
+      </div>
+      <div id="command-results" role="listbox" aria-label="Results"></div>
+      <div class="command-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span
+        ><span><kbd>↵</kbd> Open</span
+        ><span id="command-hint">Files & commands</span>
+      </div>
+    </dialog>
+    <dialog class="form-dialog" id="form-dialog">
+      <form id="dialog-form">
+        <div class="dialog-header">
+          <h2 id="dialog-title"></h2>
+          <button
+            type="button"
+            class="icon-button"
+            id="dialog-close"
+            aria-label="Close dialog"
+          >
+            <span data-icon="close"></span>
+          </button>
         </div>
-        <div class="md-doc-panel-body" id="md-doc-panel-preview">
-            <div id="md-doc-preview" class="md-doc-preview-content"></div>
-        </div>
-        <div class="md-doc-panel-body" id="md-doc-panel-config" hidden></div>
-        <div class="md-doc-panel-body" id="md-doc-panel-css" hidden></div>
-    </aside>
-
-</div>
-
-<!-- marked.js (markdown → HTML for the live preview) -->
-<script src="/static/vendor/marked-17.0.5/marked.umd.js"></script>
-
-<!-- Monaco loader -->
-<script>
-    window.mdDocMonacoBaseUrl = "/static/vendor/monaco-editor-0.52.2/min/vs";
-</script>
-<script src="/static/vendor/monaco-editor-0.52.2/min/vs/loader.js"></script>
-<script>
-    if (typeof require === "function") {
-        require.config({ paths: { vs: window.mdDocMonacoBaseUrl } });
-    }
-</script>
-
-<!-- md-doc tokenizers + editor -->
-<script src="/static/tokenizers.js"></script>
-<script src="/static/editor.js" defer></script>
-
-</body>
+        <div id="dialog-body"></div>
+        <div class="dialog-actions" id="dialog-actions"></div>
+      </form>
+    </dialog>
+    <div
+      class="toast-stack"
+      id="toast-stack"
+      role="status"
+      aria-live="polite"
+    ></div>
+    <div id="resize-shield" hidden></div>
+    <script src="/static/vendor/marked-17.0.5/marked.umd.js"></script>
+    <script src="/static/vendor/monaco-editor-0.52.2/min/vs/loader.js"></script>
+    <script src="/static/tokenizers.js"></script>
+    <script src="/static/editor.js" defer></script>
+  </body>
 </html>

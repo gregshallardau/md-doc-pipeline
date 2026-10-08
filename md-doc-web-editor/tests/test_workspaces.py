@@ -127,3 +127,29 @@ def test_running_with_no_arguments_serves_with_discovery(monkeypatch):
     assert main([]) == 0 and seen["workspace"] is None and seen["port"] == 8765
     assert main(["--port", "9100", "--no-browser"]) == 0 and seen["port"] == 9100
     assert main(["serve", "somewhere"]) == 0 and seen["workspace"] == "somewhere"
+
+
+def test_discovered_workspace_has_isolated_studio_preview(project):
+    import time
+
+    with TestClient(create_app(project=project)) as client:
+        assert "workspace=acme" in client.get("/", follow_redirects=False).headers["location"]
+        first = client.get("/api/capabilities?workspace=acme").json()
+        second = client.get("/api/capabilities?workspace=blueshift").json()
+        assert first["session"] != second["session"]
+        assert first["workspace"] == str(project / "workspace/acme")
+        response = client.post(
+            "/api/preview/jobs?workspace=acme",
+            json={"path": "clients/q1.md", "buffers": {"clients/q1.md": "# Unsaved discovery\n"}},
+        )
+        assert response.status_code == 202, response.text
+        job = response.json()
+        deadline = time.monotonic() + 30
+        while job["state"] in {"queued", "running"}:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+            job = client.get(f"/api/jobs/{job['id']}?workspace=acme").json()
+        assert job["state"] == "succeeded", job
+        assert client.get(job["artifact"]["url"] + "?workspace=acme").content.startswith(b"%PDF")
+        assert client.get(job["artifact"]["url"] + "?workspace=blueshift").status_code == 404
+        assert "title: Q1" in (project / "workspace/acme/clients/q1.md").read_text()

@@ -53,6 +53,7 @@ _BUILD_TOKEN_TTL_SECS = 30 * 60
 class WriteRequest(BaseModel):
     path: str
     content: str
+    revision: str | None = None
 
 
 class BuildRequest(BaseModel):
@@ -93,6 +94,9 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     build_root = storage / secrets.token_hex(16)
     build_root.mkdir(mode=0o700)
     builds: dict[str, dict[str, Any]] = {}
+    import threading
+
+    write_lock = threading.RLock()
 
     def prune_builds() -> None:
         if build_root.exists():
@@ -113,6 +117,11 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         try:
             yield
         finally:
+            for child in getattr(app.state, "workspace_apps", {}).values():
+                await child.state.studio.close()
+                shutil.rmtree(child.state.build_root, ignore_errors=True)
+            if hasattr(app.state, "studio"):
+                await app.state.studio.close()
             task.cancel()
             try:
                 await task
@@ -127,6 +136,24 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
     @app.middleware("http")
     async def local_resources_only(request, call_next):
+        if request.method in {"POST", "PUT", "DELETE", "PATCH"}:
+            origin = request.headers.get("origin")
+            if origin and origin != str(request.base_url).rstrip("/"):
+                return JSONResponse(
+                    {"detail": "Cross-origin writes are not allowed"}, status_code=403
+                )
+            if request.headers.get("sec-fetch-site") == "cross-site":
+                return JSONResponse(
+                    {"detail": "Cross-site writes are not allowed"}, status_code=403
+                )
+            if (
+                origin
+                and hasattr(app.state, "studio")
+                and request.headers.get("x-editor-token") != app.state.studio.token
+            ):
+                return JSONResponse(
+                    {"detail": "Editor session expired; reload the page"}, status_code=403
+                )
         response = await call_next(request)
         # Never load CDN scripts, remote fonts, images, frames or API resources.
         response.headers["Content-Security-Policy"] = (
@@ -138,6 +165,7 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         )
         response.headers["X-DNS-Prefetch-Control"] = "off"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     # ── Path safety ───────────────────────────────────────────────────────────
@@ -162,9 +190,10 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 raise HTTPException(
                     status_code=404, detail=f"Workspace '{name}' is not available (not mounted?)"
                 )
-        candidate = (ws.root / inner).resolve()
+        from .snapshots import author_path
+
         try:
-            candidate.relative_to(ws.root)
+            candidate = author_path(ws.root, inner)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Path escapes workspace") from exc
         return ws, candidate
@@ -237,24 +266,49 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
     @app.get("/api/file")
     def read_file(path: str) -> JSONResponse:
+        from .snapshots import revision
+
         full = _safe_path(path)
         if not full.is_file():
             raise HTTPException(status_code=404, detail="File not found")
+        content = full.read_bytes()
         return JSONResponse(
             {
                 "path": path,
-                "content": full.read_text(encoding="utf-8"),
+                "content": content.decode("utf-8"),
                 "type": _classify(full.name) or "other",
+                "revision": revision(content),
             }
         )
 
     @app.put("/api/file")
     def write_file(req: WriteRequest) -> JSONResponse:
+        from .snapshots import atomic_write, revision
+
         full = _safe_path(req.path)
         if not full.parent.exists():
             raise HTTPException(status_code=400, detail="Parent directory missing")
-        full.write_text(req.content, encoding="utf-8")
-        return JSONResponse({"ok": True, "path": req.path})
+        if _classify(full.name) is None:
+            raise HTTPException(
+                status_code=400, detail="Only document, YAML and CSS files can be edited"
+            )
+        if len(req.content.encode()) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File exceeds 20 MiB")
+        with write_lock:
+            current = revision(full.read_bytes()) if full.exists() else None
+            if req.revision is not None and current != req.revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "File changed on disk",
+                        "revision": current,
+                        "content": full.read_text() if full.exists() else "",
+                    },
+                )
+            atomic_write(full, req.content)
+        return JSONResponse(
+            {"ok": True, "path": req.path, "revision": revision(req.content.encode())}
+        )
 
     # ── Config cascade panel ──────────────────────────────────────────────────
 
@@ -294,7 +348,7 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         full = _safe_path(req.path)
         if not full.is_file() or full.suffix != ".md":
             raise HTTPException(status_code=400, detail="path must point to a .md file")
-        if req.format not in ("pdf", "docx", "dotx"):
+        if req.format not in ("pdf", "docx", "dotx", "pptx"):
             raise HTTPException(status_code=400, detail="invalid format")
 
         prune_builds()
@@ -379,12 +433,25 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
     # ── Static + index ────────────────────────────────────────────────────────
 
+    from .studio import install_studio
+
+    install_studio(
+        app, fixed.root if fixed else discover(project_root)[0].root, build_root, builds, write_lock
+    )
+    from .git_api import install_git
+
+    install_git(app, fixed.root if fixed else discover(project_root)[0].root, write_lock)
+
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(_STATIC_DIR / "index.html")
 
+    if fixed is None:
+        from .discovery import install_discovery
+
+        install_discovery(app, project_root, create_app)
     return app
 
 
@@ -470,22 +537,34 @@ def _inline_css_imports(path: Path, workspace: Path, depth: int = 0) -> str:
 
 
 def _resolve_css(doc_path: Path, workspace: Path, prefix: str = "") -> dict[str, Any]:
-    """Walk up from doc_path to the theme the PDF builder would use.
-
-    At each folder ``_pdf-theme.css`` comes before the shared ``_theme.css``; the
-    Word-only ``_docx-theme.css`` is not a PDF theme and is ignored. ``@import``s are
-    inlined so the preview matches the PDF.
-    """
+    """Walk up from doc_path looking for a theme CSS file."""
+    root = _find_repo_root(doc_path.parent)
+    config = _config_layers(doc_path, workspace)["merged"]
+    explicit = config.get("pdf_theme")
+    if explicit:
+        selected = (root / str(explicit)).resolve()
+        if selected.is_relative_to(root) and selected.is_file():
+            return {
+                "css": _inline_css_imports(selected, root),
+                "source": (
+                    prefix + selected.relative_to(workspace).as_posix()
+                    if selected.is_relative_to(workspace)
+                    else str(selected)
+                ),
+            }
     candidates = ("_pdf-theme.css", "_theme.css")
-    workspace = workspace.resolve()
     current = doc_path.parent
     while True:
         for name in candidates:
             f = current / name
-            if f.is_file() and f.resolve().is_relative_to(workspace):
-                rel = prefix + f.resolve().relative_to(workspace).as_posix()
-                return {"css": _inline_css_imports(f.resolve(), workspace), "source": rel}
-        if current.resolve() == workspace:
+            if f.is_file() and f.resolve().is_relative_to(root):
+                rel = (
+                    prefix + f.relative_to(workspace).as_posix()
+                    if f.is_relative_to(workspace)
+                    else str(f)
+                )
+                return {"css": _inline_css_imports(f, root), "source": rel}
+        if current.resolve() == root.resolve():
             break
         parent = current.parent
         if parent == current:
@@ -508,6 +587,8 @@ def _find_includes(
         rel: str | None = None
         if resolved is not None and resolved.is_relative_to(workspace):
             rel = prefix + resolved.relative_to(workspace).as_posix()
+        elif resolved is not None:
+            rel = "project:" + resolved.relative_to(_find_repo_root(doc_path.parent)).as_posix()
         out.append({"name": name, "path": rel, "found": resolved is not None})
     return out
 
@@ -517,10 +598,20 @@ def _resolve_template(name: str, doc_path: Path, workspace: Path) -> Path | None
     from jinja2 import Environment, TemplateNotFound
 
     try:
-        _, filename, _ = _MarkdownLoader(
-            _build_search_dirs(doc_path, workspace), [workspace]
-        ).get_source(Environment(), name)
-        resolved = Path(filename).resolve()
-        return resolved if resolved.is_relative_to(workspace) else None
+        root = _find_repo_root(doc_path.parent)
+        for directory in _build_search_dirs(doc_path, root):
+            candidate = directory / name
+            # Snapshot inputs never follow symlinks; inspection follows the same rule.
+            if any(part.is_symlink() for part in [candidate, *candidate.parents]):
+                continue
+            try:
+                _, filename, _ = _MarkdownLoader([directory], [root]).get_source(
+                    Environment(), name
+                )
+            except TemplateNotFound:
+                continue
+            resolved = Path(filename).resolve()
+            return resolved if resolved.is_relative_to(root) else None
+        return None
     except TemplateNotFound:
         return None

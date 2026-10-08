@@ -56,6 +56,10 @@ def main():
                     raise RuntimeError("Editor did not become ready")
                 for asset in (
                     "editor.js",
+                    "viewer.js",
+                    "vendor/pdfjs-6.4.299/legacy/build/pdf.min.mjs",
+                    "vendor/pdfjs-6.4.299/legacy/build/pdf.worker.min.mjs",
+                    "vendor/pdfjs-6.4.299/web/pdf_viewer.mjs",
                     "vendor/marked-17.0.5/marked.umd.js",
                     "vendor/monaco-editor-0.52.2/min/vs/loader.js",
                     "vendor/monaco-editor-0.52.2/min/vs/editor/editor.main.js",
@@ -75,8 +79,27 @@ def main():
                     token = json.load(response)["token"]
                 with urlopen(url + "/api/build/" + token) as response:
                     assert response.read().startswith(b"PK")
+                request = Request(
+                    url + "/api/preview/jobs",
+                    data=json.dumps(
+                        {"path": "doc.md", "buffers": {"doc.md": "# Unsaved packaged preview\n"}}
+                    ).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urlopen(request, timeout=30) as response:
+                    job = json.load(response)
+                deadline = time.monotonic() + 30
+                while job["state"] in {"queued", "running"}:
+                    assert time.monotonic() < deadline
+                    time.sleep(0.1)
+                    with urlopen(url + "/api/jobs/" + job["id"]) as response:
+                        job = json.load(response)
+                assert job["state"] == "succeeded", job
+                with urlopen(url + job["artifact"]["url"]) as response:
+                    assert response.read().startswith(b"%PDF")
+                assert (workspace / "doc.md").read_text() == "# Smoke test\nHello.\n"
                 print(
-                    "Installed editor started, served static assets, and built Word with PATH empty."
+                    "Installed editor served offline assets, built Word and rendered an unsaved PDF with PATH empty."
                 )
             except Exception:
                 log.seek(0)
