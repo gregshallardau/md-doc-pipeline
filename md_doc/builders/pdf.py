@@ -336,6 +336,24 @@ def _cell_to_html(cell: str) -> str:
     return html
 
 
+_ROW_LABELLED_FIELD_RE = re.compile(r"^\*\*([^*]+)\*\*\s*(\?\[[^\]]*\])$")
+
+
+def _row_cell_to_html(cell: str) -> str:
+    """A ``**Label** ?[field]`` row cell becomes field + caption beneath the rule.
+
+    That matches the signature field's caption, so side-by-side signature and
+    date cells line up instead of one label above and one below.
+    """
+    m = _ROW_LABELLED_FIELD_RE.match(cell)
+    if not m:
+        return _cell_to_html(cell)
+    return (
+        f"{_cell_to_html(m.group(2))}"
+        f'<div class="signature-label">{_escape_html(m.group(1))}</div>'
+    )
+
+
 def _expand_row_block(row_content: str) -> str:
     """Expand a ?[row]...?[/row] block into a borderless table.
 
@@ -364,7 +382,7 @@ def _expand_row_block(row_content: str) -> str:
             tds.append(
                 f'<td style="border: none; width: {width}; '
                 f'padding: {padding}; vertical-align: top;">'
-                f"{_cell_to_html(cell)}</td>"
+                f"{_row_cell_to_html(cell)}</td>"
             )
         rows_html.append(f'<tr style="background: none;">{"".join(tds)}</tr>')
 
@@ -889,7 +907,9 @@ _FORM_SUPPORT_CSS = """<style>
 /* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
    the cells, deterministic row heights so the grid has an even rhythm */
 table.field-box { width: 100%; border-collapse: collapse; border: 1pt solid __RULE__; border-radius: 0; margin: 3pt 0 10pt 0; page-break-inside: auto; }
-table.field-box td { border: 0.5pt solid __RULE_SOFT__; padding: 3pt 5pt; vertical-align: top; line-height: 1.25; }
+table.field-box { font-size: 9.5pt; }
+table.field-box td { border: 0.5pt solid __RULE_SOFT__; background: none; padding: 5pt 9pt; vertical-align: top; line-height: 1.3; }
+table.field-box tr:nth-child(even) td { background: none; }
 table.field-box tr { page-break-inside: avoid; }
 table.field-box strong { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; color: __PRIMARY__; }
 table.field-box em { font-size: 7.5pt; }
@@ -898,10 +918,10 @@ table.field-box input[type="date"], table.field-box input[type="number"],
 table.field-box input[type="tel"], table.field-box input[type="url"],
 table.field-box select {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; height: 14pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+  width: 100%; height: 14pt; margin: 0; padding: 0 1pt; font-size: 9.5pt;
 }
 /* A bare write-in row (input with no label in the cell) gets a taller band */
-table.field-box td > input:only-child { height: 19pt; }
+table.field-box td > input:only-child { height: 22pt; }
 table.field-box textarea {
   appearance: auto; border: none; background: transparent; border-radius: 0;
   width: 100%; margin: 0; padding: 1pt; font-size: 10pt; resize: none;
@@ -910,7 +930,7 @@ table.field-box textarea {
 table.field-row td > input[type="text"], table.field-row td > input[type="email"],
 table.field-row td > input[type="date"], table.field-row td > input[type="number"],
 table.field-row td > input[type="tel"], table.field-row td > input[type="url"] {
-  border: none; border-bottom: 0.75pt solid __RULE__;
+  border: none; border-bottom: 1pt solid __PRIMARY__; box-sizing: border-box; max-width: 100%;
 }
 /* Fillable cells inside those tables */
 table td > input[type="text"], table td > input[type="email"],
@@ -933,6 +953,13 @@ label.option-item { display: inline-block; margin: 1pt 12pt 1pt 0; }
 .yesno label { display: inline; margin-right: 14pt; }
 /* Signature block — transparent field over a single rule, kept on one page */
 .signature-field { page-break-inside: avoid; margin: 12pt 0 14pt 0; width: 60%; }
+table.field-row .signature-field { width: 100%; margin: 0; }
+table.field-row .signature-input { border-bottom: 1pt solid __PRIMARY__; }
+table.field-row .signature-line { display: none; }
+table.field-row { margin: 6pt 0 12pt 0; }
+table.field-row td { vertical-align: bottom !important; }
+table.field-row .signature-label { font-size: 7pt; color: __PRIMARY__; font-weight: 700; letter-spacing: 0.5pt; }
+input[type="checkbox"], input[type="radio"] { border: 0.75pt solid __RULE__; }
 .signature-input {
   appearance: auto; display: block; width: 100%; height: 26pt; min-height: 26pt;
   border: none; border-bottom: 1pt solid #555555; border-radius: 0;
