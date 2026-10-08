@@ -2150,8 +2150,13 @@ def _set_cell_margins_mm(cell: Any, top: float, right: float, bottom: float, lef
     tcPr.append(tcMar)
 
 
-def _anchor_cover_picture(shape: Any, x_mm: float, y_mm: float) -> None:
-    """Position a decorative picture against physical page coordinates."""
+def _anchor_cover_picture(shape: Any, x_mm: float, y_mm: float, z_order: int = 1) -> None:
+    """Position a decorative picture against physical page coordinates.
+
+    ``z_order`` is the drawing's ``relativeHeight``: equal values fall back to
+    part order, which differs between renderers, so layers are numbered
+    explicitly (page background lowest, then bands, then logos).
+    """
     inline = shape._inline
     anchor = OxmlElement("wp:anchor")
     for key, value in {
@@ -2160,7 +2165,7 @@ def _anchor_cover_picture(shape: Any, x_mm: float, y_mm: float) -> None:
         "distL": "0",
         "distR": "0",
         "simplePos": "0",
-        "relativeHeight": "0",
+        "relativeHeight": str(z_order),
         "behindDoc": "1",
         "locked": "0",
         "layoutInCell": "1",
@@ -2263,7 +2268,7 @@ def _add_docx_cover_page(
         picture = paragraph.add_run().add_picture(
             image, width=section.page_width, height=section.page_height
         )
-        _anchor_cover_picture(picture, 0, 0)
+        _anchor_cover_picture(picture, 0, 0, z_order=1)
 
     has_top_bar = show_bar and bar_pos in ("top", "both")
     has_bottom_bar = show_bar and bar_pos in ("bottom", "both")
@@ -2356,6 +2361,10 @@ def _add_docx_cover_page(
     if logo_path:
         lp = _cover_para(pending_space_before, 12)
         pending_space_before = 0.0
+        # The body style's line height is exact; a logo taller than that would
+        # overflow upward out of its line. Let the line grow to the picture.
+        lp.paragraph_format.line_spacing = 1.0
+        lp.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
         run = lp.add_run()
         try:
             logo_w_emu: int | None = None
@@ -2467,7 +2476,7 @@ def _add_docx_cover_page(
         paragraph = section.first_page_footer.paragraphs[0]
         paragraph.paragraph_format.line_spacing = Pt(1)
         shape = paragraph.add_run().add_picture(band, width=Mm(page_w_mm), height=Mm(bar_bot_h))
-        _anchor_cover_picture(shape, 0, page_h_mm - bar_bot_h)
+        _anchor_cover_picture(shape, 0, page_h_mm - bar_bot_h, z_order=2)
         if bar_logo_path:
             try:
                 logo_h = _logo_height_mm(bar_logo_path, min(bar_bot_h * 0.7, 8.0))
@@ -2476,6 +2485,7 @@ def _add_docx_cover_page(
                     logo,
                     page_w_mm - 30 - logo.width / 36000,
                     page_h_mm - bar_bot_h + (bar_bot_h - logo_h) / 2,
+                    z_order=3,
                 )
             except Exception as exc:
                 logger.warning("docx cover bar logo embed failed: %s", exc)
@@ -2525,7 +2535,11 @@ def _add_docx_cover_page(
         r, g, b = _hex_to_rgb(str(col))
         run.font.color.rgb = RGBColor(r, g, b)
 
-    doc.add_page_break()
+    # The body starts on a new page; defer the break so the first heading keeps
+    # its top margin (see _DocxBuilder._begin_page_with).
+    # A framed footer anchors to the paragraph after it; keep that on the cover.
+    _tiny_spacer(doc)
+    builder._page_break_pending = True
 
 
 # ---------------------------------------------------------------------------
