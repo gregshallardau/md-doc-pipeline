@@ -328,6 +328,18 @@ def test_docx_page_size_matches_theme(tmp_repo):
     assert round(section.page_height / 36000, 1) == 279.4
 
 
+def starts_new_page(paragraph) -> bool:
+    """True if *paragraph* begins a page: it, or the spacer line carrying its top
+    margin directly before it, has ``pageBreakBefore``."""
+    from docx.oxml.ns import qn
+
+    def flagged(p_el) -> bool:
+        pPr = p_el.find(qn("w:pPr")) if p_el is not None else None
+        return pPr is not None and pPr.find(qn("w:pageBreakBefore")) is not None
+
+    return flagged(paragraph._p) or flagged(paragraph._p.getprevious())
+
+
 def test_h1_page_break_before_from_theme(tmp_repo):
     # The PDF theme forces every report-body H1 onto a new page; the docx
     # builder mirrors that — but never on the first content element (a forced
@@ -342,8 +354,8 @@ def test_h1_page_break_before_from_theme(tmp_repo):
     d = Document(str(out))
     first = next(p for p in d.paragraphs if p.text == "First")
     second = next(p for p in d.paragraphs if p.text == "Second")
-    assert first.paragraph_format.page_break_before is not True
-    assert second.paragraph_format.page_break_before is True
+    assert not starts_new_page(first)
+    assert starts_new_page(second)
 
 
 def test_theme_default_footers_render_in_word(tmp_repo):

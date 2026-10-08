@@ -760,7 +760,7 @@ class _DocxBuilder(HTMLParser):
         self._run = None
         if self._page_break_pending:
             self._page_break_pending = False
-            self._paragraph.paragraph_format.page_break_before = True
+            self._begin_page_with(self._paragraph)
 
     def _current_para(self) -> Any:
         if self._paragraph is None:
@@ -882,6 +882,34 @@ class _DocxBuilder(HTMLParser):
         # separates it from the blockquote margin), so only the latter collapses.
         last.paragraph_format.space_after = Pt(inner_after + margin_after)
         self._fixed_margins[last._p] = (0.0, inner_after)
+
+    def _begin_page_with(self, para: Any) -> None:
+        """Start a new page at *para*, keeping its top margin like the PDF does.
+
+        CSS keeps a block's margin-top after a forced break. Word 2013+ layout
+        drops space-before at the top of a page (LibreOffice follows suit), so
+        the margin is carried by an empty exact-height line that holds the page
+        break itself, and the paragraph's own space-before becomes zero.
+        """
+        previous = para._p.getprevious()
+        for candidate in (para._p, previous):
+            pPr = candidate.find(qn("w:pPr")) if candidate is not None else None
+            if pPr is not None and pPr.find(qn("w:pageBreakBefore")) is not None:
+                return  # already starts a page (marker and theme rule can both ask)
+        before = _effective_spacing(para, "before")
+        if before <= 0:
+            para.paragraph_format.page_break_before = True
+            return
+        spacer = self.doc.add_paragraph(style="Normal")
+        _set_para_mark_size(spacer)
+        fmt = spacer.paragraph_format
+        fmt.page_break_before = True
+        fmt.space_before = Pt(0)
+        fmt.space_after = Pt(0)
+        fmt.line_spacing = Pt(before)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        para._p.addprevious(spacer._p)
+        para.paragraph_format.space_before = Pt(0)
 
     def _flush_pending_break(self) -> None:
         """Emit a deferred page break as its own paragraph (no paragraph follows)."""
@@ -1187,7 +1215,7 @@ class _DocxBuilder(HTMLParser):
                     and not first_h1
                     and (len(self.doc.element.body) - self._body_baseline > 1)
                 ):
-                    self._paragraph.paragraph_format.page_break_before = True
+                    self._begin_page_with(self._paragraph)
                 # Headings carry id attrs (toc extension) — bookmark them so
                 # [TOC] and internal #links can jump to them like in the PDF.
                 heading_id = dict(attrs).get("id")
@@ -3546,6 +3574,9 @@ def _collapse_paragraph_margins(doc: Any, fixed: dict[Any, tuple[float, float]])
             continue
         if first.find(f".//{qn('w:br')}[@{qn('w:type')}='page']") is not None:
             continue  # margins never collapse across a page break
+        second_pPr = second.find(qn("w:pPr"))
+        if second_pPr is not None and second_pPr.find(qn("w:pageBreakBefore")) is not None:
+            continue
         a = Paragraph(first, doc._body)
         b = Paragraph(second, doc._body)
         fixed_after = fixed.get(first, (0.0, 0.0))[1]

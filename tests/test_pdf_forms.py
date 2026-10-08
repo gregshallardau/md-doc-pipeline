@@ -321,8 +321,10 @@ def test_docx_first_h1_after_letterhead_no_break(tmp_repo):
     d = Document(str(out))
     first = next(p for p in d.paragraphs if p.text == "First Heading")
     second = next(p for p in d.paragraphs if p.text == "Second Heading")
-    assert not first.paragraph_format.page_break_before  # letterhead must not force page 2
-    assert second.paragraph_format.page_break_before  # later H1s still break
+    from tests.test_docx_parity import starts_new_page
+
+    assert not starts_new_page(first)  # letterhead must not force page 2
+    assert starts_new_page(second)  # later H1s still break
 
 
 # ── adjacent tables ──────────────────────────────────────────────────────────
