@@ -21,6 +21,32 @@ def markdown_html(body: str, extensions: list[str]) -> str:
     ).convert(body)
 
 
+def _complete_radicals(equation: Any) -> None:
+    """Give every ``<m:rad>`` the ``<m:deg>`` the Office Math schema requires.
+
+    ``mathml2omml`` writes a plain square root as ``<m:rad><m:e>…</m:e></m:rad>``.
+    Without a degree element LibreOffice reads the radicand as the root's index
+    and draws an empty radicand; Word is stricter still. A square root gets an
+    empty, hidden degree.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    for rad in equation.iter(qn("m:rad")):
+        if rad.find(qn("m:deg")) is not None:
+            continue
+        deg = OxmlElement("m:deg")
+        props = rad.find(qn("m:radPr"))
+        if props is None:
+            props = OxmlElement("m:radPr")
+            rad.insert(0, props)
+        if props.find(qn("m:degHide")) is None:
+            hide = OxmlElement("m:degHide")
+            hide.set(qn("m:val"), "1")
+            props.append(hide)
+        props.addnext(deg)
+
+
 def render_math(html: str, *, word: bool = False) -> tuple[str, list[Any]]:
     """Replace parsed equations with SVG images or references to OMML elements.
 
@@ -44,6 +70,7 @@ def render_math(html: str, *, word: bool = False) -> tuple[str, list[Any]]:
                     convert(source, display="block" if display else "inline")
                 )
                 equation = parse_xml(f'<root {nsdecls("m", "w")}>{omml}</root>')[0]
+                _complete_radicals(equation)
                 if display:
                     block = OxmlElement("m:oMathPara")
                     block.append(equation)

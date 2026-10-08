@@ -1859,6 +1859,7 @@ class _DocxBuilder(HTMLParser):
                 borders.append(edge)
             tblPr.append(borders)
         n_rows = len(rows)
+        header_rows = 1 if all(cell[0] for cell in rows[0]) else 0
 
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
@@ -1979,10 +1980,11 @@ class _DocxBuilder(HTMLParser):
                     if header_bg:
                         set_cell_shading(cell, header_bg)
                 else:
-                    # Alternating row shading. CSS tr:nth-child(even) counts the
-                    # header as child 1, so the shaded body rows are the ones at
-                    # odd 0-based table index (r_idx 1, 3, 5, …).
-                    if row_alt_bg and r_idx % 2 == 1:
+                    # Alternating row shading. Markdown tables put the header in a
+                    # <thead> and the body in a <tbody>, and CSS tr:nth-child(even)
+                    # counts within the tbody: the first body row is unshaded, the
+                    # second shaded (verified against the rendered PDF).
+                    if row_alt_bg and (r_idx - header_rows) % 2 == 1:
                         set_cell_shading(cell, row_alt_bg)
                     # Bottom border
                     if not form_kind:
