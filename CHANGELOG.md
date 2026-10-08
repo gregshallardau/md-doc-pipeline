@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Changed
+- Word export parity: CSS-measured table column widths, form controls as sized
+  boxes/grids (incl. flex rows, colspans, textareas), collapsed paragraph margins,
+  code line pitch, hr/blockquote/pre box models, cover z-order, header-bar slot
+  widths, section-bar padding, and valid square roots in Office Math. PDF:
+  multi-line `<select>` and keep-with-next wrappers no longer corrupt markup.
+
 ### Fixed
 - Cover pages follow physical page dimensions in landscape and custom themes;
   bottom bands sit against the page edge. Word cover spacing and indents no

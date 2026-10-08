@@ -86,3 +86,55 @@ def css_column_weights(
     if widths is None or len(widths) != columns:
         return None
     return list(widths)
+
+
+@lru_cache(maxsize=32)
+def _code_pitch(css_path: str, css_mtime: float, width_pt: float) -> float | None:
+    del css_mtime  # cache key only
+    try:
+        from weasyprint import CSS, HTML
+
+        path = Path(css_path)
+        document = HTML(
+            string=(
+                '<!doctype html><html><body><div class="report-body">'
+                "<pre><code>line\nline\nline\nline\nline</code></pre></div></body></html>"
+            ),
+            base_url=str(path.parent) + "/",
+        ).render(
+            stylesheets=[
+                CSS(filename=str(path)),
+                CSS(string=f"@page {{ size: {width_pt}pt 4000pt; margin: 0 }}"),
+            ]
+        )
+        page_box = document.pages[0]._page_box
+        pre = next(
+            (
+                b
+                for b in page_box.descendants()
+                if getattr(b, "element_tag", None) == "pre" and type(b).__name__ == "BlockBox"
+            ),
+            None,
+        )
+        if pre is None:
+            return None
+        tops = sorted(
+            {round(b.position_y, 3) for b in pre.descendants() if type(b).__name__ == "LineBox"}
+        )
+        if len(tops) < 3:
+            return None
+        return (tops[-1] - tops[0]) / (len(tops) - 1) * 0.75  # CSS px -> pt
+    except Exception:  # noqa: BLE001 - layout is an enhancement, never fatal
+        _log.debug("CSS code layout unavailable; using font-size x line-height", exc_info=True)
+        return None
+
+
+def css_code_line_pitch(css_path: Path | None, text_width_pt: float) -> float | None:
+    """Distance between consecutive code-block lines (pt) in the PDF layout, or ``None``.
+
+    A monospace font nested in a body-font ``<pre>`` makes the line box taller than
+    ``font-size x line-height``; measure it instead of assuming.
+    """
+    if css_path is None or not css_path.is_file():
+        return None
+    return _code_pitch(str(css_path), css_path.stat().st_mtime, round(text_width_pt, 2))

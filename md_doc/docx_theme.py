@@ -249,6 +249,100 @@ def parse_css_for_word(css_path: Path) -> dict[str, Any]:
         return {}
 
 
+_TEXT_INPUT_SELECTORS = (
+    'input[type="text"]',
+    'input[type="email"]',
+    'input[type="date"]',
+    "textarea",
+    "select",
+)
+
+
+def _parse_form_css(
+    theme: dict[str, Any], blocks: dict[str, dict[str, str]], first_color: Any
+) -> None:
+    """Form-related theme rules: input boxes, field labels and ``display: flex`` rows.
+
+    * ``form_input``: padding / border / fill of a text input (so the Word field
+      boxes are as tall and as coloured as the PDF's).
+    * ``form_label``: size, colour, weight, case, tracking of ``label`` text.
+    * ``flex_rows``: single-class selectors with ``display: flex``, as
+      ``{class: {"gap": pt, "wrap": bool}}`` (rendered as table rows / wrapped runs).
+    """
+    props: dict[str, str] = {}
+    for selector in _TEXT_INPUT_SELECTORS:
+        if selector in blocks:
+            props = blocks[selector]
+            break
+    if props:
+        box: dict[str, float | str] = {}
+        if "padding" in props:
+            pad = _parse_margin(props["padding"])
+            if pad.get("top") is not None:
+                box["pad_y"] = float(pad["top"] or 0.0)
+            if pad.get("left") is not None:
+                box["pad_x"] = float(pad["left"] or 0.0)
+        border = props.get("border", "")
+        border_pt = _parse_pt(border) if border else None
+        if border_pt is not None:
+            box["border_pt"] = border_pt
+            color = first_color(border)
+            if color:
+                box["border_color"] = color
+        if "background" in props:
+            fill = first_color(props["background"])
+            if fill:
+                box["fill"] = fill
+        # WeasyPrint sizes a form control with border-box sizing to its intrinsic
+        # height (padding is absorbed), so such a box is much shorter.
+        if props.get("box-sizing", "").strip() == "border-box":
+            box["border_box"] = True
+        minimum = _parse_pt(blocks.get("textarea", {}).get("min-height", ""))
+        if minimum is not None:
+            box["textarea_min"] = minimum
+        if box:
+            theme["form_input"] = box
+
+    label_props: dict[str, str] = {}
+    for selector, rule in blocks.items():
+        if selector == "label" or selector.endswith(" label"):
+            label_props = {**label_props, **rule}
+    if label_props:
+        label: dict[str, float | str | bool] = {}
+        size = _parse_pt(label_props.get("font-size", ""))
+        if size is not None:
+            label["size"] = size
+        color = first_color(label_props["color"]) if "color" in label_props else None
+        if color:
+            label["color"] = color
+        weight = label_props.get("font-weight", "").strip()
+        if weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600):
+            label["bold"] = True
+        if label_props.get("text-transform", "").strip() == "uppercase":
+            label["upper"] = True
+        tracking = _parse_pt(label_props.get("letter-spacing", ""))
+        if tracking is not None:
+            label["tracking"] = tracking
+        gap = _parse_pt(label_props.get("margin-bottom", ""))
+        if gap is not None:
+            label["gap"] = gap
+        if label:
+            theme["form_label"] = label
+
+    flex: dict[str, dict[str, float | bool]] = {}
+    for selector, rule in blocks.items():
+        match = re.fullmatch(r"\.([\w-]+)", selector.strip())
+        if not match or rule.get("display", "").strip() not in ("flex", "inline-flex"):
+            continue
+        gap_pt = _parse_pt(rule.get("gap", "")) or 0.0
+        flex[match.group(1)] = {
+            "gap": gap_pt,
+            "wrap": rule.get("flex-wrap", "").strip() == "wrap",
+        }
+    if flex:
+        theme["flex_rows"] = flex
+
+
 def _do_parse(css_path: Path) -> dict[str, Any]:
     raw_css = _load_css_with_imports(css_path)
     clean = _strip_comments(raw_css)
@@ -406,6 +500,8 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
     # pre / blockquote box model (vertical rhythm + padding the PDF applies)
     _parse_box_model(theme, "pre", pre_props)
     _parse_box_model(theme, "blockquote", blocks.get("blockquote", {}))
+    # Paragraphs inside a blockquote carry their own (usually smaller) margins.
+    _parse_box_model(theme, "blockquote_p", blocks.get("blockquote p", {}))
     if "line-height" in pre_props:
         try:
             theme["pre_line_height"] = float(pre_props["line-height"].strip())
@@ -457,6 +553,8 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
             pt = _parse_pt(hr_props[css_prop])
             if pt is not None:
                 theme[theme_key] = pt
+
+    _parse_form_css(theme, blocks, _first_color)
 
     # a — hyperlink colour
     a_props = blocks.get("a", {})

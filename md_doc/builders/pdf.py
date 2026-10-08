@@ -868,6 +868,11 @@ _BASE_FIXES_CSS = (
     ".report-body h1[data-md-doc-first-heading] { page-break-before: auto; break-before: auto; }\n"
     ".running-date { display: block; position: absolute; visibility: hidden; width: 0; height: 0; overflow: hidden; }\n"
     ".report-body table + table { margin-top: 10pt; }\n"
+    # WeasyPrint does not reliably carry break-inside:avoid from a keep-together
+    # wrapper down to a list inside it, and then splits a heading's short list
+    # across pages. Say it on the lists themselves.
+    ".report-body .keep-with-next > ul, .report-body .keep-with-next > ol, "
+    ".report-body .keep-with-next > dl { break-inside: avoid; page-break-inside: avoid; }\n"
     ".report-body .md-doc-page-break + h1, .report-body .md-doc-page-break + .keep-with-next h1 { page-break-before: auto; break-before: auto; }\n"
     "</style>"
 )
