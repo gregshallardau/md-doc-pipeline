@@ -741,33 +741,48 @@ class _DocxBuilder(HTMLParser):
     # ------------------------------------------------------------------
 
     def _apply_section_bar_start(self, tag: str) -> None:
-        """Apply the section-bar background/border to a freshly created heading."""
+        """Apply the section-bar background/border to a freshly created heading.
+
+        Mirrors the PDF's ``padding: 6pt 12pt`` (bar) / ``border-top: 4pt;
+        padding-top: 6pt`` (band) while leaving the heading's own margins alone.
+        Padding is paragraph-border spacing, which Word shades along with the
+        text, and the left/right padding doubles as the text inset so the bar
+        spans the full text width.
+        """
         self._section_bar_active_tag = None
         sb = self._section_bar
         if not sb or tag not in sb["headings"] or self._paragraph is None:
             return
         self._section_bar_active_tag = tag
         para = self._paragraph
+        color = sb["color"].lstrip("#").upper()
+        pPr = para._p.get_or_add_pPr()
+        for old in pPr.findall(qn("w:pBdr")):
+            pPr.remove(old)
+        pBdr = OxmlElement("w:pBdr")
+
+        def edge(side: str, size: int, space: int) -> None:
+            el = OxmlElement(f"w:{side}")
+            el.set(qn("w:val"), "single")
+            el.set(qn("w:sz"), str(size))
+            el.set(qn("w:space"), str(space))
+            el.set(qn("w:color"), color)
+            pBdr.append(el)
+
         if sb["text_on_bar"]:
-            set_para_shading(para, sb["color"].lstrip("#"))
-            # Snug the bar around the text (CSS padding: 6pt 12pt).
-            pf = para.paragraph_format
-            pf.space_before = Pt(6)
-            pf.space_after = Pt(6)
-            ind = para._p.get_or_add_pPr().get_or_add_ind()
-            ind.set(qn("w:left"), str(int(12 * 20)))
-            ind.set(qn("w:right"), str(int(12 * 20)))
+            set_para_shading(para, color)
+            # Hairline edges in the fill colour carry the padding (Word shades
+            # the space inside a border); the 12pt side padding is also the
+            # text inset, so the indent keeps the bar on the text margins.
+            edge("top", 2, 6)
+            edge("left", 2, 12)
+            edge("bottom", 2, 6)
+            edge("right", 2, 12)
+            para.paragraph_format.left_indent = Pt(12.25)
+            para.paragraph_format.right_indent = Pt(12.25)
         else:
-            # border-top variant
-            pPr = para._p.get_or_add_pPr()
-            pBdr = OxmlElement("w:pBdr")
-            top = OxmlElement("w:top")
-            top.set(qn("w:val"), "single")
-            top.set(qn("w:sz"), str(max(1, round(4 * 8))))  # 4pt
-            top.set(qn("w:space"), "6")
-            top.set(qn("w:color"), sb["color"].lstrip("#").upper())
-            pBdr.append(top)
-            pPr.append(pBdr)
+            edge("top", round(4 * 8), 6)  # border-top: 4pt, padding-top: 6pt
+        _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
 
     def _apply_section_bar_runs(self) -> None:
         """Colour the heading's runs white once its text has been written."""
@@ -3155,9 +3170,18 @@ def _add_page_header_bar(
         tblCellMar.append(mar)
     tblPr.append(tblCellMar)
 
-    # 3 slots: left / center / right.
-    side_w = round(page_twips * 0.35)
-    col_widths = [side_w, page_twips - 2 * side_w, side_w]
+    # 3 slots: left / center / right. The PDF splits the *text width* 35/30/35
+    # (its bar is padded by the page margins), so the outer cells here add the
+    # page margins to their widths; otherwise the left slot is ~27pt narrower
+    # than the PDF's and a long header wraps onto a second line.
+    right_margin_twips = round(section.right_margin / 635)
+    text_twips = page_twips - left_margin_twips - right_margin_twips
+    side_w = round(text_twips * 0.35)
+    col_widths = [
+        left_margin_twips + side_w,
+        text_twips - 2 * side_w,
+        right_margin_twips + side_w,
+    ]
     for old_grid in tbl.findall(qn("w:tblGrid")):
         tbl.remove(old_grid)
     tblGrid = OxmlElement("w:tblGrid")
