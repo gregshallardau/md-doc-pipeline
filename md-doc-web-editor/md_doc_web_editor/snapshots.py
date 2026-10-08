@@ -73,21 +73,24 @@ def author_path(workspace: Path, relative: str) -> Path:
 
 
 def project_files(root: Path):
-    """Walk local authoring inputs, excluding secrets, packages and outputs."""
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [
-            name
-            for name in sorted(dirs)
-            if not name.startswith(".")
-            and name not in EXCLUDED
-            and not (Path(directory) / name).is_symlink()
-        ]
-        for name in sorted(files):
-            path = Path(directory) / name
-            if name.startswith(".") or path.is_symlink():
+    """Follow project-local links while bounding traversal and excluding hidden inputs."""
+    root = root.resolve()
+
+    def walk(directory, ancestors):
+        resolved = directory.resolve()
+        if not resolved.is_relative_to(root) or resolved in ancestors:
+            return
+        for path in sorted(directory.iterdir()):
+            if path.name.startswith(".") or path.name in EXCLUDED:
                 continue
-            if path.suffix.lower() in TEXT_SUFFIXES | ASSET_SUFFIXES:
+            if not path.resolve().is_relative_to(root):
+                continue
+            if path.is_dir():
+                yield from walk(path, ancestors | {resolved})
+            elif path.is_file() and path.suffix.lower() in TEXT_SUFFIXES | ASSET_SUFFIXES:
                 yield path
+
+    yield from walk(root, frozenset())
 
 
 def make_snapshot(workspace: Path, destination: Path, buffers: dict[str, str]) -> tuple[Path, str]:
@@ -127,7 +130,13 @@ def make_snapshot(workspace: Path, destination: Path, buffers: dict[str, str]) -
         size += len(raw)
         if len(raw) > MAX_FILE_BYTES or size > MAX_SNAPSHOT_BYTES:
             raise ValueError("Buffer snapshot is too large")
-        target = destination / source.relative_to(root)
+        # Keep the visible link path: materialised snapshot directories retain API names.
+        logical = (
+            (root / relative.removeprefix("project:"))
+            if relative.startswith("project:")
+            else workspace / relative
+        )
+        target = destination / logical.relative_to(root)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw.replace(str(root).encode(), str(destination).encode()))
         fingerprint.update(relative.encode() + raw)

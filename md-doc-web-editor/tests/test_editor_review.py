@@ -27,7 +27,11 @@ def test_tree_and_includes_do_not_follow_outside_symlinks(tmp_path):
     (root / "loop").symlink_to(root, target_is_directory=True)
     (root / "doc.md").write_text('{% include "outside/secret.md" %}')
     with TestClient(create_app(root)) as client:
-        assert [item["name"] for item in client.get("/api/tree").json()["tree"]] == ["doc.md"]
+        tree = client.get("/api/tree").json()
+        assert [item["name"] for item in tree["tree"] if item["type"] == "md"] == ["doc.md"]
+        blocked = [item for item in tree["tree"] if item["type"] == "dir"]
+        assert all(item["children"] == [] and item["scanError"] for item in blocked)
+        assert len(tree["scanWarnings"]) == 2
         includes = client.get("/api/includes", params={"path": "doc.md"}).json()["includes"]
         assert includes == [{"name": "outside/secret.md", "path": None, "found": False}]
 

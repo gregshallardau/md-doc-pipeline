@@ -17,6 +17,16 @@ An available configured remote workspace is opened before local samples. Its con
 
 The Files rail button toggles the sidebar. Click the workspace row to collapse its files, or use **Expand all / Collapse all** for folders. New sessions open the first two folder levels; folder badges count Markdown documents recursively. PDFs, Office outputs, images and authoring files appear alongside Markdown. PDF/image files open in a browser tab and Office files download. **Dark mode / Light mode** is available directly in the header.
 
+Linked folders whose targets remain inside the configured workspace are scanned and included in preview snapshots. Cycles, external links and unreadable directories appear as scan diagnostics instead of silently disappearing.
+
+To reproduce remote discovery with sample documents, run from the checkout:
+
+```bash
+uv run --no-sync python tools/create_remote_editor_demo.py
+```
+
+The generator prints a separate demo project path. Change into that project and launch the checkout's installed `md-doc-edit` executable. It creates two remote fixtures with 15 folders and 50 Markdown files each, plus cascading metadata, imported PDF CSS and an HTML include. One fixture uses linked folders; its first folder is deliberately empty. It leaves existing directories untouched and does not change your real remote configuration.
+
 To open all samples as one directory:
 
 ```bash

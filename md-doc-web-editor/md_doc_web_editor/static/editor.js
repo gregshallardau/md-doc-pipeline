@@ -433,6 +433,7 @@
   async function loadTree() {
     const result = await api("/api/tree");
     state.tree = result.tree;
+    state.scanWarnings = result.scanWarnings || [];
     $("workspace-path").textContent = result.workspace;
     $("workspace-path").title = result.workspace;
     state.files = [];
@@ -465,6 +466,19 @@
     $("tree-root-toggle").setAttribute("aria-expanded", String(!collapsed));
     const filter = $("file-filter").value.toLowerCase();
     $("md-doc-tree").replaceChildren();
+    if (state.scanWarnings?.length) {
+      const details = el("details", "tree-scan-warnings");
+      const summary = el(
+        "summary",
+        null,
+        `${state.scanWarnings.length} folder or file scan problem(s)`,
+      );
+      summary.append(icon("alert"));
+      details.append(summary);
+      for (const warning of state.scanWarnings)
+        details.append(el("p", null, warning.path + ": " + warning.message));
+      $("md-doc-tree").append(details);
+    }
     const build = (nodes) => {
       const list = el("ul", "tree-list");
       for (const node of nodes) {
@@ -480,7 +494,11 @@
           chevron.classList.add("chevron");
           const folderIcon = icon(details.open ? "folder-open" : "folder");
           const count = node.documentCount || 0;
-          const badge = el("span", "document-count", String(count));
+          const badge = el(
+            "span",
+            "document-count",
+            node.scanError ? "!" : String(count),
+          );
           badge.title = `${count} documents`;
           summary.append(
             chevron,
@@ -488,7 +506,14 @@
             el("span", "folder-name", node.name),
             badge,
           );
-          summary.title = node.path;
+          summary.title = node.scanError
+            ? node.path + ": " + node.scanError
+            : node.path;
+          if (node.linked) {
+            const marker = icon("link");
+            marker.classList.add("linked-folder-icon");
+            summary.append(marker);
+          }
           details.append(summary, children);
           details.ontoggle = () => {
             folderIcon
