@@ -778,10 +778,16 @@ class _DocxBuilder(HTMLParser):
             edge("left", 2, 12)
             edge("bottom", 2, 6)
             edge("right", 2, 12)
-            para.paragraph_format.left_indent = Pt(12.25)
-            para.paragraph_format.right_indent = Pt(12.25)
+            # Adjacent paragraphs with identical borders *and* indents merge into
+            # one bordered block in Word; a one-twip step per heading level keeps
+            # consecutive bars (H1 then H2) separate and visually identical.
+            inset = 12.25 + 0.05 * (int(tag[1]) - 1)
+            para.paragraph_format.left_indent = Pt(inset)
+            para.paragraph_format.right_indent = Pt(inset)
         else:
-            edge("top", round(4 * 8), 6)  # border-top: 4pt, padding-top: 6pt
+            # border-top: 4pt, padding-top: 6pt. One eighth-point per level keeps
+            # consecutive bands from merging into a single bordered block.
+            edge("top", round(4 * 8) - (int(tag[1]) - 1), 6)
         _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
 
     def _apply_section_bar_runs(self) -> None:
