@@ -431,7 +431,7 @@ Multiline footer text in Word documents uses soft line breaks (`<w:br/>`) instea
 
 ### WeasyPrint PDF forms — key facts for implementation
 
-WeasyPrint 68.x supports interactive AcroForm PDF fields natively. No extra libraries needed.
+WeasyPrint 68–70 support interactive AcroForm PDF fields natively (the dependency is bounded to `>=68,<71`). No extra libraries needed.
 
 - Pass `pdf_forms=True` to `write_pdf()`: `weasyprint.HTML(...).write_pdf(path, pdf_forms=True)`
 - HTML `<input type="text" name="x">` → `/Tx` text field

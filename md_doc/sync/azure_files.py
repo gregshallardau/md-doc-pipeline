@@ -12,7 +12,8 @@ _meta.yml config:
       connection_string: "..."      # optional; falls back to env AZURE_STORAGE_CONNECTION_STRING
 
 Dependencies (optional extra):
-    pip install "md-doc-pipeline[azure]"
+    uv sync --extra azure        # from a checkout
+    pip install "md-doc-pipeline[azure] @ <release wheel URL>"
     # i.e. azure-storage-file-share>=12.0
 """
 
@@ -34,7 +35,7 @@ def make_uploader(root: Path, sync_config: dict[str, Any]) -> Callable[[Path], s
     except ImportError as exc:
         raise ImportError(
             "azure-storage-file-share is required for the Azure backend. "
-            "Install with: pip install 'md-doc-pipeline[azure]'"
+            "Install the [azure] extra (e.g. 'uv sync --extra azure'; see README › Installation)."
         ) from exc
 
     from azure.core.exceptions import ResourceExistsError

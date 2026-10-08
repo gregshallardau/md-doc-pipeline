@@ -4,7 +4,9 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [Unreleased]
+
+## [0.4.0] — 2026-10-08
 
 ### Added
 - Documentation for every feature: new CLI reference, theming guide, Markdown reference and
@@ -13,81 +15,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `${NAME}` references in `sync_config` are now expanded from the environment (as the docs
   already described), so credentials can stay out of `_meta.yml`.
 
-### Removed
-- Shipped-feature planning records (`docs/superpowers/`, `docs/pdf-forms-plan.md`), the unreferenced
-  `docs/_theme.example.css` (`md-doc theme init` generates a theme), and dead code in the
-  builders. `docs/sample-parity-audit.md` became the evergreen `docs/word-pdf-parity.md`, and the
-  sample documents moved from `docs/examples/` to `examples/starter/` so `docs/` holds only docs.
-
-### Fixed
-- `cover_text_align: center` is valid (both builders and the docs support it) but `md-doc lint`
-  rejected it; the validator now accepts `left`, `center` and `right`.
-- Browser editors (standalone and Filament): the CSS preview now uses the PDF theme order
-  (`_pdf-theme.css`, then `_theme.css`; the Word-only `_docx-theme.css` is ignored) and inlines
-  workspace-local `@import`s, so themes written as `@import '_theme.css';` preview styled. Their
-  config-key highlighters gained the eight keys they were missing, and a test keeps them complete.
-  The standalone editor serves `.dotx` builds with the Word template media type.
-- Neovim plugin README: documented `show_winbar`, every keymap, the `_meta.yml` project-root
-  fallback and the plugin's flat-YAML limitation; "four" display modes.
-- `output_pdf` was documented and used in examples but ignored; the documented key is
-  `output_filename`, and the examples use it.
-- `md-doc lint` no longer warns about a variable used as `{{ var | default(...) }}`.
-
-### Changed
-- Agent instructions are now tool-neutral: `CLAUDE.md` is renamed `AGENTS.md` (root and
-  `workspace/`), with a one-line `CLAUDE.md` shim that imports it so Claude Code still
-  loads the same guidance. The build and the register skip `AGENTS.md`, `CLAUDE.md` and
-  `GEMINI.md`, and `.gitignore` no longer hides `AGENTS.md`/`GEMINI.md`.
-
-### Changed
-- Word form tables take their row heights from the PDF: the PDF builder's own table
-  markup is laid out with the real theme CSS and each Word row is given that
-  height as a minimum, so row pitch follows theme padding, input display and font
-  sizes. Empty-input spacing follows the body font; signature fields (standalone
-  and in `?[row]`) get the PDF's rule, caption and em-scaled height.
-- Form PDFs: every form-control dimension is now em-based, so controls, grids,
-  labels and signature rows scale with the theme's font size. Grids use the
-  theme's primary colour (tinted rules, uppercase labels) and ordinary tables
-  keep the report styling. A size/weight sweep test guards control alignment.
-- Word export: form geometry (input line, descent relief, choice lines, cell
-  input heights) scales with the theme's input/table/body font sizes and uses
-  the theme's input margins; form grids follow the new PDF styling, cells that
-  are blank in the PDF stay blank, page-number fields take the footer style,
-  and form documents omit the running date like the PDF.
-
-### Changed
-- Word export parity: CSS-measured table column widths, form controls as sized
-  boxes/grids (incl. flex rows, colspans, textareas), collapsed paragraph margins,
-  code line pitch, hr/blockquote/pre box models, cover z-order, header-bar slot
-  widths, section-bar padding, and valid square roots in Office Math. PDF:
-  multi-line `<select>` and keep-with-next wrappers no longer corrupt markup.
-
-### Fixed
-- Cover pages follow physical page dimensions in landscape and custom themes;
-  bottom bands sit against the page edge. Word cover spacing and indents no
-  longer inherit body layout, and PDF assets resolve from the source folder.
-- Header bars support a physical `page_header_bar_offset` in both formats.
-  Word reads absolute CSS spacing units and preserves image line heights.
-- Workspace boundary checks reject traversal, sibling-prefix bypasses and escaping
-  symlinks; HTML previews run in script-disabled sandbox frames.
-- Editor saves preserve the current Monaco snapshot, reject expired/missing locks,
-  and update file-switch state consistently. The standalone editor guards unsaved
-  changes and keeps in-flight builds tied to their original document.
-- YAML dates serialize correctly in editor config responses. Temporary builds are
-  removed on failure, expiry and standalone-server shutdown.
-- Incremental builds track workspace input membership, assets and external theme
-  imports, including deletions. Export copies retain source config/includes/assets,
-  staging names cannot collide, and local sync excludes its destination subtree.
-- Word table cells retain images and missing-image alt text. Neovim uses the same
-  topmost metadata root for context, single-file and workspace builds.
-- Output paths use the detected project root consistently for single-file,
-  subfolder and workspace builds, including relative `output_dir` settings.
-- Neovim saves the current file before building it and all modified workspace
-  file buffers before a workspace build; save failures cancel the build.
-- Editor declares its pipeline dependency and builds with its own Python.
-  Install guides document uv virtual environment setup and source installs.
-
-### Added
 - Deterministic rendered Word/PDF parity checks for A4 page size, header position,
   colored geometry, tables, images and short/wrapped title pages. CI retains
   measurements, generated files, page rasters, overlays and difference images.
@@ -95,10 +22,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including inline, display and table-cell equations.
 - Python, browser, PHP and Neovim regressions for the application review findings;
   clean-wheel server startup/build smoke checks and expanded CI.
-
-## [Unreleased]
-
-### Added
 - **PDF forms build-out** (insurance-application grade; full guide in
   `docs/pdf-forms-guide.md`):
   - `?[box] … ?[/box]` — bordered field-grid construct (labels + `*hints*`
@@ -139,7 +62,122 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   header/footer-from-edge (python-docx defaulted both to 12.7mm). Custom
   properties, so WeasyPrint ignores them and the PDF is unaffected.
 
+- **Deck-first slide authoring schema** for `pptx` output. New layout
+  directives extend the existing marker style: `<!-- slide: section -->`
+  (forced divider), `<!-- slide: columns -->` with `<!-- col -->` dividers
+  (2–4 columns of text/bullets/code/tables/images), `<!-- slide: stat -->`
+  (big-number tiles from bullets — the bold text is the number),
+  `<!-- slide: quote -->` (centred pull-quote with `— Name` attribution),
+  `<!-- slide: image -->` (pictures/Mermaid fill the body, text becomes the
+  caption), and `<!-- slide: center -->` (vertically centred statement).
+  `background=#hex` on any directive gives the slide a solid fill, and dark
+  fills flip the text to white automatically. A directive starts a new slide
+  and the next heading titles it; unknown layout names degrade to the default
+  content layout with a warning. Overlong slides now **shrink text to fit**
+  instead of spilling off the canvas. New guide: `docs/slides-guide.md`;
+  worked example: `examples/blueshift/decks/quarterly-review.md`.
+
+### Changed
+- **Distribution.** Releases are published as GitHub Releases carrying a wheel and source
+  archive (built by `.github/workflows/release.yml` when a `v*` tag is pushed); the package is not
+  uploaded to PyPI. The README documents installing from a release wheel. Python 3.13 and 3.14 are
+  now listed as supported, and the source archive no longer bundles the editor plugins.
+- Agent instructions are now tool-neutral: `CLAUDE.md` is renamed `AGENTS.md` (root and
+  `workspace/`), with a one-line `CLAUDE.md` shim that imports it so Claude Code still
+  loads the same guidance. The build and the register skip `AGENTS.md`, `CLAUDE.md` and
+  `GEMINI.md`, and `.gitignore` no longer hides `AGENTS.md`/`GEMINI.md`.
+
+- Word form tables take their row heights from the PDF: the PDF builder's own table
+  markup is laid out with the real theme CSS and each Word row is given that
+  height as a minimum, so row pitch follows theme padding, input display and font
+  sizes. Empty-input spacing follows the body font; signature fields (standalone
+  and in `?[row]`) get the PDF's rule, caption and em-scaled height.
+- Form PDFs: every form-control dimension is now em-based, so controls, grids,
+  labels and signature rows scale with the theme's font size. Grids use the
+  theme's primary colour (tinted rules, uppercase labels) and ordinary tables
+  keep the report styling. A size/weight sweep test guards control alignment.
+- Word export: form geometry (input line, descent relief, choice lines, cell
+  input heights) scales with the theme's input/table/body font sizes and uses
+  the theme's input margins; form grids follow the new PDF styling, cells that
+  are blank in the PDF stay blank, page-number fields take the footer style,
+  and form documents omit the running date like the PDF.
+
+- Word export parity: CSS-measured table column widths, form controls as sized
+  boxes/grids (incl. flex rows, colspans, textareas), collapsed paragraph margins,
+  code line pitch, hr/blockquote/pre box models, cover z-order, header-bar slot
+  widths, section-bar padding, and valid square roots in Office Math. PDF:
+  multi-line `<select>` and keep-with-next wrappers no longer corrupt markup.
+- **`cover_page` now defaults to `false`.** Previously a cover page was added
+  unless you set `cover_page: false`; now the document starts with your content
+  unless you opt in with `cover_page: true` (in the document's frontmatter or a
+  parent `_meta.yml`). **Migration:** add `cover_page: true` at the folder or
+  document level wherever you want the branded cover — the example projects do
+  this at their `_meta.yml` root. Applies to PDF and DOCX/DOTX; `pptx` is
+  unaffected.
+
+- **DOCX cover page now mirrors the PDF cover.** The Word cover previously used
+  the built-in serif *Title*/*Subtitle* styles (nothing like the PDF), a
+  full-width divider, colon'd metadata, and an inline footer. It now renders an
+  explicit large bold title in the theme's `$primary` colour and body font, an
+  accent uppercase "REPORT" label, a short accent divider rule, colon-free
+  metadata (`Prepared by {author}` / `Date {date}` with a bold body-coloured
+  label + muted value), and a confidentiality footer anchored to the bottom of
+  the page — matching the PDF's `_build_cover` layout.
+- **PDF↔DOCX page-break & structural parity.** The docx builder now injects the
+  same page breaks as the PDF builder (APPENDIX-section H2s and explicit
+  `<!-- pagebreak -->`), sets *keep-with-next* on headings so they don't strand
+  at a page bottom, and reads the paper **size and margins from the theme's
+  `@page`** rule (A4/Letter/Legal/A3, incl. landscape) instead of hardcoding A4 —
+  so both formats share the same text width and break at the same points.
+  Definition lists (`term`/`:`)
+  now render in docx too (bold term + indented definition). Note: exact
+  page-for-page identity isn't guaranteed (WeasyPrint and Word are different
+  layout engines), but declared breaks and structure now line up.
+
 ### Fixed
+- **PDF builds crashed on a fresh install.** WeasyPrint 70 replaced `default_url_fetcher` with a
+  `URLFetcher` class, so a clean `pip install` (which resolved the newest WeasyPrint) failed with
+  `'function' object has no attribute '_fail_on_errors'` while the locked development environment
+  (WeasyPrint 68.1) hid it. The offline fetcher now supports both APIs, `weasyprint` is bounded to
+  `>=68,<71` (the versions exercised; fillable forms need 68+), the suite and the rendered parity
+  tests pass on 68.1 and 70.0, and the CI install smoke test now builds real PDF, Word, `.dotx` and
+  fillable-form documents from the installed wheel.
+- `cover_text_align: center` is valid (both builders and the docs support it) but `md-doc lint`
+  rejected it; the validator now accepts `left`, `center` and `right`.
+- Browser editors (standalone and Filament): the CSS preview now uses the PDF theme order
+  (`_pdf-theme.css`, then `_theme.css`; the Word-only `_docx-theme.css` is ignored) and inlines
+  workspace-local `@import`s, so themes written as `@import '_theme.css';` preview styled. Their
+  config-key highlighters gained the eight keys they were missing, and a test keeps them complete.
+  The standalone editor serves `.dotx` builds with the Word template media type.
+- Neovim plugin README: documented `show_winbar`, every keymap, the `_meta.yml` project-root
+  fallback and the plugin's flat-YAML limitation; "four" display modes.
+- `output_pdf` was documented and used in examples but ignored; the documented key is
+  `output_filename`, and the examples use it.
+- `md-doc lint` no longer warns about a variable used as `{{ var | default(...) }}`.
+
+- Cover pages follow physical page dimensions in landscape and custom themes;
+  bottom bands sit against the page edge. Word cover spacing and indents no
+  longer inherit body layout, and PDF assets resolve from the source folder.
+- Header bars support a physical `page_header_bar_offset` in both formats.
+  Word reads absolute CSS spacing units and preserves image line heights.
+- Workspace boundary checks reject traversal, sibling-prefix bypasses and escaping
+  symlinks; HTML previews run in script-disabled sandbox frames.
+- Editor saves preserve the current Monaco snapshot, reject expired/missing locks,
+  and update file-switch state consistently. The standalone editor guards unsaved
+  changes and keeps in-flight builds tied to their original document.
+- YAML dates serialize correctly in editor config responses. Temporary builds are
+  removed on failure, expiry and standalone-server shutdown.
+- Incremental builds track workspace input membership, assets and external theme
+  imports, including deletions. Export copies retain source config/includes/assets,
+  staging names cannot collide, and local sync excludes its destination subtree.
+- Word table cells retain images and missing-image alt text. Neovim uses the same
+  topmost metadata root for context, single-file and workspace builds.
+- Output paths use the detected project root consistently for single-file,
+  subfolder and workspace builds, including relative `output_dir` settings.
+- Neovim saves the current file before building it and all modified workspace
+  file buffers before a workspace build; save failures cancel the build.
+- Editor declares its pipeline dependency and builds with its own Python.
+  Install guides document uv virtual environment setup and source installs.
 - **The PDF header bar now follows the theme's side margins.** The full-bleed
   bar hardcoded the default 25/20mm left/right margins for its edge offsets
   and content padding — a theme with different `@page` side margins got a bar
@@ -239,7 +277,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`.cover-bar-bottom::after { background: var(--cover-watermark) … }`) per
   document with `css_vars: {cover-watermark: assets/logo.png}`.
 
-### Fixed
 - **Boolean config keys now accept string / templated values.** A quoted YAML
   value (`cover_page: "false"`) or one rendered from a Jinja variable
   (`cover_page: "{{ want_cover }}"`) arrives as a *string*, and Python's
@@ -251,16 +288,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   non-boolean string (e.g. `maybe`) is flagged. Applies to every boolean key
   (`cover_page`, `pdf_forms`, `section_bar`, `page_header_bar`, `cover_*`, …).
 
-### Changed
-- **`cover_page` now defaults to `false`.** Previously a cover page was added
-  unless you set `cover_page: false`; now the document starts with your content
-  unless you opt in with `cover_page: true` (in the document's frontmatter or a
-  parent `_meta.yml`). **Migration:** add `cover_page: true` at the folder or
-  document level wherever you want the branded cover — the example projects do
-  this at their `_meta.yml` root. Applies to PDF and DOCX/DOTX; `pptx` is
-  unaffected.
-
-### Fixed
 - **Single-file builds no longer abort on an unrelated file's lint error.**
   Building one document (e.g. the Neovim plugin's *build this file*) ran the
   lint pre-flight over the document's whole parent directory, so a lint error
@@ -277,23 +304,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the project root. It now falls back to the **topmost `_meta.yml`**, matching
   what a whole-directory build resolves.
 
-### Added
-- **Deck-first slide authoring schema** for `pptx` output. New layout
-  directives extend the existing marker style: `<!-- slide: section -->`
-  (forced divider), `<!-- slide: columns -->` with `<!-- col -->` dividers
-  (2–4 columns of text/bullets/code/tables/images), `<!-- slide: stat -->`
-  (big-number tiles from bullets — the bold text is the number),
-  `<!-- slide: quote -->` (centred pull-quote with `— Name` attribution),
-  `<!-- slide: image -->` (pictures/Mermaid fill the body, text becomes the
-  caption), and `<!-- slide: center -->` (vertically centred statement).
-  `background=#hex` on any directive gives the slide a solid fill, and dark
-  fills flip the text to white automatically. A directive starts a new slide
-  and the next heading titles it; unknown layout names degrade to the default
-  content layout with a warning. Overlong slides now **shrink text to fit**
-  instead of spilling off the canvas. New guide: `docs/slides-guide.md`;
-  worked example: `examples/blueshift/decks/quarterly-review.md`.
-
-### Fixed
 - **Word content-fidelity gaps found by the full parity review.**
   - *Loose lists* (blank lines between items) no longer lose their bullets in
     docx — the first paragraph of a list item reuses the bullet paragraph, and
@@ -323,27 +333,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     opposite).
   - `cover_background` is documented as PDF-only (Word has no per-page fill).
 
-### Changed
-- **DOCX cover page now mirrors the PDF cover.** The Word cover previously used
-  the built-in serif *Title*/*Subtitle* styles (nothing like the PDF), a
-  full-width divider, colon'd metadata, and an inline footer. It now renders an
-  explicit large bold title in the theme's `$primary` colour and body font, an
-  accent uppercase "REPORT" label, a short accent divider rule, colon-free
-  metadata (`Prepared by {author}` / `Date {date}` with a bold body-coloured
-  label + muted value), and a confidentiality footer anchored to the bottom of
-  the page — matching the PDF's `_build_cover` layout.
-- **PDF↔DOCX page-break & structural parity.** The docx builder now injects the
-  same page breaks as the PDF builder (APPENDIX-section H2s and explicit
-  `<!-- pagebreak -->`), sets *keep-with-next* on headings so they don't strand
-  at a page bottom, and reads the paper **size and margins from the theme's
-  `@page`** rule (A4/Letter/Legal/A3, incl. landscape) instead of hardcoding A4 —
-  so both formats share the same text width and break at the same points.
-  Definition lists (`term`/`:`)
-  now render in docx too (bold term + indented definition). Note: exact
-  page-for-page identity isn't guaranteed (WeasyPrint and Word are different
-  layout engines), but declared breaks and structure now line up.
+### Removed
+- Shipped-feature planning records (`docs/superpowers/`, `docs/pdf-forms-plan.md`), the unreferenced
+  `docs/_theme.example.css` (`md-doc theme init` generates a theme), and dead code in the
+  builders. `docs/sample-parity-audit.md` became the evergreen `docs/word-pdf-parity.md`, and the
+  sample documents moved from `docs/examples/` to `examples/starter/` so `docs/` holds only docs.
 
-## [0.3.0] — 2026-07-02
+## 0.3.0 — 2026-07-02 (never tagged; shipped in 0.4.0)
 
 ### Added
 - **PPTX (PowerPoint) output** via a new `python-pptx` builder. `outputs: [pptx]`
@@ -371,7 +367,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recognised, so unquoted nodes were dropped and layout crashed with a
   `KeyError`. Affects all builders (PDF/docx/pptx).
 
-## [0.2.0] — 2026-07-02
+## 0.2.0 — 2026-07-02 (never tagged; shipped in 0.4.0)
 
 Major reliability, parity, and hardening release.
 
@@ -407,6 +403,5 @@ Major reliability, parity, and hardening release.
   members, frontmatter without a trailing newline, and CSS/HTML injection vectors
   in the PDF builder (colors, footer/header strings, form-field attributes).
 
-[Unreleased]: https://github.com/gregshallardau/md-doc-pipeline/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.3.0
-[0.2.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.2.0
+[Unreleased]: https://github.com/gregshallardau/md-doc-pipeline/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/gregshallardau/md-doc-pipeline/releases/tag/v0.4.0

@@ -34,7 +34,19 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 - PDF generation requires WeasyPrint system libraries — see the [WeasyPrint docs](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation) for platform setup.
 
-**Setup:**
+**Option A: install a release (no clone).** Each [GitHub release](https://github.com/gregshallardau/md-doc-pipeline/releases) carries a wheel. md-doc is not published to PyPI.
+
+```bash
+uv tool install https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl
+md-doc doctor
+
+# With optional extras (azure, s3, mermaid):
+uv tool install "md-doc-pipeline[azure,s3,mermaid] @ https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl"
+```
+
+`pip install <wheel URL>` works the same way inside a virtual environment. The browser editor, Neovim plugin and Filament plugin are installed from a checkout (below).
+
+**Option B: from a checkout** (for development, the editors and the example projects):
 
 ```bash
 git clone https://github.com/gregshallardau/md-doc-pipeline
