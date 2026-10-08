@@ -438,7 +438,8 @@ parsing shared via `md_doc/forms.py`):
 - `md-doc lint` validates fields: unknown types, duplicate names (AcroForm links
   same-named fields), and `?[…]` present without `pdf_forms: true`.
 - **dotx**: `?[...]` maps to real Word form fields (FORMTEXT / FORMCHECKBOX /
-  FORMDROPDOWN); plain docx renders `________` fill-in lines.
+  FORMDROPDOWN); plain docx renders bordered, PDF-sized boxes (and blank grid cells) for
+  print-and-write.
 - The first body H1 never forces a page break (letterhead-friendly; applies to
   all documents, both PDF and Word).
 

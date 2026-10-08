@@ -66,7 +66,10 @@ cover_page: true
 ---
 ```
 
-- **`outputs`** — `pdf`, `docx`, or `dotx`. Multiple: `[pdf, dotx]`
+- **`outputs`** — `pdf`, `docx`, `dotx`, or `pptx`. Multiple: `[pdf, dotx]`. Slide decks (`pptx`) have their own file shape — see `docs/slides-guide.md` and `docs/llm-deck-prompt.md`
+- **`output_filename`** — override the output file name for all formats; Jinja2 variables allowed, extension added automatically
+- **`table_col_widths`** — relative column widths for every table, e.g. `[30, 70]` (ignored if the count doesn't match). Per table: put `<!-- col-widths: 30, 70 -->` on the line before it
+- **`css_vars`** — per-document CSS custom properties for PDF (`name: value`); a value ending in an image extension is resolved like `header_logo`
 - **`output_dir`** — directory to write built outputs into. Cascades from parent `_meta.yml`; override at any folder or document level. CLI `--output` always wins. Supports `~`. Example: `output_dir: /mnt/NAS/Letters/`
 - **`cover_page`** — `true` adds a branded cover; `false` starts with the body. Default is `false` — add `cover_page: true` where you want a cover
 - **`cover_label`** — text above the title on the cover page. Default: `"Report"`. Set to `"Concept"`, `"Proposal"`, etc.
@@ -142,6 +145,9 @@ client_ref: Client's internal reference number
 
 Run `md-doc fields [DIR]` to see all fields available at any folder level.
 
+### `_theme.css`
+Optional shared base theme used by **both** PDF and Word. A typical project keeps the brand look here and makes `_pdf-theme.css` a thin file that starts with `@import '_theme.css';`. Pure look defaults (header bar, cover bar, section bar colours and sizes) can be set once as `--mddoc-*` custom properties in `:root`; any YAML key still overrides them (see the root `CLAUDE.md`).
+
 ### `_pdf-theme.css`
 Brand colours and fonts for PDF output. Created by `md-doc theme init` (full theme) or `md-doc theme override` (colour-only override that inherits from a parent theme via `@import`). Commit this file — it is config, not a build output.
 
@@ -155,7 +161,9 @@ Optional Word-specific CSS overrides for `docx` and `dotx` output. Same format a
 - `h1`–`h4 { color: ...; font-size: ...pt; }` — heading colours and sizes
 - `th { background: ...; color: ...; }` — table header shading
 
-**Resolution order:** When building Word output, the pipeline walks from the document directory up to the workspace root. At each level it checks for `_docx-theme.css` first, then `_pdf-theme.css`. The first file found wins — same cascading logic as all other config files.
+**Resolution order:** When building Word output, the pipeline walks from the document directory up to the workspace root. At each level it checks for `_docx-theme.css` first, then the shared `_theme.css`, then `_pdf-theme.css`. The first file found wins — same cascading logic as all other config files. (PDF checks `_pdf-theme.css`, then `_theme.css`.)
+
+**Units:** Word only reads absolute lengths (`pt`, `px`, `mm`, `cm`, `in`) from the rules it consumes. `em`, `rem`, `%` and `calc()` are ignored there and Word falls back to defaults, so use absolute units in body, heading, table, list, form-input and `@page` rules. To bring an older theme up to date, use `prompts/upgrade-css.md`.
 
 If no theme file exists in the hierarchy, Word output uses python-docx default styles.
 
@@ -166,12 +174,14 @@ Commit this file alongside `_pdf-theme.css` — it is config, not a build output
 ## Commands to use from the repo root
 
 ```bash
-# Check documents before building
+# Check the environment, then check documents before building
+uv run md-doc doctor
 uv run md-doc lint workspace/acme/
 
 # Build
 uv run md-doc build workspace/acme/
 uv run md-doc build workspace/acme/ --format dotx
+uv run md-doc build workspace/ --force -j 8   # rebuild everything, 8 in parallel (default is incremental)
 uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
 
 # See available merge fields at a folder level
@@ -354,9 +364,34 @@ cover_page: false
 ---
 ```
 
-### Rules
+### Field shorthand (preferred)
 
-- **Wrap all fields in explicit `<form>` tags.** WeasyPrint does not auto-wrap — fields outside a `<form>` element will not become interactive.
+The `?[...]` shorthand is shorter than HTML, is wrapped in a `<form>` automatically, maps to real Word form fields in `.dotx`, and is checked by `md-doc lint` (unknown types, duplicate names, shorthand without `pdf_forms: true`). Full reference: `docs/pdf-forms-guide.md`.
+
+```markdown
+**Full name** ?[text: full_name, required]      (also email, date, number, tel, url)
+?[textarea: notes, rows=4]
+?[checkbox: agree, required] I agree to the terms
+?[yesno: consent]                               (two checkboxes: consent_yes / consent_no)
+?[select: department | Engineering | Sales]
+?[radio-inline: urgency | Standard | Urgent]
+?[signature: applicant_signature]
+?[submit Send]
+
+?[box]                                          (bordered application-style grid; cells split on |)
+**City** ?[text: city] | **State** ?[text: state]
+?[/box]
+
+?[row]                                          (borderless side-by-side cells)
+?[signature: sig] | **Date** ?[date: signed_on]
+?[/row]
+```
+
+Field names must be unique. Form grids and controls take their colours and sizes from the theme (tinted from its primary colour, sized in `em`), so they follow the document's font size. The Word `.docx` keeps the boxes, grids and labels but has no interactive fields or submit button; use `.dotx` for fillable Word.
+
+### Rules for raw HTML fields
+
+- **Wrap raw HTML fields in explicit `<form>` tags.** WeasyPrint does not auto-wrap them — fields outside a `<form>` element will not become interactive. (The `?[...]` shorthand is wrapped for you.)
 - **Every field needs a `name` attribute** — it becomes the AcroForm field name in the PDF. Use `snake_case`.
 - Set `cover_page: false` for forms — the cover page is rarely useful on a form document.
 

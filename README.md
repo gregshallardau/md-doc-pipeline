@@ -422,6 +422,7 @@ md-doc register [ROOT] [OPTIONS]
 - [Authoring guide](docs/authoring-guide.md) — Markdown authoring conventions
 - [Slides guide](docs/slides-guide.md) — deck-first PPTX authoring: layouts, backgrounds, columns, stats, quotes
 - [LLM deck prompt](docs/llm-deck-prompt.md) — turn raw content into a valid deck file with any LLM
+- [Prompts](prompts/) — `document-author.md` (write a document from a description), `document-converter-standalone.md` (convert an existing document), `upgrade-css.md` (agent prompt to bring an older theme up to date)
 - [PDF forms guide](docs/pdf-forms-guide.md) — interactive fillable PDFs
 - [Troubleshooting](docs/troubleshooting.md) — system libs, Mermaid-in-Word, sync
 - [Python API](docs/python-api.md) — using the pipeline as a library
