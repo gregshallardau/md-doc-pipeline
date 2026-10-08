@@ -41,3 +41,13 @@ def test_collapse_select_markup_single_line() -> None:
     out = collapse_select_markup(src)
     assert "\n" not in out
     assert "<option>B</option>" in out
+
+
+def test_form_support_css_uses_theme_colour() -> None:
+    from md_doc.builders.pdf import _form_support_css
+
+    css = _form_support_css("#1b4f72")
+    assert "__" not in css
+    assert "#1b4f72" in css  # label colour
+    assert "solid #000000" not in css
+    assert "#000000" not in _form_support_css(None)

@@ -878,9 +878,9 @@ _BASE_FIXES_CSS = (
 )
 
 # Injected only for pdf_forms documents. Provides the insurance-form
-# constructs (?[box] field grids, ?[yesno:] pairs), gives ordinary tables a
-# ruled-grid look (forms want black rules, not the report theme's shaded
-# header + zebra rows), and fixes the signature block.
+# constructs (?[box] field grids, ?[yesno:] pairs) and fixes the signature
+# block. Rules and labels take the theme's primary colour (__RULE__ etc. are
+# filled in by _form_support_css); ordinary tables keep the report styling.
 _FORM_SUPPORT_CSS = """<style>
 /* Forms don't show the running date used by report footers */
 .running-date { display: none; }
@@ -888,10 +888,10 @@ _FORM_SUPPORT_CSS = """<style>
 .report-body .field-group { page-break-inside: avoid; break-inside: avoid; }
 /* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
    the cells, deterministic row heights so the grid has an even rhythm */
-table.field-box { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; margin: 3pt 0 10pt 0; page-break-inside: auto; }
-table.field-box td { border: 0.5pt solid #000000; padding: 3pt 5pt; vertical-align: top; line-height: 1.25; }
+table.field-box { width: 100%; border-collapse: collapse; border: 1pt solid __RULE__; border-radius: 0; margin: 3pt 0 10pt 0; page-break-inside: auto; }
+table.field-box td { border: 0.5pt solid __RULE_SOFT__; padding: 3pt 5pt; vertical-align: top; line-height: 1.25; }
 table.field-box tr { page-break-inside: avoid; }
-table.field-box strong { font-size: 0.95em; }
+table.field-box strong { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; color: __PRIMARY__; }
 table.field-box em { font-size: 7.5pt; }
 table.field-box input[type="text"], table.field-box input[type="email"],
 table.field-box input[type="date"], table.field-box input[type="number"],
@@ -910,18 +910,8 @@ table.field-box textarea {
 table.field-row td > input[type="text"], table.field-row td > input[type="email"],
 table.field-row td > input[type="date"], table.field-row td > input[type="number"],
 table.field-row td > input[type="tel"], table.field-row td > input[type="url"] {
-  border: none; border-bottom: 0.75pt solid #555555;
+  border: none; border-bottom: 0.75pt solid __RULE__;
 }
-/* Ordinary markdown tables in a form document: ruled black grid, no report
-   styling (shaded header, zebra rows) — matches the application-form look */
-.report-body table:not(.field-box):not(.field-row) { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; }
-.report-body table:not(.field-box) th {
-  border: 0.5pt solid #000000; background: none; color: inherit;
-  text-transform: none; letter-spacing: 0; padding: 3pt 5pt; font-size: inherit;
-}
-.report-body table:not(.field-box) td { border: 0.5pt solid #000000; padding: 3pt 5pt; }
-.report-body table:not(.field-box) tr:nth-child(even) td { background: none; }
-.report-body table:not(.field-box) tr:last-child td { border-bottom: 0.5pt solid #000000; }
 /* Fillable cells inside those tables */
 table td > input[type="text"], table td > input[type="email"],
 table td > input[type="date"], table td > input[type="number"],
@@ -951,6 +941,21 @@ label.option-item { display: inline-block; margin: 1pt 12pt 1pt 0; }
 .signature-line { display: none; }
 .signature-label { font-size: 7.5pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #7f8c9a; margin-top: 3pt; }
 </style>"""
+
+
+def _form_support_css(primary: str | None) -> str:
+    from ..mermaid import _lighten
+
+    try:
+        base = primary or "#2c3e50"
+        rule, soft = _lighten(base, 0.45), _lighten(base, 0.7)
+    except ValueError:
+        base, rule, soft = "#2c3e50", "#8a97a3", "#c5ccd3"
+    return (
+        _FORM_SUPPORT_CSS.replace("__RULE_SOFT__", soft)
+        .replace("__RULE__", rule)
+        .replace("__PRIMARY__", base)
+    )
 
 
 def _build_html(
@@ -1062,7 +1067,7 @@ def _build_html(
   {section_bar_style}
   {body_align_style}
   {cover_support_style}
-  {_FORM_SUPPORT_CSS if is_form else ""}
+  {_form_support_css(primary_color) if is_form else ""}
   {css_vars_style}
   {page_bar_css}
 </head>
