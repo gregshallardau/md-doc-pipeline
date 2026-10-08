@@ -121,6 +121,8 @@ _SKIP_FILES = {
     "license.md",
     "licence.md",
     "claude.md",
+    "agents.md",
+    "gemini.md",
     "contributing.md",
     "history.md",
     "authors.md",
@@ -137,7 +139,7 @@ def _discover_markdown(root: Path) -> list[Path]:
     - Files whose name starts with ``_`` (config/meta files)
     - Files inside ``templates/`` or ``themes/`` directories
     - Files inside dependency/tooling directories (.venv, node_modules, etc.)
-    - Well-known repo infrastructure files (README.md, CLAUDE.md, etc.)
+    - Well-known repo infrastructure files (README.md, AGENTS.md, CLAUDE.md, etc.)
     """
     return sorted(
         p

@@ -40,6 +40,9 @@ _EXCLUDE_NAMES = {
     "register.json",
     "register.csv",
     "README.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
 }
 
 

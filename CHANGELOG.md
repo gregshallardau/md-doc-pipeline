@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 ### Changed
+- Agent instructions are now tool-neutral: `CLAUDE.md` is renamed `AGENTS.md` (root and
+  `workspace/`), with a one-line `CLAUDE.md` shim that imports it so Claude Code still
+  loads the same guidance. The build and the register skip `AGENTS.md`, `CLAUDE.md` and
+  `GEMINI.md`, and `.gitignore` no longer hides `AGENTS.md`/`GEMINI.md`.
+
+### Changed
 - Word form tables take their row heights from the PDF: the PDF builder's own table
   markup is laid out with the real theme CSS and each Word row is given that
   height as a minimum, so row pitch follows theme padding, input display and font

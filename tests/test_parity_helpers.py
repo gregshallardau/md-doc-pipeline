@@ -51,3 +51,11 @@ def test_form_support_css_uses_theme_colour() -> None:
     assert "#1b4f72" in css  # label colour
     assert "solid #000000" not in css
     assert "#000000" not in _form_support_css(None)
+
+
+def test_discovery_skips_agent_instruction_files(tmp_path) -> None:
+    from md_doc.cli import _discover_markdown
+
+    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "README.md", "real-doc.md"):
+        (tmp_path / name).write_text("# x\n")
+    assert [p.name for p in _discover_markdown(tmp_path)] == ["real-doc.md"]

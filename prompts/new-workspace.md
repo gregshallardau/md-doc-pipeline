@@ -28,7 +28,7 @@ You are onboarding a new company workspace for md-doc-pipeline: **{{COMPANY}}** 
 3. **No secrets in files.** Sync credentials go in environment variables and are referenced as
    `"${NAME}"` in `_meta.yml`.
 4. Do not edit `md_doc/`, `tests/` or the root `pyproject.toml`.
-5. Do not create `CLAUDE.md`, `README.md` or `CHANGELOG.md` inside the workspace: the build skips
+5. Do not create `AGENTS.md`, `CLAUDE.md`, `README.md` or `CHANGELOG.md` inside the workspace: the build skips
    them and they confuse later authors. Hand-off notes go in your final message.
 6. Only reference `{{ variables }}`, `[[fields]]` and `{% include %}` names that exist in the
    cascade you created.
@@ -140,7 +140,7 @@ section_bar: true
 
 Copy the logo into `{{WORKSPACE_PATH}}/assets/` (never a path outside the repo). Brand *look*
 values that are the same for everything (bar colours and heights) may instead live in the theme
-as `--mddoc-*` custom properties; see the root `CLAUDE.md`.
+as `--mddoc-*` custom properties; see the root `AGENTS.md`.
 
 ### 2.3 Templates and merge fields
 
@@ -203,7 +203,7 @@ If `docx` or `dotx` is in scope and LibreOffice is available, convert one Word o
    - the exact commands to build everything, one client, and one format
      (`md-doc build {{WORKSPACE_PATH}}`, `... clients/<slug>/`, `--format dotx`), and how to add
      the next client (`md-doc new folder`, `md-doc new doc`);
-   - a pointer to `workspace/CLAUDE.md` for authoring rules and `prompts/document-author.md` /
+   - a pointer to `workspace/AGENTS.md` for authoring rules and `prompts/document-author.md` /
      `prompts/document-converter-standalone.md` for writing or converting documents.
 
 ---END---
