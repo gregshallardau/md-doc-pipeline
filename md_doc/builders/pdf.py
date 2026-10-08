@@ -939,28 +939,27 @@ _FORM_SUPPORT_CSS = """<style>
 /* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
    the cells, deterministic row heights so the grid has an even rhythm */
 table.field-box { width: 100%; border-collapse: collapse; border: 1pt solid __RULE__; border-radius: 0; margin: 3pt 0 10pt 0; page-break-inside: auto; }
-table.field-box { font-size: 9.5pt; }
-table.field-box td { border: 0.5pt solid __RULE_SOFT__; background: none; padding: 5pt 9pt; vertical-align: top; line-height: 1.3; }
+table.field-box td { border: 0.5pt solid __RULE_SOFT__; background: none; vertical-align: top; line-height: 1.3; }
 table.field-box tr:nth-child(even) td { background: none; }
 table.field-box tr { page-break-inside: avoid; }
 table.field-box tr.qa td { vertical-align: middle; }
 table.field-box .prefixed-field { display: flex; align-items: center; }
-table.field-box .prefixed-field > span { margin-right: 3pt; }
+table.field-box .prefixed-field > span { margin-right: 0.3em; }
 table.field-box .prefixed-field > input { flex: 1; width: auto; }
 table.field-box strong { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; color: __PRIMARY__; }
-table.field-box em { font-size: 7.5pt; }
+table.field-box em { font-size: 0.8em; }
 table.field-box input[type="text"], table.field-box input[type="email"],
 table.field-box input[type="date"], table.field-box input[type="number"],
 table.field-box input[type="tel"], table.field-box input[type="url"],
 table.field-box select {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; height: 14pt; margin: 0; padding: 0 1pt; font-size: 9.5pt;
+  width: 100%; height: 1.5em; margin: 0; padding: 0 0.1em; font-size: inherit;
 }
 /* A bare write-in row (input with no label in the cell) gets a taller band */
-table.field-box td > input:only-child { height: 22pt; }
+table.field-box td > input:only-child { height: 2.3em; }
 table.field-box textarea {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; margin: 0; padding: 1pt; font-size: 10pt; resize: none;
+  width: 100%; margin: 0; padding: 0.1em; font-size: inherit; resize: none;
 }
 /* Borderless side-by-side cells (?[row]) — bare inputs show a writing rule */
 table.field-row td > input[type="text"], table.field-row td > input[type="email"],
@@ -974,7 +973,7 @@ table td > input[type="date"], table td > input[type="number"],
 table td > input[type="tel"], table td > input[type="url"],
 table td > textarea, table td > select {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; height: 13pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+  width: 100%; height: 1.4em; margin: 0; padding: 0 0.1em; font-size: inherit;
 }
 /* Controls sharing a row (labelled form-groups) take one fixed height, so a
    <select> never makes its row taller than the text-input rows around it */
@@ -982,38 +981,38 @@ table td > textarea, table td > select {
 .form-group input[type="date"], .form-group input[type="number"],
 .form-group input[type="tel"], .form-group input[type="url"],
 .form-group select {
-  box-sizing: border-box; height: 20pt; margin: 0; padding: 0 6pt;
+  box-sizing: border-box; height: 2em; margin: 0; padding: 0 0.6em;
 }
 /* Checkboxes sit inline beside their label (the UA form stylesheet makes
    inputs block-level, which strands the label on the next line) */
 input[type="checkbox"], input[type="radio"] {
-  display: inline-block; width: 11pt; height: 11pt;
-  margin: 1pt 5pt 1pt 1pt; vertical-align: middle;
-  position: relative; top: -1pt; /* box centre on the label cap-height centre, not the x-height */
+  display: inline-block; font-size: inherit; width: 1.1em; height: 1.1em;
+  margin: 0.1em 0.5em 0.1em 0.1em; vertical-align: middle;
+  position: relative; top: -0.1em; /* box centre on the label cap-height centre, not the x-height */
 }
 /* Checkbox / radio items — span-level so table cells survive md_in_html */
-label.option-item { display: inline-block; margin: 2pt 12pt 2pt 0; }
+label.option-item { display: inline-block; margin: 0.2em 1.2em 0.2em 0; }
 label.option-solo { margin-right: 0; }
 .option-group { line-height: 1.9; }
 /* Yes/No checkbox pair (?[yesno: name]) */
 .yesno { white-space: nowrap; }
-.yesno label { display: inline; margin-right: 14pt; }
+.yesno label { display: inline; margin-right: 1.4em; }
 /* Signature block — transparent field over a single rule, kept on one page */
-.signature-field { page-break-inside: avoid; margin: 12pt 0 14pt 0; width: 60%; }
+.signature-field { page-break-inside: avoid; margin: 1.2em 0 1.4em 0; width: 60%; }
 table.field-row .signature-field { width: 100%; margin: 0; }
 table.field-row .signature-input { border-bottom: 1pt solid __PRIMARY__; }
 table.field-row .signature-line { display: none; }
-table.field-row { margin: 6pt 0 12pt 0; }
+table.field-row { margin: 0.6em 0 1.2em 0; }
 table.field-row td { vertical-align: bottom !important; }
-table.field-row .signature-label { font-size: 7pt; color: __PRIMARY__; font-weight: 700; letter-spacing: 0.5pt; }
+table.field-row .signature-label { font-size: 0.7em; color: __PRIMARY__; font-weight: 700; letter-spacing: 0.07em; }
 input[type="checkbox"], input[type="radio"] { border: 0.75pt solid __RULE__; }
 .signature-input {
-  appearance: auto; display: block; width: 100%; height: 26pt; min-height: 26pt;
+  appearance: auto; display: block; width: 100%; height: 2.6em; min-height: 2.6em; font-size: inherit;
   border: none; border-bottom: 1pt solid #555555; border-radius: 0;
-  background: transparent; margin: 0; padding: 2pt 0; resize: none;
+  background: transparent; margin: 0; padding: 0.2em 0; resize: none;
 }
 .signature-line { display: none; }
-.signature-label { font-size: 7.5pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #7f8c9a; margin-top: 3pt; }
+.signature-label { font-size: 0.75em; letter-spacing: 0.2em; text-transform: uppercase; color: #7f8c9a; margin-top: 0.4em; }
 </style>"""
 
 

@@ -410,4 +410,4 @@ def test_option_controls_are_centred_on_label_caps():
     from md_doc.builders.pdf import _form_support_css
 
     css = _form_support_css(None)
-    assert "position: relative; top: -1pt" in css
+    assert "position: relative; top: -0.1em" in css
