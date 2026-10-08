@@ -15,7 +15,11 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **DOCX output** — python-docx builder for copy-to-email Word documents
 - **DOTX output** — Word merge template builder; your other application fills the fields
 - **PPTX output** — python-pptx slide builder with a deck-first authoring schema: headings segment into slides, plus layout directives for section dividers, multi-column bodies, big-number stat tiles, pull-quotes, image showcases, per-slide backgrounds, and speaker notes ([slides guide](docs/slides-guide.md))
-- **Cascading PDF themes** — `_theme.css` at any folder level; deepest wins. Run `md-doc theme init` to generate a full theme or `md-doc theme override` for a minimal colour override
+- **Cascading themes** — `_pdf-theme.css`, shared `_theme.css` and Word-only `_docx-theme.css` at any folder level; deepest wins. `md-doc theme init` generates a full theme, `md-doc theme override` a colour-only override, and `--mddoc-*` custom properties set brand defaults in CSS ([theming guide](docs/theming-guide.md))
+- **Fillable PDF forms** — `pdf_forms: true` with a `?[text: name]` shorthand, bordered `?[box]` grids, signatures and Yes/No pairs; the same source gives real Word form fields in `.dotx` ([forms guide](docs/pdf-forms-guide.md))
+- **Diagrams and maths** — Mermaid flowcharts, charts, Gantt, sequence, mind map, ER and state diagrams, plus LaTeX equations, in PDF and Word ([Markdown reference](docs/markdown-reference.md))
+- **Export and extract** — `md-doc export` builds only the notes marked `export: true` ([export guide](docs/export-guide.md)); `md-doc extract` turns a PDF or DOCX back into Markdown ([extraction guide](docs/extraction-guide.md))
+- **Editors** — a browser editor with live preview ([md-doc-web-editor](md-doc-web-editor/README.md), [Filament plugin](filament-md-doc/README.md)) and a [Neovim plugin](nvim-plugin/README.md) that resolves includes and variables inline
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
 - **Pluggable sync** — push outputs to Azure File Share, AWS S3, or a local path
@@ -30,7 +34,19 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 - PDF generation requires WeasyPrint system libraries — see the [WeasyPrint docs](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation) for platform setup.
 
-**Setup:**
+**Option A: install a release (no clone).** Each [GitHub release](https://github.com/gregshallardau/md-doc-pipeline/releases) carries a wheel. md-doc is not published to PyPI.
+
+```bash
+uv tool install https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl
+md-doc doctor
+
+# With optional extras (azure, s3, mermaid):
+uv tool install "md-doc-pipeline[azure,s3,mermaid] @ https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl"
+```
+
+`pip install <wheel URL>` works the same way inside a virtual environment. The browser editor, Neovim plugin and Filament plugin are installed from a checkout (below).
+
+**Option B: from a checkout** (for development, the editors and the example projects):
 
 ```bash
 git clone https://github.com/gregshallardau/md-doc-pipeline
@@ -60,7 +76,7 @@ From the repository root, install the editor in the same `.venv`:
 ```bash
 uv venv  # skip if .venv already exists
 uv sync --group editor
-uv run --offline --no-sync md-doc-edit serve workspace/ --no-browser
+uv run --offline --no-sync md-doc-edit --no-browser
 ```
 
 Open http://127.0.0.1:8765/. `--offline --no-sync` launches the installed
@@ -68,7 +84,7 @@ environment without dependency downloads or syncing. If you choose to sync
 again, include `--group editor` to retain the editor. Activation is optional. For activated commands: `source .venv/bin/activate`
 (Linux/macOS), `.\.venv\Scripts\Activate.ps1` (PowerShell), or
 `.venv\Scripts\activate.bat` (Command Prompt), then run
-`md-doc-edit serve workspace/`. See the [editor guide](md-doc-web-editor/README.md) for details.
+`md-doc-edit`. See the [editor guide](md-doc-web-editor/README.md) for details.
 
 
 ---
@@ -175,7 +191,7 @@ author: Acme Corp
 date: 1 May 2026
 
 outputs: [pdf, dotx]              # pdf | docx | dotx | pptx — default: [pdf]
-output_pdf: Alpha-Report.pdf      # override output filename
+output_filename: "Alpha-Report"  # override output filename (all formats; extension is added)
 output_dotx: Alpha-Template.dotx
 output_dir: /path/to/output/      # route built files here (cascades from _meta.yml; CLI --output overrides)
 cover_page: false                 # default false — set true to add a branded cover
@@ -366,62 +382,40 @@ The `.dotx` file is ready to open in Word — tab through the Text Form Fields a
 
 ## CLI reference
 
-```
-md-doc lint [ROOT]
-  ROOT                  Directory to lint (default: current directory)
+| Command | Purpose |
+|---------|---------|
+| `md-doc build [ROOT]` | Build to PDF / DOCX / DOTX / PPTX (`-o`, `-f`, `-t`, `-j`, `--force`, `--strict`, `--dry-run`, `-w`) |
+| `md-doc lint [ROOT]` | Check documents without rendering (`--render`, `--fix`, `-w`) |
+| `md-doc fields [DIR]` | List the `[[merge fields]]` available at a folder |
+| `md-doc new folder NAME` / `new doc NAME` | Scaffold a folder (with `_meta.yml`) or a document (`--in DIR`) |
+| `md-doc theme init [DIR]` / `theme override [DIR]` | Write a full `_pdf-theme.css`, or a colour-only override of the parent theme |
+| `md-doc export [SOURCE]` | Build only notes marked `export: true` (`--tag`, `-o`, `-f`, `-w`) |
+| `md-doc extract FILE` | Convert a PDF or DOCX to Markdown |
+| `md-doc sync [ROOT]` | Upload built files to Azure, S3 or a folder (`-b`, `--dry-run`, `-w`) |
+| `md-doc register [ROOT]` | Write `register.json`, `.md` and `.csv` |
+| `md-doc workspaces` | List named remote workspaces |
+| `md-doc doctor` | Check Python, dependencies, WeasyPrint libraries and optional extras |
 
-md-doc doctor
-  Check Python, dependencies, WeasyPrint system libs, and optional extras
-
-md-doc build [ROOT] [OPTIONS]
-  ROOT                  Directory to build (default: current directory)
-  -o, --output DIR      Mirror source tree under DIR instead of alongside source
-  -f, --format          pdf | docx | dotx | pptx | all  (default: from outputs config)
-  -j, --jobs N          Build N documents in parallel (default: 1)
-  --force               Rebuild even if outputs are newer than their inputs
-  --strict              Fail on undefined Jinja2 variables
-  --dry-run             Show what would be built without building
-
-Global (place before the subcommand):
-  --debug / --quiet / --log-level LEVEL   Logging verbosity
-
-md-doc new folder NAME [--in DIR]
-  NAME                  Relative path for the new folder (e.g. clients/acme)
-  --in DIR              Parent directory (default: current directory)
-
-md-doc new doc NAME [--in DIR]
-  NAME                  Document stem — creates NAME.md
-  --in DIR              Directory to create document in (default: current directory)
-
-md-doc fields [DIRECTORY]
-  DIRECTORY             Show all [[fields]] available at this level (default: current directory)
-
-md-doc theme init [DIR]
-  DIR                   Directory to create _theme.css and _meta.yml in
-
-md-doc theme override [DIR]
-  DIR                   Directory to create a minimal colour-override _theme.css in
-
-md-doc sync [ROOT] [OPTIONS]
-  ROOT                  Directory to sync (default: current directory)
-  -b, --backend         azure | s3 | local  (default: from sync_target config)
-  --dry-run             Show what would be synced without uploading
-
-md-doc register [ROOT] [OPTIONS]
-  ROOT                  Directory to scan (default: current directory)
-  -o, --output FILE     Output path for register.json
-  --no-md               Skip writing register.md
-```
+Global options go before the subcommand: `--debug`, `--quiet`, `--log-level LEVEL`, `--version`.
+Every command and option, the remote-workspaces file and the environment variables are in the
+[CLI reference](docs/cli-reference.md).
 
 ---
 
 ## Documentation
 
 - [Quickstart](docs/quickstart.md) — install, output types, config, Jinja2, forms
-- [Config reference](docs/config-reference.md) — every `_meta.yml` / frontmatter key
+- [CLI reference](docs/cli-reference.md) — every command, option, environment variable and the remote-workspaces file
+- [Config reference](docs/config-reference.md) — every `_meta.yml` / frontmatter key, with a complete key index
+- [Theming guide](docs/theming-guide.md) — theme files and cascade, `--mddoc-*` brand properties, `css_vars`, what Word reads, form styling
+- [Markdown reference](docs/markdown-reference.md) — extensions, tables, images, page breaks, Mermaid, differences between formats
+- [Word and PDF parity](docs/word-pdf-parity.md) — what the two formats keep in step, how it is checked, known differences
+- [Export guide](docs/export-guide.md) — `md-doc export` and its frontmatter keys
+- [Extraction guide](docs/extraction-guide.md) — `md-doc extract`
 - [Authoring guide](docs/authoring-guide.md) — Markdown authoring conventions
 - [Slides guide](docs/slides-guide.md) — deck-first PPTX authoring: layouts, backgrounds, columns, stats, quotes
 - [LLM deck prompt](docs/llm-deck-prompt.md) — turn raw content into a valid deck file with any LLM
+- [Prompts](prompts/) — `document-author.md` (write a document from a description), `document-converter-standalone.md` (convert an existing document), `new-workspace.md` (agent prompt to onboard a new company workspace), `upgrade-css.md` (agent prompt to bring an older theme up to date)
 - [PDF forms guide](docs/pdf-forms-guide.md) — interactive fillable PDFs
 - [Troubleshooting](docs/troubleshooting.md) — system libs, Mermaid-in-Word, sync
 - [Python API](docs/python-api.md) — using the pipeline as a library

@@ -15,6 +15,8 @@ included in the sync output (default: false).
 from __future__ import annotations
 
 import logging
+import os
+import re
 import time
 from functools import partial
 from pathlib import Path
@@ -108,6 +110,38 @@ def _load_uploader(backend_name: str) -> Callable[..., Callable[[Path], str]]:
     return make_uploader
 
 
+_ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_env(value: Any, *, strict: bool = True) -> Any:
+    """Expand ``${NAME}`` references in *value* (recursing into dicts and lists).
+
+    Lets ``sync_config`` keep secrets out of ``_meta.yml``: write
+    ``connection_string: "${AZURE_CONN_STRING}"`` and set the variable in the
+    environment. An unset variable raises ``ValueError`` when *strict*; otherwise
+    (dry runs, which never connect) the reference is left as written.
+    """
+    if isinstance(value, str):
+
+        def _sub(match: re.Match[str]) -> str:
+            name = match.group(1)
+            found = os.environ.get(name)
+            if found is None:
+                if strict:
+                    raise ValueError(
+                        f"sync_config references ${{{name}}} but that environment variable is not set."
+                    )
+                return match.group(0)
+            return found
+
+        return _ENV_REF_RE.sub(_sub, value)
+    if isinstance(value, dict):
+        return {k: expand_env(v, strict=strict) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_env(v, strict=strict) for v in value]
+    return value
+
+
 def run(
     root: Path,
     backend: str | None = None,
@@ -145,7 +179,9 @@ def run(
     # Load root config for sync settings
     config = load_config(root)
     include_md = should_sync_md(config)
-    sync_config: dict[str, Any] = config.get("sync_config", {}) or {}
+    sync_config: dict[str, Any] = expand_env(
+        config.get("sync_config", {}) or {}, strict=not dry_run
+    )
 
     backend_name = _get_backend_name(root, backend)
 

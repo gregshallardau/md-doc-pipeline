@@ -15,7 +15,8 @@ Credentials are resolved by boto3's standard chain (env vars, ~/.aws/credentials
 instance profile, etc.).
 
 Dependencies (optional extra):
-    pip install "md-doc-pipeline[s3]"
+    uv sync --extra s3           # from a checkout
+    pip install "md-doc-pipeline[s3] @ <release wheel URL>"
     # i.e. boto3>=1.34
 """
 
@@ -44,7 +45,7 @@ def make_uploader(root: Path, sync_config: dict[str, Any]) -> Callable[[Path], s
     except ImportError as exc:
         raise ImportError(
             "boto3 is required for the S3 backend. "
-            "Install with: pip install 'md-doc-pipeline[s3]'"
+            "Install the [s3] extra (e.g. 'uv sync --extra s3'; see README › Installation)."
         ) from exc
 
     bucket: str = sync_config.get("bucket", "")

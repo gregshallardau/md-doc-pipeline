@@ -34,6 +34,7 @@ namespace {
     use MdDoc\FilamentMdDoc\Services\FilesystemScanner;
     use MdDoc\FilamentMdDoc\Services\FileLockService;
     use MdDoc\FilamentMdDoc\Services\BuildRunner;
+    use MdDoc\FilamentMdDoc\Services\CssResolver;
     use MdDoc\FilamentMdDoc\Livewire\DocumentEditor;
     use MdDoc\FilamentMdDoc\Models\FileLock;
     use Illuminate\Support\Facades\Cache;
@@ -41,6 +42,7 @@ namespace {
     require __DIR__ . '/../src/Services/FilesystemScanner.php';
     require __DIR__ . '/../src/Services/FileLockService.php';
     require __DIR__ . '/../src/Services/BuildRunner.php';
+    require __DIR__ . '/../src/Services/CssResolver.php';
     require __DIR__ . '/../src/Livewire/DocumentEditor.php';
 
     function now(): \DateTimeImmutable { return new \DateTimeImmutable(); }
@@ -149,7 +151,24 @@ namespace {
         check(is_dir($base . '/builds/' . $active), 'active build retained');
         check(is_file($base . '/docs-private/secret.md'), 'cleanup does not follow symlinks');
         check(Cache::get('md-doc-build:' . $expired) === null, 'expired cache removed');
-        echo "$checks PHP regression checks passed\n";
+            // CSS theme resolution: PDF theme first, Word-only theme ignored, imports inlined in-workspace.
+    $cssRoot = sys_get_temp_dir() . '/md-doc-css-' . bin2hex(random_bytes(4));
+    mkdir($cssRoot . '/ws', 0777, true);
+    file_put_contents($cssRoot . '/outside.css', 'body { background: url(secret); }');
+    file_put_contents($cssRoot . '/ws/_docx-theme.css', 'body { color: red; }');
+    file_put_contents($cssRoot . '/ws/_theme.css', 'h1 { color: #123456; }');
+    file_put_contents($cssRoot . '/ws/doc.md', '# T');
+    $css = (new CssResolver())->resolve($cssRoot . '/ws/doc.md', $cssRoot . '/ws');
+    check($css['source'] === '_theme.css' && !str_contains($css['css'], 'red'), 'word-only theme ignored');
+    file_put_contents($cssRoot . '/ws/_pdf-theme.css', "@import '_theme.css';\n@import '../outside.css';\nbody { font-size: 11pt; }");
+    $css = (new CssResolver())->resolve($cssRoot . '/ws/doc.md', $cssRoot . '/ws');
+    check($css['source'] === '_pdf-theme.css', 'pdf theme wins over shared theme');
+    check(str_contains($css['css'], '#123456') && str_contains($css['css'], '11pt'), 'import inlined');
+    check(!str_contains($css['css'], 'secret') && !str_contains($css['css'], '@import'), 'imports stay in workspace');
+    foreach (['_docx-theme.css', '_theme.css', '_pdf-theme.css', 'doc.md'] as $f) { unlink($cssRoot . '/ws/' . $f); }
+    unlink($cssRoot . '/outside.css'); rmdir($cssRoot . '/ws'); rmdir($cssRoot);
+
+echo "$checks PHP regression checks passed\n";
     } finally {
         removeTree($base);
     }

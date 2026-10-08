@@ -136,7 +136,20 @@
       }
     }
   }
+  const selectedWorkspace = new URLSearchParams(location.search).get(
+    "workspace",
+  );
+  function workspaceUrl(url) {
+    if (!selectedWorkspace) return url;
+    return (
+      url +
+      (url.includes("?") ? "&" : "?") +
+      "workspace=" +
+      encodeURIComponent(selectedWorkspace)
+    );
+  }
   async function api(url, options = {}) {
+    if (url !== "/api/workspaces") url = workspaceUrl(url);
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -161,6 +174,7 @@
       error.detail = data.detail;
       throw error;
     }
+    if (data.artifact) data.artifact.url = workspaceUrl(data.artifact.url);
     return data;
   }
   function toast(message, error = false, action = null) {
@@ -1578,7 +1592,8 @@
   }
   function download(artifact) {
     const link = el("a");
-    link.href = artifact.url + "?download=true";
+    link.href =
+      artifact.url + (artifact.url.includes("?") ? "&" : "?") + "download=true";
     link.download = artifact.filename;
     document.body.append(link);
     link.click();
@@ -2509,12 +2524,33 @@
       state.recoveryDrafts = readStorage("drafts", {});
       $("workspace-name").textContent = state.workspace.name;
       $("tree-root-name").textContent = state.workspace.name;
-      $("workspace-button").onclick = () =>
+      $("workspace-button").onclick = async () => {
+        if (selectedWorkspace) {
+          const data = await api("/api/workspaces");
+          const body = el("div");
+          for (const ws of data.workspaces) {
+            const link = el(
+              "a",
+              "button",
+              ws.name +
+                (ws.remote ? " · Remote" : "") +
+                (ws.available ? "" : " · Not mounted"),
+            );
+            if (ws.available)
+              link.href = "/?workspace=" + encodeURIComponent(ws.name);
+            body.append(link);
+          }
+          dialog("Open workspace", body, [
+            { label: "Close", run: (d) => d.close() },
+          ]);
+          return;
+        }
         dialog(
           "Local workspace",
           `<p>${escape(state.workspace.workspace)}</p><p>Files are edited locally. Previews and exports use the installed md-doc pipeline.</p>`,
           [{ label: "Close", run: (d) => d.close() }],
         );
+      };
       const layout = readStorage("layout", {});
       Object.assign(state, {
         layout: layout.layout || "split",

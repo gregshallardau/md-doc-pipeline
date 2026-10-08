@@ -1,6 +1,6 @@
 ---
 title: Nova Analytics — REST API Integration Guide
-output_pdf: Nova-Integration-Guide-3.2.pdf
+output_filename: "Nova-Integration-Guide-3.2"
 date: 1 April 2026
 ---
 

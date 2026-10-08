@@ -1,0 +1,477 @@
+# AGENTS.md
+
+This file provides guidance to AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, Copilot and others) when working with code in this repository. Tool-specific files such as `CLAUDE.md` only import it.
+
+## Repo layout
+
+```
+workspace/          ← all live client/company projects go here
+  acme/
+  blueshift/
+examples/           ← reference examples, not production documents
+md_doc/             ← pipeline source code
+tests/
+```
+
+Build a specific company: `md-doc build workspace/acme/`
+Build everything: `md-doc build workspace/`
+
+`md-doc build` without a path defaults to `.` (current directory) — run from a project folder or pass the path explicitly.
+
+## Commands
+
+```bash
+# Install dependencies (uses uv package manager)
+uv sync --group dev
+
+# Lint (fast pre-build check)
+uv run md-doc lint workspace/acme/           # lint one company
+uv run md-doc lint workspace/                # lint everything
+
+# Build
+uv run md-doc build workspace/acme/          # one company
+uv run md-doc build workspace/               # all workspace projects
+uv run md-doc build workspace/acme/ --format dotx  # merge templates only
+uv run md-doc build workspace/acme/ --format pptx  # PowerPoint slide deck
+uv run md-doc build my-doc/ --theme path/to/_pdf-theme.css  # one-off theme override
+uv run md-doc build workspace/               # incremental: skips docs whose output is newer
+                                             #   than the source, config, theme and templates
+uv run md-doc build workspace/ --force       # rebuild everything, ignoring the freshness check
+uv run md-doc build workspace/ -j 8          # build up to 8 documents in parallel
+
+# Scaffold
+uv run md-doc new folder clients/acme --in workspace/blueshift/  # new folder + _meta.yml
+uv run md-doc new doc proposal --in workspace/blueshift/clients/acme/  # new .md
+
+# Fields
+uv run md-doc fields workspace/blueshift/clients/acme/  # show available [[fields]]
+
+# Theme
+uv run md-doc theme init workspace/acme/     # full branded theme
+uv run md-doc theme override workspace/acme/clients/stormfront/  # colour override
+
+# Export (scan for export: true in frontmatter, build, collect outputs)
+uv run md-doc export /path/to/vault              # scan vault, output to vault/Exports/
+uv run md-doc export -w acme                 # named workspace (same as build -w)
+uv run md-doc export -w acme -o /output      # workspace + custom output dir
+uv run md-doc export /path/to/vault -o /output   # custom output directory
+uv run md-doc export /path/to/vault --tag cheatsheet  # filter by tag
+uv run md-doc export /path/to/vault --format pdf  # force format (default: per-doc)
+uv run md-doc export /path/to/vault --no-symlinks # copy files instead of symlinks
+uv run md-doc export /path/to/vault --dry-run    # show what would be exported
+
+# Other
+uv run md-doc doctor             # Check Python, deps, WeasyPrint system libs, optional extras
+uv run md-doc sync [PATH]        # Push outputs to remote storage
+uv run md-doc register [PATH]    # Generate document registry
+
+# Global logging (place BEFORE the subcommand)
+uv run md-doc --debug build workspace/   # verbose: config/theme warnings + per-doc timing
+uv run md-doc --quiet build workspace/   # errors only  (also: --log-level debug|info|warning|error)
+
+# Tests
+uv run pytest                    # All tests
+uv run pytest tests/test_renderer.py -v  # Single file
+
+# Linting / formatting
+uv run ruff check .
+uv run black --check .
+uv run mypy md_doc/
+```
+
+## Documentation
+
+Every user-facing feature must be documented before it ships. Where things live:
+
+| Topic | File |
+|-------|------|
+| Install and first steps | `README.md`, `docs/quickstart.md` |
+| Every command, option, env var, remote workspaces | `docs/cli-reference.md` |
+| Every config key (with a complete key index) | `docs/config-reference.md` |
+| Writing documents, variables, includes, page breaks, maths | `docs/authoring-guide.md`, `docs/markdown-reference.md` |
+| Themes, `--mddoc-*`, `css_vars`, what Word reads, form styling | `docs/theming-guide.md` |
+| Fillable forms | `docs/pdf-forms-guide.md` |
+| Slides | `docs/slides-guide.md`, `docs/llm-deck-prompt.md` |
+| Export and extract | `docs/export-guide.md`, `docs/extraction-guide.md` |
+| Word/PDF parity and known differences | `docs/word-pdf-parity.md` |
+| Troubleshooting, Python API | `docs/troubleshooting.md`, `docs/python-api.md` |
+| Agent prompts | `prompts/` |
+
+`tests/test_docs_coverage.py` fails when a config key, CLI command or option, or `--mddoc-*`
+property is undocumented, when a guide is not linked from the README, or when a relative link in
+the docs is broken. Update the docs in the same change as the feature.
+
+## Architecture
+
+md-doc-pipeline converts Markdown files into PDF/DOCX documents with cascading configuration, Jinja2 template composition, and pluggable cloud sync.
+
+### Field syntax (`.dotx` output)
+
+`[[field_name]]` in Markdown source becomes a Word field in `.dotx` output. This is intentionally distinct from Jinja2 `{{ }}` so both can coexist:
+
+```markdown
+Dear [[contact_name]],          ← Word field in .dotx (type set by dotx_field_type)
+This is version {{ version }}.  ← resolved from _meta.yml at build time
+```
+
+Field type is controlled by `dotx_field_type` in `_meta.yml`:
+- `"form"` (default) — Word Text Form Field with Bookmark = field name. Directly fillable in Word, no mail merge needed.
+- `"merge"` — Classic `«MERGEFIELD»`. Requires a data source and mail merge run.
+
+### Cover page config
+
+```yaml
+cover_page: false  # default — applies to pdf and dotx; set true to add a cover
+```
+
+### Core pipeline (per document)
+
+1. **Config resolution** (`config.py`) — walks filesystem from repo root to document directory, shallow-merging each `_meta.yml` encountered; document YAML frontmatter has highest precedence. Repo root is auto-detected via `.git/` or `pyproject.toml`.
+
+2. **Rendering** (`renderer.py`) — strips frontmatter (preserved verbatim), processes Markdown body through Jinja2. Template fragment search order: doc dir → `doc/templates/` → ancestor `templates/` dirs (deepest first) → repo-root `templates/`. A custom `_MarkdownLoader` handles `{% include %}` resolution.
+
+3. **Building** (`builders/`):
+   - `pdf.py` — Markdown → HTML → PDF via WeasyPrint. Theme cascade: at each directory level (doc dir → ancestors → repo root) looks for `_pdf-theme.css` first, then `_theme.css` (shared base). Auto-generates `_theme.css` at repo root if nothing found anywhere. Extracts first H1 as cover page title when `cover_page: true`. Key call: `weasyprint.HTML(...).write_pdf(path)`.
+   - PDF forms — Add `pdf_forms: true` to any document's frontmatter or parent `_meta.yml` to produce interactive fillable PDFs. The standard `pdf.py` builder passes `pdf_forms=True` to WeasyPrint 68.x, which natively supports AcroForm fields. HTML `<input>`, `<select>`, `<textarea>` elements become real interactive fields. Output file gets a `-form` suffix: `onboarding.md` → `onboarding-form.pdf`. See `workspace/AGENTS.md` for authoring guidance.
+   - `docx.py` — Markdown → HTML → python-docx Document via a custom `_DocxBuilder` HTML walker. For copy-to-email use. Word theme cascade: at each directory level looks for `_docx-theme.css` first, then `_theme.css` (shared base), then `_pdf-theme.css` (legacy fallback). CSS `@import` in any of these files is resolved by `docx_theme.parse_css_for_word`. **PDF↔DOCX visual parity:**
+     - *Page breaks* — the docx builder injects the *same* page breaks the PDF builder does (APPENDIX-section H2s via `_inject_appendix_breaks`, explicit `<!-- pagebreak -->` via `_inject_page_breaks`), honours the theme's `.report-body h1 { page-break-before: always }` rule (each H1 starts a new page in both formats; never the first content element), sets *keep-with-next* on headings, and uses matching paper/margin geometry parsed from the theme's `@page` — so both formats break at the same declared points. (Exact page-for-page identity isn't guaranteed: WeasyPrint and Word are different layout engines.)
+     - *Adjacent tables* — Word merges back-to-back `w:tbl` elements into one table, so the builder inserts a tiny spacer paragraph (2pt mark + 8pt after, mirroring the PDF's `table + table { margin-top: 10pt }`) between consecutive tables.
+     - *Cover page* — mirrors the PDF cover element for element: the top bar/stripe are floating tables at the physical page edges (the PDF cover uses `@page cover { margin: 0 }`), the bottom bar is an in-flow full-bleed band exactly where the PDF lays it out, label/title/divider/meta use the PDF's sizes and colours (divider is `$primary`), `cover_logo`/`cover_bar_logo`/`cover_bar_position`/`cover_stripe`/`cover_footer_line` are honoured, author/date fall back to the same defaults as the PDF, and the cover footer is a text frame ~14mm from the page bottom. With `cover_page: false` the leading H1 stays in the body as a Heading 1 (same as the PDF).
+     - *Headers & footers* — headers/footers are suppressed on the cover via Word's *different first page* (the PDF does this with `@page cover`); with no `footer_*` config the theme's default `@page @bottom-*` boxes (org name, running date, `Page N of M`) are parsed from the CSS and rendered as the Word footer with live PAGE/NUMPAGES fields; `page_header_bar` renders full-bleed at the physical page top with 8pt regular text and multi-logo slots, and drops the footer rule exactly like the PDF.
+   - `dotx.py` — Extends `_DocxBuilder`; converts `[[field_name]]` markers to Word fields (Text Form Fields by default, MERGEFIELDs if `dotx_field_type: merge`). Patches the saved file's ZIP content type from `.docx` → `.dotx`. Applies Word CSS theme via the same cascade as `docx.py`.
+   - `pptx.py` — Markdown → HTML → python-pptx presentation. Unlike the flowing builders, it **segments** the document into slides: the first H1 (or `title`) → title slide, later H1s → section slides, each H2 → a content slide; `<!-- slide -->` forces a break and `<!-- notes: … -->` attaches speaker notes. `slide_split` (`h2` default | `h1` | `marker`) selects the strategy. Reuses the shared image/Mermaid helpers in `builders/_assets.py` (`_resolve_asset`, `_render_mermaid_to_images`, `_svg_to_png` — extracted so docx and pptx share them). Theme colours/fonts come from the same CSS cascade (`resolve_docx_theme`); an optional `_pptx-template.pptx`/`.potx` (via `pptx_template`) is used as the base for brand master slides.
+
+4. **Mermaid diagrams** (`mermaid.py`) — fenced `mermaid` code blocks in Markdown are rendered to inline SVGs during the PDF build. Pure Python — no external rendering service required. Supported diagram types:
+   - `flowchart`/`graph` — directed graphs with 8 node shapes (rect, diamond, stadium, rounded, circle, cylinder, hexagon, subroutine), edge styles (solid `-->`, dotted `-.->`, thick `==>`, no-arrow `---`), pipe labels (`-->|label|`), and subgraph grouping
+   - `pie` — pie charts with title, labelled slices, percentage labels, and legend
+   - `donut` — donut charts (same data as pie, with centre hole and total label)
+   - `bar` / `xychart-beta` — bar charts with x-axis labels, y-axis scale, value labels
+   - `gauge` — gauge/meter with arc, value display, min/max labels
+   - `sequenceDiagram` — sequence diagrams with participants, solid/dashed arrows, and labels
+   - `timeline` — vertical timelines with period labels and event cards
+   - `gantt` — Gantt charts with sections, task bars, durations, and dependencies
+   - `mindmap` — hierarchical mind maps with root, branch, and leaf nodes
+   - `erDiagram` — entity-relationship diagrams with entities, attributes, and relationship lines
+   - `stateDiagram` / `stateDiagram-v2` — state diagrams with states, transitions, start/end markers
+   - Diagram colours are auto-extracted from the document's `_pdf-theme.css` (primary, accent, text, muted)
+
+5. **Syncing** (`sync/`) — discovers `*.pdf`, `*.docx` (optionally `*.md`) outputs and uploads via the configured backend: `azure_files.py` (Azure File Share), `s3.py` (AWS S3), or `local.py`. Directory structure is preserved relative to the search root.
+
+6. **Registering** (`register.py`) — scans build outputs, resolves metadata from config cascade, writes `register.json` / `register.md` / `register.csv`.
+
+### Merge field schema (`_merge_fields.yml`)
+
+Place `_merge_fields.yml` at any directory level to document available `[[fields]]`. Files cascade additively — deeper levels add to parent fields. Shallower definitions are overridden by deeper ones for the same key.
+
+```yaml
+# workspace/acme/_merge_fields.yml
+contact_name: Full name of the primary contact
+company: Client company name
+
+# workspace/acme/clients/stormfront/_merge_fields.yml
+account_manager: Assigned account manager for this client
+```
+
+Use `md-doc fields [DIR]` to see all resolved fields at a given level. `config.load_merge_fields(doc_path)` returns the full merged dict.
+
+### Configuration keys (in `_meta.yml` or document frontmatter)
+
+**Metadata & output control:**
+```yaml
+title, product, document_type, version, status, author  # standard metadata fields
+outputs: [pdf, docx]          # default: [pdf]; valid values: pdf | docx | dotx | pptx
+output_filename: "{{ product }}-proposal"  # override output filename (all formats); Jinja2 vars supported; extension auto-appended
+output_dir: /path/to/dest/    # route outputs here; cascades from _meta.yml; CLI --output wins
+pdf_forms: true               # enable interactive form fields in PDF (uses -form.pdf suffix)
+include_md_in_share: false    # whether to include .md source in sync output
+```
+
+**Theme & styling:**
+```yaml
+pdf_theme: path/to/custom/_pdf-theme.css
+                               # also available as CLI flag: --theme / -t
+                               # _pdf-theme.css is also used as Word theme fallback (see below)
+                               # path is resolved relative to repo root or absolute
+dotx_field_type: form         # "form" (default, Text Form Fields, fillable in Word) | "merge" (classic MERGEFIELDs)
+body_text_align: justify      # default paragraph alignment for docx/dotx body text: justify | left | center | right
+table_col_widths: [30, 70]    # relative column widths for tables (pdf/docx/dotx); must match column count or it is ignored
+                              # per-table override: <!-- col-widths: 30, 70 --> comment on the line before a table (all formats)
+```
+
+**Slides (`pptx` output):**
+```yaml
+outputs: [pptx]
+slide_split: h2               # slide boundaries: h2 (default, each H2 → slide) | h1 | marker (only <!-- slide -->)
+slide_size: "16:9"            # "16:9" (default) | "4:3"  — quote it so YAML doesn't parse 16:9 as a number
+pptx_template: templates/brand.pptx   # optional .pptx/.potx base for brand master slides (cascade-resolved)
+# reuses title / author / product / date (title slide) and the theme colour/font cascade
+```
+
+Segmentation: the first `# H1` (or `title`) → title slide, later `# H1`s → section slides,
+each `## H2` → content slide. `<!-- slide -->` forces a break; `<!-- notes: … -->` adds speaker
+notes. Mermaid diagrams embed as PNGs (needs the `[mermaid]` extra / `cairosvg`).
+
+**Deck-first layout directives** (full guide: `docs/slides-guide.md`, worked example:
+`examples/blueshift/decks/quarterly-review.md`). A directive starts a new slide; the next
+heading titles that slide instead of splitting to another. Overlong slides shrink text to fit.
+
+```markdown
+<!-- slide: section background=#1b4f72 -->   forced section divider (solid fill)
+<!-- slide: columns -->                       2–4 column body; <!-- col --> divides
+<!-- slide: stat -->                          big-number tiles: - **47%** YoY growth
+<!-- slide: quote -->                         centred pull-quote; — Name = attribution
+<!-- slide: image -->                         picture(s)/Mermaid fill the body, text = caption
+<!-- slide: center -->                        vertically centred statement
+```
+
+`background=#hex` works on any directive; dark fills flip text to white automatically.
+Unknown layout names degrade to the default content layout with a warning.
+`docs/llm-deck-prompt.md` holds a ready-made LLM prompt that converts raw content
+into a valid deck file in this schema.
+
+**Per-section alignment in Markdown (docx/dotx):**
+
+Wrap sections in an HTML `<div style="text-align: ...">` block to override alignment for that block:
+
+```markdown
+<!-- Justify the whole document via body_text_align: justify in _meta.yml -->
+
+<div style="text-align: left">
+
+This paragraph and the heading below will be left-aligned.
+
+## Left-Aligned Section
+
+Normal content here.
+
+</div>
+
+Back to justified body text here.
+```
+
+The alignment cascades: all `<p>` and heading tags inside a `<div>` inherit its `text-align`. PDF uses native CSS so this works there too. For docx, `body_text_align` sets the default and `<div>` blocks override it per section.
+
+Note: `_docx-theme.css` (filesystem config file, not a _meta.yml key) is an optional Word-specific CSS override. Place alongside `_pdf-theme.css`. If present, it is used instead of `_pdf-theme.css` for docx/dotx output. If absent, docx/dotx builders fall back to `_pdf-theme.css`. Same CSS format — only properties meaningful to python-docx are needed (body font-family/font-size, h1–h4 color/font-size, code font-family, th background/color).
+
+**CSS custom properties from config (`css_vars`, PDF only):** override an asset or value that lives in your theme CSS, per document, without editing the theme. Each entry becomes a `:root { --name: value }` declaration. A value ending in an image extension (`.png/.jpg/.jpeg/.svg/.webp/.gif`) is resolved through the asset cascade (doc dir → ancestors → repo root) and wrapped as `url("file://…")`; other values are injected literally.
+
+```css
+/* _pdf-theme.css — keep the styling, reference a variable for the asset */
+.cover-bar-bottom::after { background: var(--cover-watermark) no-repeat center center; }
+```
+```yaml
+# document frontmatter (or a parent _meta.yml)
+css_vars:
+  cover-watermark: assets/client-logo.png   # → --cover-watermark: url("file://…/assets/client-logo.png")
+  accent: "#e67e22"                          # literal value, injected as-is
+```
+
+**Brand defaults from theme CSS (`--mddoc-*` custom properties):** the pure
+*look* values below can live in the theme CSS at the global level instead of
+YAML — the theme provides the brand default, and any YAML key (any `_meta.yml`
+or frontmatter) still wins. Feature toggles (`page_header_bar`, `cover_page`)
+and content (texts, logo choices) stay YAML-only.
+
+```css
+/* _theme.css — the brand lives here */
+:root {
+  --mddoc-header-bar-color: #002a5b;        /* page_header_bar_color */
+  --mddoc-header-bar-text-color: #ffffff;   /* page_header_bar_text_color */
+  --mddoc-header-bar-height: 24mm;          /* page_header_bar_height */
+  --mddoc-header-bar-padding: 8mm;          /* page_header_bar_padding */
+  --mddoc-header-logo-height: 10mm;         /* header_logo_height */
+  --mddoc-cover-bar-height: 132mm;          /* cover_bar_height (+ -top-/-bottom- variants) */
+  --mddoc-cover-stripe-height: 120mm;       /* cover_stripe_height (+ -width) */
+  --mddoc-cover-footer-color: "#ffffff";    /* cover_footer_color */
+  --mddoc-section-bar-color: #2563eb;       /* section_bar_color (+ -text-color) */
+}
+```
+
+Read from whichever theme file each builder resolves (PDF: `_pdf-theme.css` →
+`_theme.css`; Word: `_docx-theme.css` → `_theme.css` → `_pdf-theme.css`) — put
+them in the shared `_theme.css` unless the formats deliberately diverge.
+
+**Cover page:**
+```yaml
+cover_page: false             # default false — set true to add a branded cover
+cover_label: Report           # text above the title on cover page (default: "Report")
+cover_text_align: left        # left | center | right (default: left) — alignment of cover content
+cover_background: white       # cover page background colour (default: "white"; PDF only — Word has no per-page fill)
+cover_divider: true           # show horizontal rule under title (default: true)
+cover_meta_label: "Prepared by"  # label before the author name (default: "Prepared by")
+cover_meta_author: "Custom Name" # override author on cover only (default: author value)
+cover_footer: true            # show footer on cover page (default: true)
+cover_footer_text: "Author · Confidential"  # footer text (default: "{author} · Confidential")
+cover_footer_line: true       # show border-top line on footer (default: true)
+cover_footer_color: "#738599" # footer text colour
+cover_logo: logo.png          # optional logo on cover page (resolved like header_logo)
+cover_bar: true               # show coloured bar(s) on cover (default: true)
+cover_bar_position: top       # top | bottom | both (default: "top")
+cover_bar_height: "10mm"      # bar height (default: "10mm")
+cover_bar_top_height: "10mm"  # top bar height (overrides cover_bar_height for top)
+cover_bar_bottom_height: "10mm" # bottom bar height (overrides cover_bar_height for bottom)
+cover_bar_logo: logo.png      # logo inside the cover bar (resolved like header_logo)
+cover_text_on_bar: false      # true = place cover content inside top bar (default: false)
+cover_stripe: false           # vertical accent stripe on cover (default: false)
+cover_stripe_height: "120mm"  # stripe height (default: "120mm")
+cover_stripe_width: "6mm"     # stripe width (default: "6mm")
+```
+
+**Headers & footers (content pages):**
+```yaml
+header_logo: assets/logo.png  # logo image in page header (resolved doc dir → ancestors → repo root)
+header_logo_position: right   # left | center | right (default: right)
+header_logo_height: "10mm"    # exact logo height (default: intrinsic size capped at 8mm, or 70% of the bar height inside page_header_bar; same rule in PDF and Word)
+header_text: "Company Name"   # text in page header
+header_text_position: left    # left | center | right (default: left)
+footer_left: "Company Name"   # text in left footer slot (injected as CSS @bottom-left)
+footer_center: "Confidential" # text in center footer slot (injected as CSS @bottom-center)
+footer_right: "Page 1"        # text in right footer slot (injected as CSS @bottom-right)
+                               # footer_* keys are optional; cover page always suppresses them
+```
+
+**Page header bar (optional coloured bar on every content page):**
+```yaml
+page_header_bar: true          # show coloured bar (default: false)
+page_header_bar_color: "#2563eb"
+page_header_bar_text_color: "#ffffff"
+page_header_bar_height: "12mm"
+page_header_bar_padding: "6mm" # gap between bar and content
+page_header_bar_logo: path.png # single logo in bar (falls back to header_logo)
+page_header_bar_logo_position: right
+page_header_bar_logos:         # multi-logo: list of {path, position} objects
+  - path: logo.png
+    position: left
+```
+
+**Section heading styling:**
+```yaml
+section_bar: true              # coloured background bars on H1/H2 headings (default: false)
+section_bar_color: "#2563eb"   # bar colour (default: "#2563eb")
+section_bar_text_on_bar: true  # true = white text on bar, false = border-top line (default: true)
+section_bar_text_color: "#ffffff"  # text colour when text_on_bar is true
+section_bar_headings: "h1,h2" # which headings get bars (default: "h1,h2")
+```
+
+**Sync & integration:**
+```yaml
+sync_target: azure | s3 | local
+sync_config: { ... }          # backend-specific connection params
+```
+
+### Output placement
+
+- Default: alongside the source `.md` file
+- With `--output DIR` (CLI flag): mirrors the source tree under `DIR`
+- With `output_dir` (config key): mirrors the source tree under that directory (same behaviour as CLI `--output`)
+- CLI `--output` takes precedence over config `output_dir`
+
+### Export frontmatter keys (for vault/document export workflow)
+
+When using `md-doc export`, Markdown files can include special frontmatter to control export behavior:
+
+```yaml
+export: true                  # required — marks this note for export
+export_format: pdf            # output format (pdf, docx, dotx). Default: pdf
+export_path: Cheat Sheets     # relative subdirectory in export output. Default: mirrors source structure
+export_filename: My Doc       # override output filename (extension added automatically)
+draft: true                   # optional — skip this note even if export: true
+tags: [cheatsheet, cli]       # optional — metadata tags; use --tag flag to filter exports
+```
+
+Export workflow:
+1. `md-doc export /path/to/vault` scans for files with `export: true`
+2. Files with `draft: true` are skipped
+3. Use `--tag TAGNAME` to filter by tags
+4. Outputs go to `vault/Exports/` by default, or `-o /path/` to override
+5. Use `--format pdf|docx|dotx` to force a single format (default: per-document)
+
+### Headerless tables
+
+Markdown pipe tables require a header row. To render a table **without** a
+header band (e.g. a signature block), make every header cell empty — the
+builders drop the all-empty header row in every format:
+
+```markdown
+| | |
+| --- | --- |
+| Greg Shallard | [[signed_date]] |
+```
+
+### Word header/footer geometry
+
+Word's header/footer distance from the page edge (default 12.7mm) can be set
+from the theme CSS `@page` block — custom properties, so WeasyPrint ignores
+them and the PDF is unaffected. Put them in `_docx-theme.css` (or the shared
+theme):
+
+```css
+@page {
+  margin: 24mm 20mm 20mm 25mm;
+  --docx-header-distance: 8mm;   /* header text starts 8mm from the top edge */
+  --docx-footer-distance: 6mm;   /* footer sits 6mm from the bottom edge */
+}
+```
+
+Header/footer paragraphs never inherit the theme's body line-height or
+paragraph spacing (a 1.6 line height would triple the container height).
+
+### List spacing (Word)
+
+`li { margin / line-height }` in the theme CSS sets Word's *List Bullet* /
+*List Number* style spacing — the same rules the PDF already reads:
+
+```css
+li { margin: 0 0 2pt 0; line-height: 1.2; }   /* tight bullets, both formats */
+```
+
+### Footer rendering (docx/dotx)
+
+Multiline footer text in Word documents uses soft line breaks (`<w:br/>`) instead of separate paragraphs. This keeps the footer as a single logical unit while preserving line breaks visually. No behavior change for users — footers render correctly whether you use single or multi-line text in `footer_left`, `footer_center`, `footer_right` config keys.
+
+### WeasyPrint PDF forms — key facts for implementation
+
+WeasyPrint 68–70 support interactive AcroForm PDF fields natively (the dependency is bounded to `>=68,<71`). No extra libraries needed.
+
+- Pass `pdf_forms=True` to `write_pdf()`: `weasyprint.HTML(...).write_pdf(path, pdf_forms=True)`
+- HTML `<input type="text" name="x">` → `/Tx` text field
+- HTML `<input type="checkbox" name="x">` → `/Btn` checkbox
+- HTML `<input type="radio" name="x" value="y">` → `/Btn` radio group
+- HTML `<select name="x"><option>…</option></select>` → `/Ch` dropdown
+- HTML `<textarea name="x">` → `/Tx` multiline text field
+- HTML `<button type="submit">` / `<input type="submit">` → submit action field
+- The `name` attribute becomes the PDF field name (use snake_case)
+- WeasyPrint natively carries `name`, `value`, `checked`, `maxlength`; it silently
+  drops `required`, `readonly`, `title` (tooltip) and `<option selected>` — md-doc
+  patches those into the PDF itself via a `write_pdf(finisher=…)` hook
+  (`_collect_form_field_meta` / `_make_forms_finisher` in `builders/pdf.py`)
+- CSS `appearance: auto` must be set on form elements for WeasyPrint to render them as interactive fields
+- CSS controls visual appearance — form field styles should live in `_pdf-theme.css`
+
+**`?[...]` shorthand** (see `docs/pdf-forms-guide.md` for the full reference —
+parsing shared via `md_doc/forms.py`):
+- `?[text: name, required]` (also email/date/number/tel/url), `?[textarea: x, rows=4]`,
+  `?[checkbox: x, label=…]`, `?[yesno: x]` (Yes/No pair → `x_yes`/`x_no`),
+  `?[select: x | A | B]`, `?[radio-inline: x | A | B]`, `?[signature: x]`, `?[submit Label]`
+- `?[box] … ?[/box]` — bordered insurance-form field grid; rows split on `|`,
+  `**labels**`/`*hints*` live inside cells, `?[box: widths=72,28]` fixes columns,
+  short rows span (colspan). `?[row] … ?[/row]` — borderless side-by-side cells.
+- Fields inside ordinary markdown tables render borderless, filling the cell.
+- `md-doc lint` validates fields: unknown types, duplicate names (AcroForm links
+  same-named fields), and `?[…]` present without `pdf_forms: true`.
+- **dotx**: `?[...]` maps to real Word form fields (FORMTEXT / FORMCHECKBOX /
+  FORMDROPDOWN); plain docx renders bordered, PDF-sized boxes (and blank grid cells) for
+  print-and-write.
+- The first body H1 never forces a page break (letterhead-friendly; applies to
+  all documents, both PDF and Word).
+
+### WeasyPrint system dependencies
+
+PDF generation requires system libraries (`libpango`, `libgdk-pixbuf`, Cairo). On Linux install via `apt install weasyprint` or the equivalent for your distro.
+
+### Optional package extras
+
+```bash
+uv sync --extra azure   # azure-storage-file-share
+uv sync --extra s3      # boto3
+```

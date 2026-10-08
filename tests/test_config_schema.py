@@ -72,3 +72,12 @@ def test_non_dict_input_is_ignored():
 def test_known_keys_cover_documented_controls():
     for key in ("outputs", "cover_page", "section_bar", "sync_target", "table_col_widths"):
         assert key in KNOWN_KEYS
+
+
+def test_cover_text_align_accepts_center():
+    """Both builders implement ``center`` and the config reference documents it."""
+    from md_doc.config_schema import validate_config
+
+    for value in ("left", "center", "right"):
+        assert validate_config({"cover_text_align": value}) == []
+    assert validate_config({"cover_text_align": "justify"})

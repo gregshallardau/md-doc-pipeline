@@ -1,6 +1,6 @@
 ---
 title: Pulse Monitor — On-Call Handbook
-output_pdf: Pulse-On-Call-Handbook-1.8.pdf
+output_filename: "Pulse-On-Call-Handbook-1.8"
 date: 1 April 2026
 ---
 

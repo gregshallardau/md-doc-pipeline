@@ -117,14 +117,33 @@ jobs:
       - name: Build sdist + wheel
         run: uv build
 
+      - name: Install system libraries (WeasyPrint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 \
+            libgdk-pixbuf2.0-0 libcairo2 libffi-dev shared-mime-info
+
+      # A fresh pip install resolves the newest dependency versions the package allows
+      # (unlike the locked test jobs), so this is where a breaking upstream release shows up.
       - name: Install the wheel into a clean venv and run the CLI
         run: |
           python3.12 -m venv /tmp/smoke
           /tmp/smoke/bin/pip install --upgrade pip
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/md-doc --version
-          # doctor may warn about optional extras / system libs; that's fine here.
-          /tmp/smoke/bin/md-doc doctor || true
+          /tmp/smoke/bin/md-doc doctor
+
+      - name: Build real documents with the installed wheel (PDF, Word, fillable PDF)
+        run: |
+          mkdir -p /tmp/smoke-docs/.git
+          printf -- '---\ntitle: Smoke\noutputs: [pdf, docx, dotx]\n---\n\n# Smoke\n\nHello **world**.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n' > /tmp/smoke-docs/report.md
+          printf -- '---\ntitle: Form\npdf_forms: true\ncover_page: false\n---\n\n# Form\n\n**Name** ?[text: name, required]\n\n?[box]\n**City** ?[text: city] | **State** ?[text: state]\n?[/box]\n' > /tmp/smoke-docs/form.md
+          /tmp/smoke/bin/md-doc build /tmp/smoke-docs --force
+          for f in report.pdf report.docx report.dotx form-form.pdf; do
+            test -s "/tmp/smoke-docs/$f" || { echo "missing output: $f" >&2; exit 1; }
+          done
+
       - name: Build & install editor wheel and test real server startup
         run: |
           uv build --directory md-doc-web-editor --out-dir /tmp/editor-dist

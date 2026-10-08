@@ -270,11 +270,10 @@ class TestDotxFormFields:
         xml = self._build_dotx(tmp_repo, "?[box]\nA | ?[text: a]\n?[/box]\n\n?[submit Send]\n")
         assert "?[" not in xml
 
-    def test_docx_still_uses_underscores(self, tmp_repo):
+    def test_docx_renders_field_as_bordered_box_not_form_field(self, tmp_repo):
         from md_doc.builders.docx import build
 
         doc = tmp_repo / "t.md"
-        # Placeholder must be inline (a bare ________ line is a markdown <hr>).
         md = "---\ntitle: T\n---\n\n# T\n\n**Name** ?[text: name]\n"
         doc.write_text(md, encoding="utf-8")
         out = tmp_repo / "t.docx"
@@ -288,7 +287,10 @@ class TestDotxFormFields:
         )
         with zipfile.ZipFile(out) as z:
             xml = z.read("word/document.xml").decode("utf-8")
-        assert "________" in xml and "FORMTEXT" not in xml
+        # A plain .docx shows the input as a PDF-sized bordered box, never a
+        # live Word form field (those belong to the .dotx template).
+        assert 'w:fill="FAFAFA"' in xml and "<w:pBdr>" in xml and "FORMTEXT" not in xml
+        assert "________" not in xml
 
 
 # ── first-H1 page-break fix (docx side) ──────────────────────────────────────
@@ -319,8 +321,10 @@ def test_docx_first_h1_after_letterhead_no_break(tmp_repo):
     d = Document(str(out))
     first = next(p for p in d.paragraphs if p.text == "First Heading")
     second = next(p for p in d.paragraphs if p.text == "Second Heading")
-    assert not first.paragraph_format.page_break_before  # letterhead must not force page 2
-    assert second.paragraph_format.page_break_before  # later H1s still break
+    from tests.test_docx_parity import starts_new_page
+
+    assert not starts_new_page(first)  # letterhead must not force page 2
+    assert starts_new_page(second)  # later H1s still break
 
 
 # ── adjacent tables ──────────────────────────────────────────────────────────
@@ -380,3 +384,30 @@ def test_submit_colon_does_not_create_a_word_field(tmp_repo):
     from md_doc.builders.docx import _convert_form_fields_for_dotx
 
     assert _convert_form_fields_for_dotx("?[submit: Send]") == ""
+
+
+def test_signature_row_labels_become_captions():
+    md = "?[row]\n?[signature: sig] | **Date** ?[date: d]\n?[/row]\n"
+    html = _expand_form_fields(md, is_form=True)
+    assert '<div class="signature-label">Date</div>' in html
+
+
+def test_box_question_rows_centre_and_currency_prefix_inline():
+    md = "?[box]\nTotal turnover: | $ ?[number: t]\n**City** ?[text: c]\n?[/box]\n"
+    html = _expand_form_fields(md, is_form=True)
+    assert '<tr class="qa">' in html
+    assert 'class="prefixed-field"' in html
+    assert html.count('<tr class="qa">') == 1  # the labelled row stays top-aligned
+
+
+def test_trailing_checkbox_text_folds_into_label():
+    html = _expand_form_fields("?[checkbox: agree] I agree to terms\n", is_form=True)
+    assert "option-solo" in html
+    assert "I agree to terms</label>" in html
+
+
+def test_option_controls_are_centred_on_label_caps():
+    from md_doc.builders.pdf import _form_support_css
+
+    css = _form_support_css(None)
+    assert "position: relative; top: -0.1em" in css

@@ -8,6 +8,14 @@ From the repository root:
 
 ```bash
 uv sync --group editor
+uv run --offline --no-sync md-doc-edit
+```
+
+With no directory, the editor discovers local folders under `workspace/` and the remote shares in `workspace/remote-workspaces.yml`, falling back to examples on a fresh checkout. The workspace button switches between available workspaces; unmounted shares remain listed. Each workspace has its own editor session, buffers and output artifacts. New workspaces appear without restarting.
+
+To open all samples as one directory:
+
+```bash
 uv run --offline --no-sync md-doc-edit serve examples/
 ```
 

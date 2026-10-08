@@ -36,20 +36,45 @@ import weasyprint  # noqa: E402
 
 from ..config import coerce_bool  # noqa: E402
 from ._cover import footer_band_geometry  # noqa: E402
+from ..forms import collapse_select_markup  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
+
+
+def _reject_external(url: str) -> None:
+    """Raise unless *url* is embedded data or a local file (no host, no UNC path)."""
+    parsed = urlsplit(url)
+    path = unquote(parsed.path).replace("\\", "/")
+    if parsed.scheme not in {"file", "data"} or parsed.netloc or path.startswith("//"):
+        raise ValueError(f"External resource blocked: {parsed.scheme or 'relative'} URL")
 
 
 def _local_url_fetcher(url: str, *args: Any, **kwargs: Any) -> Any:
     """Allow embedded data and local files only, before any network I/O.
 
     WeasyPrint applies this to images, stylesheets, fonts and nested SVG assets.
-    Remote and UNC resources are omitted rather than fetched.
+    Remote and UNC resources are omitted rather than fetched. Used with
+    WeasyPrint before 70, where a ``url_fetcher`` is a plain function.
     """
-    parsed = urlsplit(url)
-    path = unquote(parsed.path).replace("\\", "/")
-    if parsed.scheme not in {"file", "data"} or parsed.netloc or path.startswith("//"):
-        raise ValueError(f"External resource blocked: {parsed.scheme or 'relative'} URL")
+    _reject_external(url)
     return weasyprint.default_url_fetcher(url, *args, **kwargs)
+
+
+def _make_url_fetcher() -> Any:
+    """The offline fetcher in the form the installed WeasyPrint expects.
+
+    WeasyPrint 70 replaced ``default_url_fetcher`` and function fetchers with a
+    ``URLFetcher`` class, whose instances carry state WeasyPrint reads.
+    """
+    fetcher_cls = getattr(weasyprint, "URLFetcher", None)
+    if fetcher_cls is None:
+        return _local_url_fetcher
+
+    class _LocalURLFetcher(fetcher_cls):  # type: ignore[misc, valid-type]
+        def fetch(self, url: str, headers: Any = None) -> Any:
+            _reject_external(url)
+            return super().fetch(url, headers)
+
+    return _LocalURLFetcher(allowed_protocols={"file", "data"})
 
 
 # Markdown extensions to enable
@@ -187,11 +212,6 @@ def _parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
 # Input types the ?[...] shorthand passes through verbatim; anything else
 # falls back to a plain text input.
 _INPUT_TYPES = ("text", "email", "date", "number", "tel", "url")
-# Every field type the shorthand understands (used by the linter too).
-KNOWN_FORM_FIELD_TYPES = frozenset(
-    (*_INPUT_TYPES, "textarea", "checkbox", "signature", "select", "radio")
-    + ("radio-inline", "checkbox-inline", "yesno")
-)
 
 
 def _extra_attrs_html(attrs: dict[str, str | bool], skip: tuple[str, ...] = ()) -> str:
@@ -234,7 +254,9 @@ def _field_to_html(field_spec: str) -> str:
         options = parts[1:] if len(parts) > 1 else []
 
         if ftype == "select":
-            opts_html = "\n".join(
+            # One line: a multi-line <select> is split by the Markdown step and
+            # leaves the surrounding keep-together container unclosed.
+            opts_html = "".join(
                 (
                     f'  <option value="{_escape_html(o.lower().replace(" ", "_"))}">{_escape_html(o)}</option>'
                     if not o.startswith("--")
@@ -243,7 +265,7 @@ def _field_to_html(field_spec: str) -> str:
                 for o in options
             )
             req = " required" if name_attrs.get("required") else ""
-            return f'<select name="{_escape_html(name)}"{req}>\n{opts_html}\n</select>'
+            return f'<select name="{_escape_html(name)}"{req}>{opts_html}</select>'
 
         elif ftype in ("radio", "radio-inline"):
             # Span-level markup: block-level <div>s inside generated table
@@ -333,6 +355,24 @@ def _cell_to_html(cell: str) -> str:
     return html
 
 
+_ROW_LABELLED_FIELD_RE = re.compile(r"^\*\*([^*]+)\*\*\s*(\?\[[^\]]*\])$")
+
+
+def _row_cell_to_html(cell: str, captions: bool) -> str:
+    """A ``**Label** ?[field]`` row cell becomes field + caption beneath the rule.
+
+    Only in rows holding a signature: it matches the signature caption, so
+    side-by-side signature and date cells line up instead of one label above and one below.
+    """
+    m = _ROW_LABELLED_FIELD_RE.match(cell) if captions else None
+    if not m:
+        return _cell_to_html(cell)
+    return (
+        f"{_cell_to_html(m.group(2))}"
+        f'<div class="signature-label">{_escape_html(m.group(1))}</div>'
+    )
+
+
 def _expand_row_block(row_content: str) -> str:
     """Expand a ?[row]...?[/row] block into a borderless table.
 
@@ -351,6 +391,7 @@ def _expand_row_block(row_content: str) -> str:
         if not cells:
             continue
 
+        captions = any(c.startswith("?[signature") for c in cells)
         n = len(cells)
         width = f"{100 // n}%"
         tds = []
@@ -361,7 +402,7 @@ def _expand_row_block(row_content: str) -> str:
             tds.append(
                 f'<td style="border: none; width: {width}; '
                 f'padding: {padding}; vertical-align: top;">'
-                f"{_cell_to_html(cell)}</td>"
+                f"{_row_cell_to_html(cell, captions)}</td>"
             )
         rows_html.append(f'<tr style="background: none;">{"".join(tds)}</tr>')
 
@@ -369,6 +410,20 @@ def _expand_row_block(row_content: str) -> str:
         f'<table class="field-row" style="border: none; width: 100%;">\n'
         f'{"".join(rows_html)}\n'
         f"</table>"
+    )
+
+
+_PREFIXED_FIELD_RE = re.compile(r"^([^\w\s*?\[]{1,3})\s*(\?\[[^\]]*\])$")
+
+
+def _box_cell_to_html(cell: str) -> str:
+    """``$ ?[number: x]`` keeps its currency prefix on the field's own line."""
+    m = _PREFIXED_FIELD_RE.match(cell)
+    if not m:
+        return _cell_to_html(cell)
+    return (
+        f'<div class="prefixed-field"><span>{_escape_html(m.group(1))}</span>'
+        f"{_cell_to_html(m.group(2))}</div>"
     )
 
 
@@ -426,11 +481,27 @@ def _expand_box_block(args: str | None, box_content: str) -> str:
                 width_style = f' style="width: {100 // max_cols}%;"'
             else:
                 width_style = ""
-            tds.append(f"<td{colspan}{width_style}>{_cell_to_html(cell)}</td>")
-        rows_html.append(f"<tr>{''.join(tds)}</tr>")
+            tds.append(f"<td{colspan}{width_style}>{_box_cell_to_html(cell)}</td>")
+        # Question/answer rows (no **label** in any cell) centre vertically so a
+        # Yes/No pair or a $ field lines up with its question; labelled rows
+        # keep the label pinned to the top of the cell.
+        qa = "" if any("**" in c for c in cells) else ' class="qa"'
+        rows_html.append(f"<tr{qa}>{''.join(tds)}</tr>")
 
     body = "".join(rows_html)
     return f'<table class="field-box">\n{body}\n</table>'
+
+
+# `?[checkbox: x] Label text` — the text trails the generated <label>, which
+# leaves it outside the label (wide gap, not click-associated). Pull it in.
+_SOLO_CHECKBOX_RE = re.compile(
+    r'(<label class="option-item")(><input type="checkbox"[^>]*>)</label>[ \t]+([^<\s][^\n]*)$',
+    re.MULTILINE,
+)
+
+
+def _fold_checkbox_label(m: re.Match[str]) -> str:
+    return f'{m.group(1)[:-1]} option-solo"{m.group(2)} {m.group(3)}</label>'
 
 
 def _expand_form_fields(md_content: str, is_form: bool) -> str:
@@ -462,6 +533,7 @@ def _expand_form_fields(md_content: str, is_form: bool) -> str:
     result = expand_boxes(md_content)
     result = expand_rows(result)
     result = _FORM_FIELD_RE.sub(lambda m: _field_to_html(m.group(1)), result)
+    result = _SOLO_CHECKBOX_RE.sub(_fold_checkbox_label, result)
 
     if is_form and "<form" not in result.lower():
         result = '<form markdown="1">\n\n' + result + "\n\n</form>"
@@ -479,6 +551,40 @@ _BLOCK_RE = re.compile(rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL)
 _BREAK_DIV_MARKERS = ("md-doc-page-break", "appendix-template-break")
 
 
+_LABEL_TEXTAREA_RE = re.compile(
+    r"(<p>(?:(?!</p>).)*</p>)(\s*)(<textarea\b.*?</textarea>)", re.DOTALL
+)
+
+
+def _group_label_with_textarea(html_body: str) -> str:
+    """Wrap ``<p>label</p><textarea>`` pairs so a label is never stranded.
+
+    Python-Markdown emits a ``<textarea>`` as its own block after the label's
+    paragraph, so nothing ties the two together across a page break.
+    """
+    return _LABEL_TEXTAREA_RE.sub(
+        lambda m: f'<div class="field-group">{m.group(1)}{m.group(2)}{m.group(3)}</div>',
+        html_body,
+    )
+
+
+_PAIRED_TAGS = ("div", "select", "textarea", "form", "table", "ul", "ol", "blockquote", "pre", "dl")
+
+
+def _balanced_html(fragment: str) -> bool:
+    """True when every paired tag in *fragment* is opened and closed equally often.
+
+    A keep-together wrapper around a fragment that opens a tag it never closes
+    (a ``<select>`` split by the Markdown step, say) would be unable to close
+    its own ``</div>`` and would swallow the rest of the document.
+    """
+    lowered = fragment.lower()
+    return all(
+        len(re.findall(rf"<{tag}\b", lowered)) == len(re.findall(rf"</{tag}\s*>", lowered))
+        for tag in _PAIRED_TAGS
+    )
+
+
 def _keep_heading_with_next(html_body: str) -> str:
     """Wrap each heading + up to two following block elements in a keep-together div.
 
@@ -486,6 +592,10 @@ def _keep_heading_with_next(html_body: str) -> str:
     element is large.  Wrapping both in a container with break-inside:avoid
     forces them onto the same page.  We grab up to two siblings to handle
     the common pattern: heading → short intro paragraph → code/table block.
+
+    Everything between the heading and the last grouped block stays inside the
+    container in document order. A horizontal rule ends a section, so grouping
+    stops there rather than binding a heading to the next section's content.
     """
     heading_re = re.compile(r"(<h[2-4][^>]*>.*?</h[2-4]>)", re.DOTALL)
     parts = heading_re.split(html_body)
@@ -496,35 +606,32 @@ def _keep_heading_with_next(html_body: str) -> str:
         if heading_re.fullmatch(parts[i]):
             heading = parts[i]
             tail = parts[i + 1] if i + 1 < len(parts) else ""
-            blocks = _BLOCK_RE.findall(tail)
+            grouped: list[re.Match[str]] = []
+            previous_end = 0
+            for match in _BLOCK_RE.finditer(tail):
+                if "<hr" in tail[previous_end : match.start()]:
+                    break
+                grouped.append(match)
+                previous_end = match.end()
+                if len(grouped) == 2:
+                    break
+            while grouped and not _balanced_html("".join(m.group(0) for m in grouped)):
+                grouped.pop()
             # Stop collecting at the first forced page-break div.
             cut = next(
                 (
                     idx
-                    for idx, blk in enumerate(blocks)
-                    if any(marker in blk for marker in _BREAK_DIV_MARKERS)
+                    for idx, m in enumerate(grouped)
+                    if any(marker in m.group(0) for marker in _BREAK_DIV_MARKERS)
                 ),
                 None,
             )
             if cut is not None:
-                blocks = blocks[:cut]
-            if len(blocks) >= 2:
-                rest = tail[
-                    tail.index(blocks[0])
-                    + len(blocks[0])
-                    + tail[tail.index(blocks[0]) + len(blocks[0]) :].index(blocks[1])
-                    + len(blocks[1]) :
-                ]
-                before = tail[: tail.index(blocks[0])]
-                result.append(before)
-                result.append(f'<div class="keep-with-next">{heading}{blocks[0]}{blocks[1]}</div>')
-                result.append(rest)
-            elif len(blocks) == 1:
-                before = tail[: tail.index(blocks[0])]
-                after = tail[tail.index(blocks[0]) + len(blocks[0]) :]
-                result.append(before)
-                result.append(f'<div class="keep-with-next">{heading}{blocks[0]}</div>')
-                result.append(after)
+                grouped = grouped[:cut]
+            if grouped:
+                end = grouped[-1].end()
+                result.append(f'<div class="keep-with-next">{heading}{tail[:end]}</div>')
+                result.append(tail[end:])
             else:
                 result.append(heading)
                 result.append(tail)
@@ -830,82 +937,125 @@ _BASE_FIXES_CSS = (
     ".report-body h1[data-md-doc-first-heading] { page-break-before: auto; break-before: auto; }\n"
     ".running-date { display: block; position: absolute; visibility: hidden; width: 0; height: 0; overflow: hidden; }\n"
     ".report-body table + table { margin-top: 10pt; }\n"
+    # WeasyPrint does not reliably carry break-inside:avoid from a keep-together
+    # wrapper down to a list inside it, and then splits a heading's short list
+    # across pages. Say it on the lists themselves.
+    ".report-body .keep-with-next > ul, .report-body .keep-with-next > ol, "
+    ".report-body .keep-with-next > dl { break-inside: avoid; page-break-inside: avoid; }\n"
     ".report-body .md-doc-page-break + h1, .report-body .md-doc-page-break + .keep-with-next h1 { page-break-before: auto; break-before: auto; }\n"
     "</style>"
 )
 
 # Injected only for pdf_forms documents. Provides the insurance-form
-# constructs (?[box] field grids, ?[yesno:] pairs), gives ordinary tables a
-# ruled-grid look (forms want black rules, not the report theme's shaded
-# header + zebra rows), and fixes the signature block.
+# constructs (?[box] field grids, ?[yesno:] pairs) and fixes the signature
+# block. Rules and labels take the theme's primary colour (__RULE__ etc. are
+# filled in by _form_support_css); ordinary tables keep the report styling.
 _FORM_SUPPORT_CSS = """<style>
 /* Forms don't show the running date used by report footers */
 .running-date { display: none; }
+/* A label and its separate textarea block never split across pages */
+.report-body .field-group { page-break-inside: avoid; break-inside: avoid; }
 /* Bordered field-grid (?[box] … ?[/box]) — crisp black rules, labels inside
    the cells, deterministic row heights so the grid has an even rhythm */
-table.field-box { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; margin: 3pt 0 10pt 0; page-break-inside: auto; }
-table.field-box td { border: 0.5pt solid #000000; padding: 3pt 5pt; vertical-align: top; line-height: 1.25; }
+table.field-box { width: 100%; border-collapse: collapse; border: 1pt solid __RULE__; border-radius: 0; margin: 3pt 0 10pt 0; page-break-inside: auto; }
+table.field-box td { border: 0.5pt solid __RULE_SOFT__; background: none; vertical-align: top; line-height: 1.3; }
+table.field-box tr:nth-child(even) td { background: none; }
 table.field-box tr { page-break-inside: avoid; }
-table.field-box strong { font-size: 0.95em; }
-table.field-box em { font-size: 7.5pt; }
+table.field-box tr.qa td { vertical-align: middle; }
+table.field-box .prefixed-field { display: flex; align-items: center; }
+table.field-box .prefixed-field > span { margin-right: 0.3em; }
+table.field-box .prefixed-field > input { flex: 1; width: auto; }
+table.field-box strong { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; color: __PRIMARY__; }
+table.field-box em { font-size: 0.8em; }
 table.field-box input[type="text"], table.field-box input[type="email"],
 table.field-box input[type="date"], table.field-box input[type="number"],
 table.field-box input[type="tel"], table.field-box input[type="url"],
 table.field-box select {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; height: 14pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+  width: 100%; height: 1.5em; margin: 0; padding: 0 0.1em; font-size: inherit;
 }
 /* A bare write-in row (input with no label in the cell) gets a taller band */
-table.field-box td > input:only-child { height: 19pt; }
+table.field-box td > input:only-child { height: 2.3em; }
 table.field-box textarea {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; margin: 0; padding: 1pt; font-size: 10pt; resize: none;
+  width: 100%; margin: 0; padding: 0.1em; font-size: inherit; resize: none;
 }
 /* Borderless side-by-side cells (?[row]) — bare inputs show a writing rule */
 table.field-row td > input[type="text"], table.field-row td > input[type="email"],
 table.field-row td > input[type="date"], table.field-row td > input[type="number"],
 table.field-row td > input[type="tel"], table.field-row td > input[type="url"] {
-  border: none; border-bottom: 0.75pt solid #555555;
+  border: none; border-bottom: 1pt solid __PRIMARY__; box-sizing: border-box; max-width: 100%;
 }
-/* Ordinary markdown tables in a form document: ruled black grid, no report
-   styling (shaded header, zebra rows) — matches the application-form look */
-.report-body table:not(.field-box):not(.field-row) { width: 100%; border-collapse: collapse; border: 1.5pt solid #000000; }
-.report-body table:not(.field-box) th {
-  border: 0.5pt solid #000000; background: none; color: inherit;
-  text-transform: none; letter-spacing: 0; padding: 3pt 5pt; font-size: inherit;
-}
-.report-body table:not(.field-box) td { border: 0.5pt solid #000000; padding: 3pt 5pt; }
-.report-body table:not(.field-box) tr:nth-child(even) td { background: none; }
-.report-body table:not(.field-box) tr:last-child td { border-bottom: 0.5pt solid #000000; }
 /* Fillable cells inside those tables */
 table td > input[type="text"], table td > input[type="email"],
 table td > input[type="date"], table td > input[type="number"],
 table td > input[type="tel"], table td > input[type="url"],
 table td > textarea, table td > select {
   appearance: auto; border: none; background: transparent; border-radius: 0;
-  width: 100%; height: 13pt; margin: 0; padding: 0 1pt; font-size: 10pt;
+  width: 100%; height: 1.4em; margin: 0; padding: 0 0.1em; font-size: inherit;
+}
+/* Controls sharing a row (labelled form-groups) take one fixed height, so a
+   <select> never makes its row taller than the text-input rows around it */
+.form-group input[type="text"], .form-group input[type="email"],
+.form-group input[type="date"], .form-group input[type="number"],
+.form-group input[type="tel"], .form-group input[type="url"],
+.form-group select {
+  box-sizing: border-box; height: 2em; margin: 0; padding: 0 0.6em;
 }
 /* Checkboxes sit inline beside their label (the UA form stylesheet makes
    inputs block-level, which strands the label on the next line) */
 input[type="checkbox"], input[type="radio"] {
-  display: inline-block; width: 11pt; height: 11pt;
-  margin: 1pt 5pt 1pt 1pt; vertical-align: middle;
+  display: inline-block; font-size: inherit; width: 1.1em; height: 1.1em;
+  margin: 0.1em 0.5em 0.1em 0.1em; vertical-align: middle;
+  position: relative; top: -0.1em; /* box centre on the label cap-height centre, not the x-height */
 }
 /* Checkbox / radio items — span-level so table cells survive md_in_html */
-label.option-item { display: inline-block; margin: 1pt 12pt 1pt 0; }
+label.option-item { display: inline-block; margin: 0.2em 1.2em 0.2em 0; }
+label.option-solo { margin-right: 0; }
+.option-group { line-height: 1.9; }
 /* Yes/No checkbox pair (?[yesno: name]) */
 .yesno { white-space: nowrap; }
-.yesno label { display: inline; margin-right: 14pt; }
+.yesno label { display: inline; margin-right: 1.4em; }
 /* Signature block — transparent field over a single rule, kept on one page */
-.signature-field { page-break-inside: avoid; margin: 12pt 0 14pt 0; width: 60%; }
+.signature-field { page-break-inside: avoid; margin: 1.2em 0 1.4em 0; width: 60%; }
+table.field-row .signature-field { width: 100%; margin: 0; }
+table.field-row .signature-input { border-bottom: 1pt solid __PRIMARY__; }
+table.field-row .signature-line { display: none; }
+table.field-row { margin: 0.6em 0 1.2em 0; }
+table.field-row td { vertical-align: bottom !important; }
+table.field-row .signature-label { font-size: 0.7em; color: __PRIMARY__; font-weight: 700; letter-spacing: 0.07em; }
+input[type="checkbox"], input[type="radio"] { border: 0.75pt solid __RULE__; }
 .signature-input {
-  appearance: auto; display: block; width: 100%; height: 26pt; min-height: 26pt;
+  appearance: auto; display: block; width: 100%; height: 2.6em; min-height: 2.6em; font-size: inherit;
   border: none; border-bottom: 1pt solid #555555; border-radius: 0;
-  background: transparent; margin: 0; padding: 2pt 0; resize: none;
+  background: transparent; margin: 0; padding: 0.2em 0; resize: none;
 }
 .signature-line { display: none; }
-.signature-label { font-size: 7.5pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #7f8c9a; margin-top: 3pt; }
+.signature-label { font-size: 0.75em; letter-spacing: 0.2em; text-transform: uppercase; color: #7f8c9a; margin-top: 0.4em; }
 </style>"""
+
+
+def form_rule_colors(primary: str | None) -> tuple[str, str, str]:
+    """``(label/primary, outer rule, inner rule)`` colours of the form grids.
+
+    Shared with the Word builder so both formats draw the same tints.
+    """
+    from ..mermaid import _lighten
+
+    try:
+        base = primary or "#2c3e50"
+        return base, _lighten(base, 0.45), _lighten(base, 0.7)
+    except ValueError:
+        return "#2c3e50", "#8a97a3", "#c5ccd3"
+
+
+def _form_support_css(primary: str | None) -> str:
+    base, rule, soft = form_rule_colors(primary)
+    return (
+        _FORM_SUPPORT_CSS.replace("__RULE_SOFT__", soft)
+        .replace("__RULE__", rule)
+        .replace("__PRIMARY__", base)
+    )
 
 
 def _build_html(
@@ -1017,7 +1167,7 @@ def _build_html(
   {section_bar_style}
   {body_align_style}
   {cover_support_style}
-  {_FORM_SUPPORT_CSS if is_form else ""}
+  {_form_support_css(primary_color) if is_form else ""}
   {css_vars_style}
   {page_bar_css}
 </head>
@@ -1693,7 +1843,7 @@ def build(
     body = _inject_page_breaks(body)
 
     is_form = bool(config.get("pdf_forms"))
-    body = _expand_form_fields(body, is_form)
+    body = _expand_form_fields(collapse_select_markup(body), is_form)
 
     from ..math import markdown_html, render_math
 
@@ -1752,7 +1902,7 @@ def build(
             except Exception:
                 theme_body_justify = False
 
-    html_body = _keep_heading_with_next(html_body)
+    html_body = _keep_heading_with_next(_group_label_with_textarea(html_body))
     html = _build_html(
         title,
         date_str,
@@ -1794,5 +1944,5 @@ def build(
     weasyprint.HTML(
         string=html,
         base_url=str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
-        url_fetcher=_local_url_fetcher,
+        url_fetcher=_make_url_fetcher(),
     ).write_pdf(str(out_path), **wp_kwargs)

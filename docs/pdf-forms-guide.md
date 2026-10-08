@@ -500,4 +500,4 @@ documented in any AcroForm viewer.
   Text Form Fields, `checkbox`/`yesno` → legacy checkboxes (FORMCHECKBOX),
   `select`/`radio` → dropdowns (FORMDROPDOWN). Protect the template for
   filling in Word (Review → Restrict Editing → Filling in forms).
-- **`.docx`** — fields render as `________` fill-in lines for print-and-write.
+- **`.docx`** — fields render as bordered, PDF-sized boxes (grid cells stay blank, `?[row]` inputs become rules, signatures keep their rule and caption) for print-and-write; the submit button is omitted.

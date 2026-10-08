@@ -32,8 +32,18 @@ def _col_widths(doc: Document) -> list[int]:
 
 
 class TestTableColWidths:
-    def test_equal_widths_by_default(self, tmp_repo):
-        doc = _build_docx(tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n", {})
+    def test_default_widths_follow_content(self, tmp_repo):
+        doc = _build_docx(
+            tmp_repo,
+            "| ID | Description |\n|---|---|\n| 1 | A much longer description |\n",
+            {},
+        )
+        widths = _col_widths(doc)
+        assert len(widths) == 2
+        assert widths[1] > widths[0]
+
+    def test_identical_content_gets_equal_default_widths(self, tmp_repo):
+        doc = _build_docx(tmp_repo, "| A | A |\n|---|---|\n| 1 | 1 |\n", {})
         widths = _col_widths(doc)
         assert len(widths) == 2
         assert abs(widths[0] - widths[1]) <= 1  # rounding tolerance of 1 twip
@@ -113,10 +123,8 @@ class TestColWidthsComment:
         assert widths[1] > widths[0] * 2
 
     def test_comment_only_applies_to_next_table(self, tmp_repo):
-        body = (
-            "<!-- col-widths: 30, 70 -->\n| A | B |\n|---|---|\n| 1 | 2 |\n\n"
-            "| C | D |\n|---|---|\n| 3 | 4 |\n"
-        )
+        second_table = "| Description | ID |\n|---|---|\n| A much longer description | 4 |\n"
+        body = "<!-- col-widths: 30, 70 -->\n| A | B |\n|---|---|\n| 1 | 2 |\n\n" + second_table
         doc = _build_docx(tmp_repo, body, {})
 
         def grid_widths(table_idx):
@@ -128,8 +136,9 @@ class TestColWidthsComment:
         w2 = grid_widths(1)
         # First table: 30/70 split
         assert w1[1] > w1[0] * 2
-        # Second table: equal (no comment)
-        assert abs(w2[0] - w2[1]) <= 1
+        # The second table uses its own content, exactly as it does in isolation.
+        assert w2[0] > w2[1]
+        assert w2 == _col_widths(_build_docx(tmp_repo, second_table, {}))
 
     def test_comment_overrides_config_widths(self, tmp_repo):
         body = "<!-- col-widths: 60, 40 -->\n| A | B |\n|---|---|\n| 1 | 2 |\n"

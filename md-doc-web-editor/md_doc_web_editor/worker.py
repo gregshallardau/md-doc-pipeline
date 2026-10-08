@@ -25,6 +25,21 @@ def main() -> int:
         return fetch(url, *args, **kwargs)
 
     pdf._local_url_fetcher = scoped_fetch
+    import weasyprint
+
+    if hasattr(weasyprint, "URLFetcher"):
+
+        class SnapshotFetcher(weasyprint.URLFetcher):
+            def fetch(self, url, headers=None):
+                pdf._reject_external(url)
+                parsed = urlsplit(url)
+                if parsed.scheme == "file" and not Path(
+                    unquote(parsed.path)
+                ).resolve().is_relative_to(project):
+                    raise ValueError("Asset is outside the project snapshot")
+                return super().fetch(url, headers)
+
+        pdf._make_url_fetcher = lambda: SnapshotFetcher(allowed_protocols={"file", "data"})
     logging.getLogger("weasyprint").setLevel(logging.WARNING)
     if format_name in {"docx", "dotx", "pptx"}:
         from md_doc.builders import _assets, docx, pptx

@@ -29,6 +29,8 @@ When the user pastes a document:
    - Report, guide, handbook, procedure → `outputs: [pdf]`
    - Letter or template sent to many recipients → `outputs: [dotx]`
    - Both needed → `outputs: [pdf, dotx]`
+   - Form to be filled in on screen → `outputs: [pdf]` with `pdf_forms: true` (see **Forms** below)
+   - Slide deck → not this prompt; use the deck prompt (`docs/llm-deck-prompt.md`)
 5. **Convert the content** to Markdown following the rules below
 6. **Output the complete `.md` file** wrapped in a single fenced code block — nothing else
 
@@ -149,7 +151,7 @@ cover_page: true
 |-----|--------|---------|
 | `title` | string | Document title, shown on cover page |
 | `outputs` | `[pdf]`, `[docx]`, `[dotx]`, `[pdf, dotx]` | Output format(s) |
-| `cover_page` | `true` / `false` | Branded cover page (default: `true`) |
+| `cover_page` | `true` / `false` | Branded cover page (pipeline default: `false`; set `true` for reports and proposals, `false` for letters and forms) |
 | `cover_label` | string | Text above title on cover — "Proposal", "Guide", etc. (default: "Report") |
 | `date` | string | Date shown on cover page |
 | `author` | string | Author name |
@@ -231,6 +233,37 @@ Regards,
 - `{{ }}` = same on every copy
 - `[[ ]]` = different per recipient
 
+### Forms (fillable PDF)
+
+When the source is a form (blank fields, checkboxes, "tick one", signature lines), set
+`pdf_forms: true` and `cover_page: false` and replace each blank with a field. Do not use HTML
+`<input>` tags.
+
+```markdown
+**Full name** ?[text: full_name, required]
+?[textarea: notes, rows=4]
+?[checkbox: agree] I agree to the terms
+?[yesno: consent]
+?[select: department | Engineering | Sales]
+?[radio-inline: urgency | Standard | Urgent]
+?[signature: applicant_signature]
+```
+
+For a bordered application-style grid, wrap rows in `?[box]` … `?[/box]`; split cells on `|`:
+
+```markdown
+?[box]
+**Insured name** ?[text: insured_name]
+**City** ?[text: city] | **State** ?[text: state] | **Post code** ?[text: post_code]
+?[/box]
+```
+
+Field names are unique `snake_case`. A form has no `[[fields]]` — those are for Word templates.
+
+### Page breaks
+
+`<!-- pagebreak -->` on its own line starts a new page.
+
 ### Flowcharts (Mermaid)
 
 Use standard Mermaid syntax in fenced code blocks:
@@ -270,7 +303,7 @@ echo "Hello"
 - Keep paragraphs to 3–5 sentences
 - Use tables for structured data, lists for sequential steps
 - Do not add page numbers, headers, footers, or table of contents — the pipeline handles these
-- Do not use HTML tags
+- Do not use HTML tags (the only exceptions are the `<!-- pagebreak -->` comment and the `?[...]` form shorthand above)
 - Do not use emoji in headings
 - Do not nest deeper than H4
 
