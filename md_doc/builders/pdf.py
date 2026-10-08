@@ -473,6 +473,18 @@ def _expand_box_block(args: str | None, box_content: str) -> str:
     return f'<table class="field-box">\n{body}\n</table>'
 
 
+# `?[checkbox: x] Label text` — the text trails the generated <label>, which
+# leaves it outside the label (wide gap, not click-associated). Pull it in.
+_SOLO_CHECKBOX_RE = re.compile(
+    r'(<label class="option-item")(><input type="checkbox"[^>]*>)</label>[ \t]+([^<\s][^\n]*)$',
+    re.MULTILINE,
+)
+
+
+def _fold_checkbox_label(m: re.Match[str]) -> str:
+    return f'{m.group(1)[:-1]} option-solo"{m.group(2)} {m.group(3)}</label>'
+
+
 def _expand_form_fields(md_content: str, is_form: bool) -> str:
     """Expand ?[...] form field markers into HTML.
 
@@ -502,6 +514,7 @@ def _expand_form_fields(md_content: str, is_form: bool) -> str:
     result = expand_boxes(md_content)
     result = expand_rows(result)
     result = _FORM_FIELD_RE.sub(lambda m: _field_to_html(m.group(1)), result)
+    result = _SOLO_CHECKBOX_RE.sub(_fold_checkbox_label, result)
 
     if is_form and "<form" not in result.lower():
         result = '<form markdown="1">\n\n' + result + "\n\n</form>"
@@ -978,7 +991,9 @@ input[type="checkbox"], input[type="radio"] {
   margin: 1pt 5pt 1pt 1pt; vertical-align: middle;
 }
 /* Checkbox / radio items — span-level so table cells survive md_in_html */
-label.option-item { display: inline-block; margin: 1pt 12pt 1pt 0; }
+label.option-item { display: inline-block; margin: 2pt 12pt 2pt 0; }
+label.option-solo { margin-right: 0; }
+.option-group { line-height: 1.9; }
 /* Yes/No checkbox pair (?[yesno: name]) */
 .yesno { white-space: nowrap; }
 .yesno label { display: inline; margin-right: 14pt; }

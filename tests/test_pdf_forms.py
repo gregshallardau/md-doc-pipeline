@@ -398,3 +398,9 @@ def test_box_question_rows_centre_and_currency_prefix_inline():
     assert '<tr class="qa">' in html
     assert 'class="prefixed-field"' in html
     assert html.count('<tr class="qa">') == 1  # the labelled row stays top-aligned
+
+
+def test_trailing_checkbox_text_folds_into_label():
+    html = _expand_form_fields("?[checkbox: agree] I agree to terms\n", is_form=True)
+    assert "option-solo" in html
+    assert "I agree to terms</label>" in html
