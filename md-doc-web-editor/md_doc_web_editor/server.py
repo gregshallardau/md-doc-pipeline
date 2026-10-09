@@ -350,6 +350,24 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
     # ── Included templates ────────────────────────────────────────────────────
 
+    @app.get("/api/template")
+    def resolve_template(path: str, name: str) -> JSONResponse:
+        ws, full = _locate(path)
+        if not full.is_file() or full.suffix != ".md":
+            raise HTTPException(400, "Select a Markdown document")
+        resolved = _resolve_template(name, full, ws.root)
+        if resolved is None:
+            raise HTTPException(404, "Included template not found")
+        if resolved.suffix.lower() not in {".md", ".html", ".jinja", ".j2", ".txt"}:
+            raise HTTPException(400, "Only text template fragments can be edited inline")
+        relative = (
+            _prefix(ws) + resolved.relative_to(ws.root).as_posix()
+            if resolved.is_relative_to(ws.root)
+            else "project:" + resolved.relative_to(_find_repo_root(full.parent)).as_posix()
+        )
+        _locate(relative)  # Apply the same authoring boundary as /api/file.
+        return JSONResponse({"path": relative, "name": name})
+
     @app.get("/api/includes")
     def get_includes(path: str) -> JSONResponse:
         ws, full = _locate(path)

@@ -17,6 +17,10 @@ An available configured remote workspace is opened before local samples. Its con
 
 The Files rail button toggles the sidebar. Click the workspace row to collapse its files, or use **Expand all / Collapse all** for folders. New sessions open the first two folder levels; folder badges count Markdown documents recursively. PDFs, Office outputs, images and authoring files appear alongside Markdown. PDF/image files open in a browser tab and Office files download. **Dark mode / Light mode** is available directly in the header.
 
+In Source mode, click a `{% include "fragment.md" %}` line (or place the cursor there and press **Alt+Enter**) to edit the resolved template directly below it. Template lookup follows the pipeline’s directory cascade, including upstream Markdown, HTML and Jinja fragments. Inline drafts update the parent PDF without changing the parent source; **Save template** writes the template file, and closing the inline editor retains unsaved drafts. **Open file** opens the same draft in a tab.
+
+Automatic preview generation waits **1.5 seconds** after typing stops. Choose **3 seconds** or **5 seconds** in **Studio settings → Preview delay after typing**, or use manual refresh. The full PDF is regenerated to keep page flow, numbering and theme output accurate.
+
 Use **Pop out preview** in the output preview header to open a resizable window, including on a second monitor. It follows the editor’s rendered updates, including unsaved changes, and has independent zoom, page navigation, search, thumbnails and PDF download. Clicking the button again focuses the existing window. Rendering and automatic/manual refresh remain controlled by the editor.
 
 Linked folders whose targets remain inside the configured workspace are scanned and included in preview snapshots. Cycles, external links and unreadable directories appear as scan diagnostics instead of silently disappearing.
