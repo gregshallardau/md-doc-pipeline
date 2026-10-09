@@ -2015,3 +2015,27 @@ kbd {
 .tree-root-toggle[aria-expanded="false"] > .icon {
   transform: rotate(-90deg);
 }
+.tree-scan-warnings {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--danger);
+}
+.tree-scan-warnings summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.tree-scan-warnings p {
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.linked-folder-icon {
+  width: 12px !important;
+  height: 12px !important;
+  opacity: 0.7;
+}

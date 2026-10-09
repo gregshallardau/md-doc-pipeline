@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "test": "node editor.cjs && node studio.cjs"
+    "test": "node editor.cjs && node studio.cjs && node remote.cjs"
   },
   "devDependencies": {
     "playwright": "1.56.1"

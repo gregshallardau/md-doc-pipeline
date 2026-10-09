@@ -225,46 +225,21 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
             return "image"
         return None
 
-    def _scan(directory: Path, ws: Workspace) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        try:
-            entries = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name))
-        except OSError:
-            return items
-        for entry in entries:
-            if entry.name.startswith(".") or entry.is_symlink():
-                continue
-            if entry.name in {"node_modules", "__pycache__", "Exports", "dist", "build"}:
-                continue
-            rel = _prefix(ws) + entry.relative_to(ws.root).as_posix()
-            if entry.is_dir():
-                children = _scan(entry, ws)
-                count = sum(
-                    node.get("documentCount", int(node["type"] == "md")) for node in children
-                )
-                items.append(
-                    {
-                        "name": entry.name,
-                        "path": rel,
-                        "type": "dir",
-                        "children": children,
-                        "documentCount": count,
-                    }
-                )
-            else:
-                kind = _classify(entry.name)
-                if kind is not None:
-                    items.append({"name": entry.name, "path": rel, "type": kind})
-        return items
+    def _scan(directory: Path, ws: Workspace, warnings=None) -> list[dict[str, Any]]:
+        from .inventory import scan_tree
+
+        return scan_tree(directory, ws.root, _classify, _prefix(ws), warnings=warnings)
 
     @app.get("/api/tree")
     def get_tree() -> JSONResponse:
+        warnings = []
         if fixed is not None:
-            tree = _scan(fixed.root, fixed)
+            tree = _scan(fixed.root, fixed, warnings)
             return JSONResponse(
                 {
                     "workspace": str(fixed.root),
                     "tree": tree,
+                    "scanWarnings": warnings,
                     "documentCount": sum(
                         node.get("documentCount", int(node["type"] == "md")) for node in tree
                     ),
@@ -279,7 +254,7 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 "workspace": True,
                 "remote": ws.remote,
                 "available": ws.available,
-                "children": _scan(ws.root, ws) if ws.available else [],
+                "children": _scan(ws.root, ws, warnings) if ws.available else [],
             }
             for ws in listed
         ]
@@ -288,6 +263,7 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 "workspace": str(project_root),
                 "workspaces": [ws.public() for ws in listed],
                 "tree": nodes,
+                "scanWarnings": warnings,
             }
         )
 

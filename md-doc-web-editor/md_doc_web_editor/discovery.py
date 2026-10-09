@@ -56,8 +56,8 @@ def install_discovery(app, project, factory, fixed=None):
                     for path in sorted(current.iterdir(), key=lambda path: path.name.lower()):
                         if (
                             path.is_dir()
-                            and not path.is_symlink()
                             and not path.name.startswith(".")
+                            and path.resolve().is_relative_to(workspace.root)
                             and path.name
                             not in {"node_modules", "__pycache__", "Exports", "dist", "build"}
                         ):
