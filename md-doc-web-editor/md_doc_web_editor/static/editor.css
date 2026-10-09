@@ -266,7 +266,10 @@ kbd {
   min-height: 0;
   display: grid;
   grid-template-columns:
-    46px var(--nav-width) 5px minmax(0, var(--edit-fraction))
+    46px var(--nav-width) var(--nav-splitter-width, 5px) minmax(
+      0,
+      var(--edit-fraction)
+    )
     5px minmax(0, 1fr);
   position: relative;
   overflow: hidden;
@@ -1637,10 +1640,16 @@ kbd {
     );
 }
 .workbench.layout-preview {
-  grid-template-columns: 46px var(--nav-width) 5px 0 0 minmax(0, 1fr);
+  grid-template-columns: 46px var(--nav-width) var(
+      --nav-splitter-width,
+      5px
+    ) 0 0 minmax(0, 1fr);
 }
 .workbench.layout-source {
-  grid-template-columns: 46px var(--nav-width) 5px minmax(0, 1fr) 0 0;
+  grid-template-columns: 46px var(--nav-width) var(
+      --nav-splitter-width,
+      5px
+    ) minmax(0, 1fr) 0 0;
 }
 .layout-preview .editor-pane,
 .layout-preview .preview-splitter,
@@ -1666,7 +1675,10 @@ kbd {
   content: " · Focus mode";
 }
 .workbench.layout-horizontal {
-  grid-template-columns: 46px var(--nav-width) 5px minmax(0, 1fr);
+  grid-template-columns: 46px var(--nav-width) var(
+      --nav-splitter-width,
+      5px
+    ) minmax(0, 1fr);
   grid-template-rows: minmax(0, var(--horizontal-split)) 5px minmax(0, 1fr);
 }
 .layout-horizontal .activity-rail,

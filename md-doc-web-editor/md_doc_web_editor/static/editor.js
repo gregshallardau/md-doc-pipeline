@@ -1261,7 +1261,12 @@
       320,
       Math.min(available - 320, available * state.editRatio),
     );
-    bench.style.setProperty("--nav-width", state.navWidth + "px");
+    const navHidden = bench.classList.contains("nav-hidden");
+    bench.style.setProperty(
+      "--nav-width",
+      (navHidden ? 0 : state.navWidth) + "px",
+    );
+    bench.style.setProperty("--nav-splitter-width", navHidden ? "0px" : "5px");
     bench.style.setProperty("--edit-fraction", Math.max(0, width) + "px");
     bench.style.setProperty(
       "--horizontal-split",
@@ -1727,7 +1732,40 @@
         el(
           "p",
           "inspector-note",
-          "Insert a documented Word field at the cursor. Form shorthand is available in the insertion menu.",
+          "Insert document values from _meta.yml and frontmatter. Values resolve when the document is built.",
+        ),
+      );
+      container.append(el("h3", null, "DOCUMENT VALUES"));
+      for (const [name, value] of Object.entries(data.merged || {})) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+        const card = el("div", "field-card");
+        const button = el("button", null, "{{ " + name + " }}");
+        button.onclick = () => insert("field", "{{ " + name + " }}");
+        card.append(
+          button,
+          el(
+            "p",
+            null,
+            typeof value === "string" ? value : JSON.stringify(value),
+          ),
+          el("span", "provenance", data.provenance?.[name] || "Default"),
+        );
+        container.append(card);
+      }
+      if (!Object.keys(data.merged || {}).length)
+        container.append(
+          el(
+            "p",
+            "inspector-note",
+            "Add document values to _meta.yml or document frontmatter.",
+          ),
+        );
+      container.append(
+        el("h3", null, "WORD PLACEHOLDERS"),
+        el(
+          "p",
+          "inspector-note",
+          "Word placeholders are filled in Word after export. Their optional descriptions come from _merge_fields.yml; they are separate from document metadata.",
         ),
       );
       for (const [name, description] of Object.entries(data.fields || {})) {
@@ -1751,7 +1789,7 @@
           el(
             "p",
             "inspector-note",
-            "Add a _merge_fields.yml file to document your available fields.",
+            "No documented Word placeholders. You can insert [[field_name]] directly in the source.",
           ),
         );
     }
