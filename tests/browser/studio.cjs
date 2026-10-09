@@ -823,7 +823,15 @@ function check(condition, message) {
       editor.setPosition({ lineNumber: line, column: 1 });
       await editor.getAction("md-doc.edit-include").run();
     });
+    const mainSourceSaved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/file") &&
+        response.request().method() === "PUT" &&
+        response.request().postDataJSON().path === "doc.md" &&
+        response.status() === 200,
+    );
     await page.locator("#md-doc-save-btn").click();
+    await mainSourceSaved;
     await page.waitForFunction(
       () => document.querySelector("#md-doc-save-btn").disabled,
     );
