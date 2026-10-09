@@ -297,22 +297,21 @@
     const count = [...state.buffers.values()].filter(dirty).length;
     const buffer = current();
     $("md-doc-save-btn").disabled =
-      !buffer || !dirty(buffer) || !!buffer.saving;
+      !buffer ||
+      (projection()
+        ? !projection().segments.some(
+            (part) => part.path && dirty(state.buffers.get(part.path)),
+          )
+        : !dirty(buffer)) ||
+      !!buffer.saving;
     $("save-status").textContent = count
       ? `${count} unsaved ${count === 1 ? "file" : "files"}`
       : "All changes saved";
     $("editor-word-count").textContent =
       `${buffer?.content.trim().split(/\s+/).filter(Boolean).length || 0} words`;
     renderTabs();
-    if (state.inlineTemplate) {
-      const peek = state.inlineTemplate;
-      peek.status.textContent = peek.buffer.saving
-        ? "Saving…"
-        : dirty(peek.buffer)
-          ? "Unsaved template"
-          : "Saved template";
-      peek.saveButton.disabled = !dirty(peek.buffer) || !!peek.buffer.saving;
-    }
+    syncExpandedProjection();
+    updateExpansionStatus();
     document.title =
       (buffer
         ? (dirty(buffer) ? "• " : "") + buffer.path.split("/").pop() + " · "
@@ -329,6 +328,7 @@
   }
   function sourceValue(value) {
     if (state.editor) {
+      closeInlineTemplate();
       const model = current()?.model;
       if (model)
         model.pushEditOperations(
@@ -341,7 +341,8 @@
       changed(value);
     }
   }
-  function changed(value) {
+  function changed(value, event) {
+    if (projection() && event) return changedExpanded(event);
     const buffer = current();
     if (!buffer) return;
     buffer.content = value;
@@ -410,15 +411,11 @@
               $("md-doc-monaco"),
               sourceEditorOptions({ value: "", language: "mddoc-markdown" }),
             );
-            state.editor.onDidChangeModelContent(() => {
-              if (!state.switching) changed(state.editor.getValue());
+            state.editor.onDidChangeModelContent((event) => {
+              if (!state.switching) changed(state.editor.getValue(), event);
             });
             state.editor.onMouseDown((event) => {
-              if (
-                event.event.leftButton &&
-                event.target.position &&
-                !state.inlineTemplate?.node.contains(event.target.element)
-              )
+              if (event.event.leftButton && event.target.position)
                 editIncludeAtLine(event.target.position.lineNumber).catch(
                   (error) => toast(error.message, true),
                 );
@@ -435,6 +432,7 @@
             state.editor.onDidChangeCursorPosition((event) => {
               $("editor-position").textContent =
                 `Ln ${event.position.lineNumber}, Col ${event.position.column}`;
+              updateExpansionStatus();
             });
             state.editor.addCommand(
               monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
@@ -631,153 +629,280 @@
         ),
       );
   }
-  const includePattern = /\{%-?\s*include\s+["']([^"']+)["'][^%]*-?%\}/;
+  function updateExpansionStatus() {
+    const expanded = state.inlineTemplate;
+    if (!expanded) return;
+    const path = sourceAtCursor()?.path || state.active;
+    const buffer = state.buffers.get(path);
+    expanded.title.textContent =
+      "Editing " + path + (dirty(buffer) ? " · Unsaved" : "");
+    expanded.title.title = path;
+    expanded.saveButton.disabled = !dirty(buffer) || !!buffer.saving;
+  }
+  function projection() {
+    return state.inlineTemplate?.composition;
+  }
+  function sourceAtCursor() {
+    const composed = projection();
+    if (!composed || !state.editor?.getPosition()) return null;
+    return composed.owner(
+      state.editor.getModel().getOffsetAt(state.editor.getPosition()),
+    );
+  }
   function decorateIncludes() {
     if (!state.editor || current()?.type !== "md") return;
-    const decorations = [];
-    current()
-      .content.split("\n")
-      .forEach((line, index) => {
-        const match = line.match(includePattern);
-        if (match)
-          decorations.push({
-            range: new monaco.Range(
-              index + 1,
-              match.index + 1,
-              index + 1,
-              match.index + match[0].length + 1,
-            ),
-            options: {
-              inlineClassName: "template-include-link",
-              hoverMessage: {
-                value:
-                  "Click this include line to edit its template inline. Alt+Enter also opens it.",
-              },
-            },
-          });
+    const composed =
+      projection() || new DocumentComposition(state.active, state.buffers);
+    const model = state.editor.getModel();
+    const decorations = composed.includes.map((entry) => {
+      const start = model.getPositionAt(entry.offset);
+      const end = model.getPositionAt(entry.offset + entry.length);
+      return {
+        range: new monaco.Range(
+          start.lineNumber,
+          start.column,
+          end.lineNumber,
+          end.column,
+        ),
+        options: {
+          inlineClassName: "template-include-link",
+          hoverMessage: {
+            value: entry.child
+              ? "Expanded from " +
+                entry.child +
+                ". Click to collapse this template."
+              : "Click to expand this template in the document. Alt+Enter also expands it.",
+          },
+          ...(entry.child
+            ? {
+                after: {
+                  content: "  · " + entry.child,
+                  inlineClassName: "template-source-label",
+                },
+              }
+            : {}),
+        },
+      };
+    });
+    for (const part of composed.segments) {
+      if (!part.path || part.path === state.active) continue;
+      const start = model.getPositionAt(part.start),
+        end = model.getPositionAt(part.end);
+      decorations.push({
+        range: new monaco.Range(
+          start.lineNumber,
+          start.column,
+          end.lineNumber,
+          end.column,
+        ),
+        options: {
+          hoverMessage: { value: "Source: " + part.path },
+          glyphMarginClassName: "included-source-glyph",
+        },
       });
+    }
     state.includeDecorations = state.editor.deltaDecorations(
       state.includeDecorations || [],
       decorations,
     );
   }
+  function syncExpandedProjection() {
+    const expanded = state.inlineTemplate;
+    if (!expanded || state.expandedSync) return;
+    state.expandedSync = true;
+    try {
+      const old = expanded.model.getValue();
+      const next = expanded.composition.build();
+      if (old !== next) {
+        let start = 0,
+          suffix = 0;
+        while (
+          start < old.length &&
+          start < next.length &&
+          old[start] === next[start]
+        )
+          start++;
+        while (
+          suffix < old.length - start &&
+          suffix < next.length - start &&
+          old[old.length - suffix - 1] === next[next.length - suffix - 1]
+        )
+          suffix++;
+        const from = expanded.model.getPositionAt(start),
+          to = expanded.model.getPositionAt(old.length - suffix);
+        state.switching = true;
+        expanded.model.pushEditOperations(
+          [],
+          [
+            {
+              range: new monaco.Range(
+                from.lineNumber,
+                from.column,
+                to.lineNumber,
+                to.column,
+              ),
+              text: next.slice(start, next.length - suffix),
+            },
+          ],
+          () => null,
+        );
+        state.switching = false;
+      }
+      decorateIncludes();
+    } finally {
+      state.switching = false;
+      state.expandedSync = false;
+    }
+  }
+  function changedExpanded(event) {
+    const expanded = state.inlineTemplate;
+    const composed = expanded.composition;
+    let edits;
+    try {
+      edits = composed.sourceEdits(event.changes);
+    } catch (error) {
+      state.switching = true;
+      if (!event.isFlush) state.editor.trigger("source-boundary", "undo", null);
+      if (expanded.model.getValue() !== composed.text)
+        expanded.model.setValue(composed.text);
+      state.switching = false;
+      toast(error.message, true);
+      return;
+    }
+    for (const [path, changes] of edits) {
+      const buffer = state.buffers.get(path);
+      for (const change of changes)
+        buffer.content =
+          buffer.content.slice(0, change.start) +
+          change.text +
+          buffer.content.slice(change.start + change.length);
+      buffer.edited = true;
+      buffer.tabHidden = false;
+      if (buffer.model) buffer.model.setValue(buffer.content);
+    }
+    syncExpandedProjection();
+    state.revision++;
+    persist();
+    renderOutline();
+    renderTree();
+    schedulePreview();
+  }
   function closeInlineTemplate() {
     state.inlineRequest = (state.inlineRequest || 0) + 1;
-    const peek = state.inlineTemplate;
-    if (!peek) return;
+    const expanded = state.inlineTemplate;
+    if (!expanded) return;
+    const owner = sourceAtCursor();
+    const offset = owner
+      ? owner.sourceStart +
+        expanded.model.getOffsetAt(state.editor.getPosition()) -
+        owner.start
+      : null;
     state.inlineTemplate = null;
-    peek.listener.dispose();
-    peek.editor.dispose();
-    if (peek.zoneContainer) {
-      peek.zoneContainer.setAttribute("aria-hidden", "true");
-      peek.zoneContainer.classList.remove("template-peek-zones");
-    }
-    state.editor.changeViewZones((accessor) => accessor.removeZone(peek.zone));
+    state.includeDecorations = state.editor.deltaDecorations(
+      state.includeDecorations || [],
+      [],
+    );
+    state.switching = true;
+    state.editor.setModel(current()?.model || null);
+    state.switching = false;
+    if (owner?.path === state.active && offset !== null)
+      state.editor.setPosition(current().model.getPositionAt(offset));
+    expanded.model.dispose();
+    expanded.node.remove();
+    state.editor.layout();
+    decorateIncludes();
+    updateSaveState();
   }
-  async function editIncludeAtLine(lineNumber) {
+  async function expandSourceInclude(entry, collapse = true) {
     const parent = current();
-    const match = parent?.content
-      .split("\n")
-      [lineNumber - 1]?.match(includePattern);
-    if (!match || !state.editor) return;
-    if (
-      state.inlineTemplate?.parent === parent.path &&
-      state.inlineTemplate.line === lineNumber
-    )
+    if (!parent || !state.editor) return;
+    if (projection()?.expanded.has(entry.key) && !collapse) return;
+    if (projection()?.expanded.has(entry.key) && collapse) {
+      projection().expanded.delete(entry.key);
+      if (!projection().expanded.size) closeInlineTemplate();
+      else syncExpandedProjection();
       return;
+    }
     const request = (state.inlineRequest = (state.inlineRequest || 0) + 1);
     const result = await api(
       "/api/template?path=" +
         encodeURIComponent(parent.path) +
         "&name=" +
-        encodeURIComponent(match[1]),
+        encodeURIComponent(entry.name),
     );
     const buffer = await loadBuffer(result.path);
-    if (
-      state.active !== parent.path ||
-      request !== state.inlineRequest ||
-      parent.content.split("\n")[lineNumber - 1]?.match(includePattern)?.[1] !==
-        match[1]
-    )
-      return;
-    closeInlineTemplate();
-    if (!buffer.model)
-      buffer.model = monaco.editor.createModel(
-        buffer.content,
-        language(buffer),
-        monaco.Uri.parse("inmemory://workspace/" + encodeURI(buffer.path)),
+    if (state.active !== parent.path || request !== state.inlineRequest) return;
+    const available =
+      projection() || new DocumentComposition(parent.path, state.buffers);
+    if (!available.includes.some((item) => item.key === entry.key)) return;
+    if (!state.inlineTemplate) {
+      const composition = new DocumentComposition(parent.path, state.buffers);
+      const model = monaco.editor.createModel(
+        composition.text,
+        "mddoc-markdown",
+        monaco.Uri.parse("inmemory://composed/" + encodeURI(parent.path)),
       );
-    const node = el("section", "template-peek");
-    node.setAttribute("aria-label", "Inline template editor");
-    const header = el("div", "template-peek-heading");
-    const title = el("strong", null, result.path);
-    title.title = result.path;
-    const status = el("span", "template-peek-status");
-    const saveButton = el("button", "button", "Save template");
-    saveButton.onclick = () => save(buffer.path);
-    const openButton = el("button", "button", "Open file");
-    openButton.onclick = () => openFile(buffer.path, null, true);
-    const closeButton = el("button", "icon-button small");
-    closeButton.setAttribute("aria-label", "Close inline template");
-    closeButton.append(icon("close"));
-    closeButton.onclick = () => {
-      closeInlineTemplate();
-      state.editor.focus();
-    };
-    header.append(
-      icon("file"),
-      title,
-      status,
-      saveButton,
-      openButton,
-      closeButton,
-    );
-    const container = el("div", "template-peek-editor");
-    node.append(header, container);
-    let zone;
-    state.editor.changeViewZones((accessor) => {
-      zone = accessor.addZone({
-        afterLineNumber: lineNumber,
-        heightInPx: 320,
-        domNode: node,
-        suppressMouseDown: false,
-      });
-    });
-    const zoneContainer = node.parentElement;
-    // Monaco hides view zones from accessibility by default; this zone is interactive.
-    zoneContainer?.removeAttribute("aria-hidden");
-    zoneContainer?.classList.add("template-peek-zones");
-    const editor = monaco.editor.create(
-      container,
-      sourceEditorOptions({
-        model: buffer.model,
-        ariaLabel: "Edit included template " + result.path,
-      }),
-    );
-    const listener = buffer.model.onDidChangeContent(() => {
-      if (state.active === buffer.path) return;
-      buffer.content = buffer.model.getValue();
-      buffer.edited = true;
-      state.revision++;
-      persist();
-      renderTree();
-      schedulePreview();
-    });
-    state.inlineTemplate = {
-      parent: parent.path,
-      line: lineNumber,
-      buffer,
-      node,
-      zone,
-      editor,
-      listener,
-      status,
-      saveButton,
-      zoneContainer,
-    };
+      const node = el("div", "source-expansion-bar");
+      const title = el("span", "expanded-source-name");
+      const saveButton = el("button", "button", "Save source");
+      saveButton.onclick = () => save(sourceAtCursor()?.path || parent.path);
+      const openButton = el("button", "button", "Open source file");
+      openButton.onclick = () =>
+        openFile(sourceAtCursor()?.path || parent.path, null, true);
+      const closeButton = el("button", "button", "Collapse templates");
+      closeButton.onclick = () => {
+        closeInlineTemplate();
+        state.editor.focus();
+      };
+      node.append(title, saveButton, openButton, closeButton);
+      $("md-doc-monaco").before(node);
+      state.inlineTemplate = {
+        parent: parent.path,
+        composition,
+        model,
+        node,
+        title,
+        saveButton,
+      };
+      state.includeDecorations = state.editor.deltaDecorations(
+        state.includeDecorations || [],
+        [],
+      );
+      state.switching = true;
+      state.editor.setModel(model);
+      state.switching = false;
+    }
+    if (!buffer.edited && !dirty(buffer)) buffer.tabHidden = true;
+    projection().expanded.set(entry.key, buffer.path);
+    try {
+      syncExpandedProjection();
+    } catch (error) {
+      projection().expanded.delete(entry.key);
+      syncExpandedProjection();
+      throw error;
+    }
     updateSaveState();
-    state.editor.revealLineInCenter(lineNumber);
-    editor.focus();
+    state.editor.layout();
+    const offset = projection().location(buffer.path, 1);
+    if (offset !== null) {
+      const position = state.editor.getModel().getPositionAt(offset);
+      state.editor.setPosition(position);
+      state.editor.revealPositionInCenter(position);
+    }
+    state.editor.focus();
+  }
+  async function editIncludeAtLine(lineNumber) {
+    const composed =
+      projection() ||
+      (current()?.type === "md"
+        ? new DocumentComposition(state.active, state.buffers)
+        : null);
+    const model = state.editor?.getModel();
+    if (!composed || !model) return;
+    const entry = composed.includes.find(
+      (entry) => model.getPositionAt(entry.offset).lineNumber === lineNumber,
+    );
+    if (entry) await expandSourceInclude(entry);
   }
   async function loadBuffer(path) {
     if (!state.buffers.has(path)) {
@@ -961,7 +1086,7 @@
       if (choice === "save" && !(await save(path))) return;
     }
     if (
-      state.inlineTemplate?.buffer.path === path ||
+      projection()?.segments.some((part) => part.path === path) ||
       state.inlineTemplate?.parent === path
     )
       closeInlineTemplate();
@@ -988,11 +1113,20 @@
     persist();
     renderTree();
   }
-  async function save(
-    path = state.inlineTemplate?.editor.hasTextFocus()
-      ? state.inlineTemplate.buffer.path
-      : state.active,
-  ) {
+  async function save(path = null) {
+    if (path === null && projection()) {
+      const paths = new Set([
+        state.active,
+        ...projection()
+          .segments.map((part) => part.path)
+          .filter(Boolean),
+      ]);
+      for (const source of paths)
+        if (dirty(state.buffers.get(source)) && !(await save(source)))
+          return false;
+      return true;
+    }
+    path ??= state.active;
     const buffer = state.buffers.get(path);
     if (!buffer || buffer.saving) return false;
     const content = buffer.content;
@@ -1127,6 +1261,7 @@
   function schedulePreview(delay = state.previewDelay, force = false) {
     clearTimeout(state.timer);
     if (!state.pinned) return;
+    renderOutline();
     setRenderState(
       state.artifact ? "Out of date" : "Waiting to render",
       "stale",
@@ -1336,36 +1471,147 @@
       $("diagnostics-content").append(details);
     }
   }
-  function renderOutline() {
+  function showDocumentOutline(data) {
     const container = $("outline-panel");
     container.replaceChildren();
-    const buffer = current();
-    if (!buffer || buffer.type !== "md") {
+    const summary = el("div", "outline-document");
+    summary.append(
+      el(
+        "strong",
+        null,
+        data.headings.find((heading) => heading.level === 1)?.title ||
+          data.path.split("/").pop(),
+      ),
+      el("span", null, `${data.headings.length} headings · Final document`),
+    );
+    summary.title = data.path;
+    container.append(summary);
+    if (!data.headings.length)
       container.append(
+        el("p", "inspector-note", "This document has no headings."),
+      );
+    for (const heading of data.headings) {
+      const button = el("button", "outline-item", heading.title);
+      button.style.paddingLeft = 8 + (heading.level - 1) * 12 + "px";
+      button.title = heading.path + ":" + heading.line;
+      button.dataset.sourcePath = heading.path;
+      button.dataset.sourceLine = heading.line;
+      button.onclick = () =>
+        revealOutlineHeading(data, heading).catch((error) =>
+          toast(error.message, true),
+        );
+      container.append(button);
+    }
+  }
+  async function revealOutlineHeading(data, heading) {
+    setEditMode("source");
+    if (state.active !== data.path) await openFile(data.path);
+    if (heading.path !== data.path) {
+      const queue = [{ path: data.path, chain: [] }],
+        seen = new Set();
+      let chain = null;
+      while (queue.length) {
+        const item = queue.shift();
+        if (item.path === heading.path) {
+          chain = item.chain;
+          break;
+        }
+        if (seen.has(item.path)) continue;
+        seen.add(item.path);
+        for (const link of data.includes.filter(
+          (link) => link.parent === item.path,
+        ))
+          queue.push({ path: link.path, chain: [...item.chain, link] });
+      }
+      if (!chain) {
+        await openFile(heading.path, heading.line, true);
+        return;
+      }
+      for (const link of chain) {
+        const composed =
+          projection() || new DocumentComposition(state.active, state.buffers);
+        const entry =
+          composed.includes.find(
+            (entry) =>
+              entry.path === link.parent &&
+              entry.name === link.name &&
+              entry.sourceLine === link.line,
+          ) ||
+          composed.includes.find(
+            (entry) => entry.path === link.parent && entry.name === link.name,
+          );
+        if (!entry) {
+          await openFile(heading.path, heading.line, true);
+          return;
+        }
+        await expandSourceInclude(entry, false);
+      }
+    }
+    const offset = projection()?.location(heading.path, heading.line);
+    const position =
+      offset !== null && offset !== undefined
+        ? state.editor.getModel().getPositionAt(offset)
+        : { lineNumber: heading.line, column: 1 };
+    state.editor.setPosition(position);
+    state.editor.revealPositionInCenter(position);
+    state.editor.focus();
+  }
+  function renderOutline() {
+    clearTimeout(state.outlineTimer);
+    const request = (state.outlineRequest = (state.outlineRequest || 0) + 1);
+    const path = state.pinned;
+    const revision = state.revision;
+    const container = $("outline-panel");
+    if (!path) {
+      container.replaceChildren(
         el(
           "p",
           "inspector-note",
-          "Open a Markdown document to see its outline.",
+          "Open a document to see its composed outline.",
         ),
       );
       return;
     }
-    let fenced = false;
-    buffer.content.split("\n").forEach((line, index) => {
-      if (/^\s*```/.test(line)) fenced = !fenced;
-      if (fenced) return;
-      const match = line.match(/^(#{1,6})\s+(.+)/);
-      if (match) {
-        const button = el("button", "outline-item", match[2]);
-        button.style.paddingLeft = 8 + (match[1].length - 1) * 12 + "px";
-        button.onclick = () => {
-          setEditMode("source");
-          state.editor?.revealLineInCenter(index + 1);
-          state.editor?.setPosition({ lineNumber: index + 1, column: 1 });
-        };
-        container.append(button);
+    if (
+      state.documentOutline?.path === path &&
+      state.documentOutline.revision === revision
+    ) {
+      showDocumentOutline(state.documentOutline);
+      return;
+    }
+    if (state.documentOutline?.path !== path)
+      container.replaceChildren(
+        el("p", "inspector-note", "Composing document outline…"),
+      );
+    container.setAttribute("aria-busy", "true");
+    state.outlineTimer = setTimeout(async () => {
+      try {
+        const data = await api("/api/outline", {
+          method: "POST",
+          body: JSON.stringify({ path, buffers: buffers(), revision }),
+        });
+        if (
+          request !== state.outlineRequest ||
+          state.pinned !== path ||
+          state.revision !== revision
+        )
+          return;
+        state.documentOutline = data;
+        showDocumentOutline(data);
+      } catch (error) {
+        if (request !== state.outlineRequest) return;
+        container.replaceChildren(
+          el(
+            "p",
+            "inspector-note",
+            "Could not compose the document outline: " + error.message,
+          ),
+        );
+      } finally {
+        if (request === state.outlineRequest)
+          container.removeAttribute("aria-busy");
       }
-    });
+    }, 500);
   }
   async function openWorkspaceChooser() {
     const data = await api("/api/workspaces");
@@ -1469,6 +1715,7 @@
       return;
     }
     state.nav = name;
+    $("sidebar").dataset.navigationPanel = name;
     const titles = {
       files: "FILES",
       search: "SEARCH",

@@ -521,7 +521,11 @@ function check(condition, message) {
       (await page.locator("#preview-document").textContent()) === "doc.md",
       "Document preview stays pinned during config edits",
     );
-    // Click the include declaration and edit the upstream template in place.
+    // Expand templates in the same Monaco model, with source-aware edits.
+    fs.writeFileSync(
+      path.join(project, "templates/nested.html"),
+      "<h3>Nested section</h3>\n",
+    );
     await page.locator('[data-path="doc.md"]').click();
     await page.evaluate(() => {
       const editor = monaco.editor.getEditors()[0];
@@ -533,88 +537,56 @@ function check(condition, message) {
       editor.revealLineInCenter(line);
     });
     await page.locator(".template-include-link").first().click();
-    await page.waitForSelector(".template-peek");
+    await page.waitForSelector(".source-expansion-bar");
     check(
-      (await source()).includes("Snapshot"),
-      "Inline editing leaves the parent document open",
+      (await source()).includes("Snapshot") &&
+        (await source()).includes("Included baseline"),
+      "The main document expands to include the upstream source text",
     );
     check(
-      (await page.locator(".template-peek-heading").textContent()).includes(
+      (await page.evaluate(() => monaco.editor.getEditors().length === 1)) &&
+        (await page.locator(".template-peek").count()) === 0,
+      "Expanded templates use one editor with no sub-editor or striped view zone",
+    );
+    check(
+      (await page.locator(".expanded-source-name").textContent()).includes(
         "project:templates/shared.md",
       ),
-      "Inline editor resolves the upstream template",
-    );
-    await page.waitForFunction(
-      () => document.querySelector("#preview-status").textContent === "Current",
-    );
-    check(
-      await page.evaluate(() => {
-        const editors = monaco.editor.getEditors();
-        const main = editors[0],
-          inline = editors.find((editor) =>
-            editor.getDomNode()?.closest(".template-peek"),
-          );
-        const font = (editor) => {
-          const f = editor.getOption(monaco.editor.EditorOption.fontInfo);
-          return [f.fontFamily, f.fontSize, f.lineHeight, f.letterSpacing];
-        };
-        const styles = (editor) => {
-          const s = getComputedStyle(
-            editor.getDomNode().querySelector(".view-lines"),
-          );
-          return [s.fontFamily, s.fontSize, s.lineHeight];
-        };
-        return (
-          JSON.stringify(font(main)) === JSON.stringify(font(inline)) &&
-          JSON.stringify(styles(main)) === JSON.stringify(styles(inline)) &&
-          [
-            "padding",
-            "lineNumbersMinChars",
-            "scrollbar",
-            "renderLineHighlight",
-            "smoothScrolling",
-            "roundedSelection",
-          ].every(
-            (key) =>
-              JSON.stringify(main.getRawOptions()[key]) ===
-              JSON.stringify(inline.getRawOptions()[key]),
-          )
-        );
-      }),
-      "Inline and main source editors share rendered typography, spacing, gutters and scrolling",
+      "The source indicator identifies the upstream file under the cursor",
     );
     await page
       .getByRole("button", { name: "Switch appearance", exact: true })
       .click();
     check(
-      await page.evaluate(() => {
-        const main = monaco.editor.getEditors()[0].getDomNode(),
-          inline = document.querySelector(".template-peek .monaco-editor");
-        return (
-          main.classList.contains("vs-dark") &&
-          inline.classList.contains("vs-dark") &&
-          getComputedStyle(main.querySelector(".monaco-editor-background"))
-            .backgroundColor ===
-            getComputedStyle(inline.querySelector(".monaco-editor-background"))
-              .backgroundColor
-        );
-      }),
-      "Inline and main editors share dark mode backgrounds",
-    );
-    await page
-      .getByRole("button", { name: "Close inline template", exact: true })
-      .click();
-    await page.locator(".template-include-link").first().click();
-    await page.waitForSelector(".template-peek");
-    check(
       await page.evaluate(
         () =>
           document.documentElement.dataset.theme === "dark" &&
-          [...document.querySelectorAll("#md-doc-monaco .monaco-editor")].every(
-            (node) => node.classList.contains("vs-dark"),
-          ),
+          monaco.editor
+            .getEditors()[0]
+            .getDomNode()
+            .classList.contains("vs-dark"),
       ),
-      "Opening the inline editor in dark mode preserves the main theme",
+      "Expanded source shares the main editor's dark theme",
+    );
+    await page
+      .getByRole("button", { name: "Collapse templates", exact: true })
+      .click();
+    check(
+      !(await source()).includes("Included baseline"),
+      "Collapsing restores the original source include declaration",
+    );
+    await page.locator(".template-include-link").first().click();
+    await page.waitForSelector(".source-expansion-bar");
+    check(
+      await page.evaluate(
+        () =>
+          monaco.editor.getEditors().length === 1 &&
+          monaco.editor
+            .getEditors()[0]
+            .getDomNode()
+            .classList.contains("vs-dark"),
+      ),
+      "Re-expansion retains the editor theme and single editing surface",
     );
     await page
       .getByRole("button", { name: "Switch appearance", exact: true })
@@ -627,14 +599,30 @@ function check(condition, message) {
       )
         jobRequests.push(request);
     };
-    page.on("request", recordPreview);
-    await page.evaluate(() =>
-      monaco.editor
-        .getEditors()
-        .find((editor) => editor.getDomNode()?.closest(".template-peek"))
-        .getModel()
-        .setValue("Included inline draft\n"),
+    await page.waitForFunction(
+      () => document.querySelector("#preview-status").textContent === "Current",
     );
+    page.on("request", recordPreview);
+    const fragmentDraft =
+      '## Included inline draft\n\n{% include "nested.html" %}\n';
+    await page.evaluate((text) => {
+      const editor = monaco.editor.getEditors()[0],
+        model = editor.getModel();
+      const start = model.getValue().indexOf("Included baseline\n");
+      const from = model.getPositionAt(start),
+        to = model.getPositionAt(start + "Included baseline\n".length);
+      editor.executeEdits("template-test", [
+        {
+          range: new monaco.Range(
+            from.lineNumber,
+            from.column,
+            to.lineNumber,
+            to.column,
+          ),
+          text,
+        },
+      ]);
+    }, fragmentDraft);
     await page.waitForTimeout(900);
     check(
       jobRequests.length === 0,
@@ -654,42 +642,261 @@ function check(condition, message) {
     check(
       fs.readFileSync(path.join(project, "templates/shared.md"), "utf8") ===
         "Included baseline\n",
-      "Inline draft previews without writing the upstream file",
+      "Expanded template drafts preview without writing the upstream file",
+    );
+    const draftRequest = jobRequests.at(-1).postDataJSON();
+    check(
+      draftRequest.buffers["project:templates/shared.md"] === fragmentDraft &&
+        !(draftRequest.buffers["doc.md"] || "").includes(
+          "Included inline draft",
+        ),
+      "Preview receives separate source buffers rather than flattened template text in the parent",
     );
     check(
       (await page.locator("#preview-document").textContent()) === "doc.md",
-      "Inline edit keeps the parent PDF pinned",
+      "Expanded edits keep the final document PDF pinned",
+    );
+    await page.locator('[data-nav="outline"]').click();
+    await page
+      .getByRole("button", { name: "Included inline draft", exact: true })
+      .waitFor();
+    check(
+      (await page.locator(".outline-document").textContent()).includes(
+        "Snapshot UnsavedBrand",
+      ) && !(await page.locator(".tree-controls").isVisible()),
+      "Outline context describes the final document rather than workspace folder controls",
+    );
+    check(
+      (await page
+        .getByRole("button", { name: "Nested section", exact: true })
+        .isVisible()) &&
+        (await page
+          .getByRole("button", { name: "Snapshot UnsavedBrand", exact: true })
+          .isVisible()),
+      "The composed outline includes resolved titles and nested HTML template headings",
     );
     await page
-      .getByRole("button", { name: "Close inline template", exact: true })
+      .getByRole("button", { name: "Nested section", exact: true })
+      .click();
+    await page.waitForFunction(() =>
+      monaco.editor
+        .getEditors()[0]
+        .getValue()
+        .includes("<h3>Nested section</h3>"),
+    );
+    check(
+      await page.evaluate(() => {
+        const editor = monaco.editor.getEditors()[0];
+        return (
+          editor
+            .getModel()
+            .getLineContent(editor.getPosition().lineNumber)
+            .includes("Nested section") &&
+          monaco.editor.getEditors().length === 1
+        );
+      }),
+      "Outline navigation expands the nested source and places the cursor on its heading",
+    );
+    await page.evaluate(() => {
+      const editor = monaco.editor.getEditors()[0],
+        model = editor.getModel();
+      const start = model.getValue().indexOf("Nested section");
+      const from = model.getPositionAt(start),
+        to = model.getPositionAt(start + "Nested section".length);
+      editor.pushUndoStop();
+      editor.executeEdits("nested-test", [
+        {
+          range: new monaco.Range(
+            from.lineNumber,
+            from.column,
+            to.lineNumber,
+            to.column,
+          ),
+          text: "Nested edited",
+        },
+      ]);
+      editor.pushUndoStop();
+      editor.trigger("nested-test", "undo", null);
+    });
+    check(
+      (await source()).includes("Nested section") &&
+        !(await source()).includes("Nested edited"),
+      "Undo maps nested template changes back to their original source",
+    );
+    await page
+      .getByRole("button", { name: "Collapse templates", exact: true })
       .click();
     await page.locator(".template-include-link").first().click();
-    await page.waitForSelector(".template-peek");
+    await page.waitForSelector(".source-expansion-bar");
     check(
-      (await page.evaluate(() =>
-        monaco.editor
-          .getEditors()
-          .find((editor) => editor.getDomNode()?.closest(".template-peek"))
-          .getValue(),
-      )) === "Included inline draft\n",
-      "Closing inline editing retains the draft",
+      (await source()).includes("Included inline draft"),
+      "Collapse and re-expand retains the upstream draft",
     );
     await page
-      .getByRole("button", { name: "Save template", exact: true })
+      .getByRole("button", { name: "Save source", exact: true })
       .click();
     await page.waitForFunction(
       () =>
-        document.querySelector(".template-peek-status").textContent ===
-        "Saved template",
+        !document
+          .querySelector(".expanded-source-name")
+          .textContent.includes("Unsaved"),
     );
     check(
       fs.readFileSync(path.join(project, "templates/shared.md"), "utf8") ===
-        "Included inline draft\n",
-      "Save template writes the actual upstream file",
+        fragmentDraft,
+      "Saving expanded source writes the upstream template file",
     );
     await page
-      .getByRole("button", { name: "Close inline template", exact: true })
+      .getByRole("button", { name: "Collapse templates", exact: true })
       .click();
+    const beforeRepeatedInclude = await source();
+    await edit(beforeRepeatedInclude + '\n{% include "shared.md" %}\n');
+    await page.evaluate(async () => {
+      const editor = monaco.editor.getEditors()[0];
+      const find = (last) => {
+        const lines = editor.getValue().split("\n");
+        const indices = lines
+          .map((line, index) =>
+            line.includes('include "shared.md"') ? index + 1 : 0,
+          )
+          .filter(Boolean);
+        editor.setPosition({
+          lineNumber: last ? indices.at(-1) : indices[0],
+          column: 1,
+        });
+      };
+      find(false);
+      await editor.getAction("md-doc.edit-include").run();
+      find(true);
+      await editor.getAction("md-doc.edit-include").run();
+      const model = editor.getModel(),
+        start = model.getValue().indexOf("Included inline draft");
+      const from = model.getPositionAt(start),
+        to = model.getPositionAt(start + "Included inline draft".length);
+      editor.pushUndoStop();
+      editor.executeEdits("repeated-test", [
+        {
+          range: new monaco.Range(
+            from.lineNumber,
+            from.column,
+            to.lineNumber,
+            to.column,
+          ),
+          text: "Mirrored draft",
+        },
+      ]);
+      editor.pushUndoStop();
+    });
+    check(
+      (await source()).split("Mirrored draft").length === 3,
+      "Editing a shared template updates both expanded occurrences",
+    );
+    await page.evaluate(() =>
+      monaco.editor.getEditors()[0].trigger("repeated-test", "undo", null),
+    );
+    check(
+      (await source()).split("Included inline draft").length === 3 &&
+        !(await source()).includes("Mirrored draft"),
+      "Undo restores both occurrences without duplicating source edits",
+    );
+    await page.evaluate(() =>
+      monaco.editor.getEditors()[0].trigger("repeated-test", "redo", null),
+    );
+    check(
+      (await source()).split("Mirrored draft").length === 3,
+      "Redo restores both shared-template occurrences",
+    );
+    await page.evaluate(() =>
+      monaco.editor.getEditors()[0].trigger("repeated-test", "undo", null),
+    );
+    await page
+      .getByRole("button", { name: "Collapse templates", exact: true })
+      .click();
+    await edit(beforeRepeatedInclude);
+    await page.evaluate(async () => {
+      const editor = monaco.editor.getEditors()[0];
+      const line =
+        editor
+          .getValue()
+          .split("\n")
+          .findIndex((line) => line.includes('include "shared.md"')) + 1;
+      editor.setPosition({ lineNumber: line, column: 1 });
+      await editor.getAction("md-doc.edit-include").run();
+    });
+    await page.locator("#md-doc-save-btn").click();
+    await page.waitForFunction(
+      () => document.querySelector("#md-doc-save-btn").disabled,
+    );
+    check(
+      fs.readFileSync(path.join(workspace, "doc.md"), "utf8") ===
+        beforeRepeatedInclude &&
+        fs.readFileSync(path.join(project, "templates/shared.md"), "utf8") ===
+          fragmentDraft,
+      "Main Save writes original source files rather than the expanded editor text",
+    );
+    await page.locator("#auto-preview").evaluate((node) => node.click());
+    jobRequests.length = 0;
+    page.on("request", recordPreview);
+    await page.evaluate(() => {
+      const editor = monaco.editor.getEditors()[0],
+        model = editor.getModel();
+      const start = model.getValue().indexOf("Included inline draft");
+      const from = model.getPositionAt(start),
+        to = model.getPositionAt(start + "Included inline draft".length);
+      editor.pushUndoStop();
+      editor.executeEdits("paused-outline", [
+        {
+          range: new monaco.Range(
+            from.lineNumber,
+            from.column,
+            to.lineNumber,
+            to.column,
+          ),
+          text: "Paused outline draft",
+        },
+      ]);
+      editor.pushUndoStop();
+    });
+    await page
+      .getByRole("button", { name: "Paused outline draft", exact: true })
+      .waitFor();
+    check(
+      jobRequests.length === 0,
+      "The composed outline updates unsaved templates with PDF regeneration paused",
+    );
+    await page.evaluate(() =>
+      monaco.editor.getEditors()[0].trigger("paused-outline", "undo", null),
+    );
+    page.off("request", recordPreview);
+    await page.locator("#auto-preview").evaluate((node) => node.click());
+    const beforeBoundaryEdit = await source();
+    await page.evaluate(() => {
+      const editor = monaco.editor.getEditors()[0],
+        model = editor.getModel();
+      const start = model.getValue().indexOf('{% include "shared.md"'),
+        end = model.getValue().indexOf("Included inline draft") + 5;
+      const from = model.getPositionAt(start),
+        to = model.getPositionAt(end);
+      editor.executeEdits("boundary-test", [
+        {
+          range: new monaco.Range(
+            from.lineNumber,
+            from.column,
+            to.lineNumber,
+            to.column,
+          ),
+          text: "",
+        },
+      ]);
+    });
+    check(
+      (await source()) === beforeBoundaryEdit,
+      "A deletion spanning source files cannot corrupt the parent or its template",
+    );
+    await page
+      .getByRole("button", { name: "Collapse templates", exact: true })
+      .click();
+    await page.locator('[data-nav="files"]').click();
     await page.keyboard.press("Control+k");
     await page.locator("#command-query").fill("> Studio settings");
     await page.keyboard.press("Enter");
