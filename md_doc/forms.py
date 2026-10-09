@@ -35,16 +35,58 @@ KNOWN_FIELD_TYPES = frozenset(
 _STRUCTURAL_RE = re.compile(r"^(/?(row|box)(:.*)?|submit([\s:].*)?)$", re.IGNORECASE | re.DOTALL)
 
 
+def split_field_parts(text: str) -> list[str]:
+    """Split delimiters outside quoted values, retaining escapes until decoding."""
+    parts: list[str] = []
+    start = 0
+    quote = ""
+    escaped = False
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            continue
+        # Apostrophes in ordinary prose (e.g. customer's) are literal.
+        prefix = text[start:index].rstrip()
+        if char in {"'", '"'} and (not prefix or prefix.endswith("=")):
+            quote = char
+            continue
+        if char != ",":
+            continue
+        # Currency and other grouped numbers do not require extra quoting.
+        if index and text[index - 1].isdigit():
+            if re.match(r"[0-9]{3}(?![0-9])", text[index + 1 :]):
+                continue
+        parts.append(text[start:index])
+        start = index + 1
+    parts.append(text[start:])
+    return parts
+
+
+def _field_value(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
+        value = value[1:-1]
+    # Preserve unknown escapes (including ordinary Windows path separators).
+    return re.sub(r"\\([,\\\"'])", r"\1", value)
+
+
 def parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
     """Parse comma-separated ``key=value`` / bare-flag attributes."""
     attrs: dict[str, str | bool] = {}
-    for part in attr_str.split(","):
+    for part in split_field_parts(attr_str):
         part = part.strip()
         if not part:
             continue
         if "=" in part:
             k, v = part.split("=", 1)
-            attrs[k.strip()] = v.strip()
+            attrs[k.strip()] = _field_value(v)
         else:
             attrs[part] = True
     return attrs
@@ -67,7 +109,7 @@ def parse_field_spec(spec: str) -> tuple[str, str, list[str], dict[str, str | bo
         name = next(iter(name_attrs), "field")
         options = parts[1:] if len(parts) > 1 else []
         return ftype, str(name), options, name_attrs
-    parts = rest.split(",")
+    parts = split_field_parts(rest)
     name = parts[0].strip()
     attrs = parse_field_attrs(",".join(parts[1:])) if len(parts) > 1 else {}
     return ftype, name, [], attrs

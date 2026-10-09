@@ -442,6 +442,25 @@ missing `pdf_forms: true`), **and maps to fillable Word form fields in
 ?[submit Send]                          submit button
 ```
 
+### Commas and quotation marks in attributes
+
+Numeric thousands separators are preserved: `label=$10,000,000` renders the
+complete amount. For other comma-containing labels or attributes, quote the
+value or escape each comma with a backslash:
+
+```markdown
+?[checkbox: amount, label="$10,000,000", checked]
+?[checkbox: consent, label="I agree, including the conditions", required]
+?[checkbox: consent, label=I agree\, including the conditions]
+?[checkbox: consent, label='Say "yes", then continue']
+?[text: reference, title="Reference, including prefix", value="ACME, 2026"]
+```
+
+Quotes around the value are removed. Within a quoted value, escape a matching
+quote with a backslash (`\"` or `\'`); `\\` produces a literal backslash.
+Attributes such as `required` and `checked` still follow the closing quote.
+This syntax is shared by PDF, DOCX, DOTX and linting.
+
 ### Layout constructs
 
 **Bordered field grid** (`?[box]`) — the insurance-application look: every
