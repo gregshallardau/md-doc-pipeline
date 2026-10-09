@@ -316,7 +316,7 @@ kbd {
 .rail-space {
   flex: 1;
 }
-.sidebar {
+.workspace-sidebar {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1626,7 +1626,7 @@ kbd {
 .workbench.nav-hidden {
   --nav-width: 0px;
 }
-.workbench.nav-hidden .sidebar,
+.workbench.nav-hidden .workspace-sidebar,
 .workbench.nav-hidden .nav-splitter {
   display: none;
 }
@@ -1649,7 +1649,7 @@ kbd {
   display: none;
 }
 .studio.focus .activity-rail,
-.studio.focus .sidebar,
+.studio.focus .workspace-sidebar,
 .studio.focus .nav-splitter {
   display: none;
 }
@@ -1670,7 +1670,7 @@ kbd {
   grid-template-rows: minmax(0, var(--horizontal-split)) 5px minmax(0, 1fr);
 }
 .layout-horizontal .activity-rail,
-.layout-horizontal .sidebar,
+.layout-horizontal .workspace-sidebar,
 .layout-horizontal .nav-splitter {
   grid-row: 1/4;
 }
@@ -1777,14 +1777,14 @@ kbd {
   .workbench {
     grid-template-columns: 42px 0 0 minmax(0, 1fr) 0 0;
   }
-  .sidebar {
+  .workspace-sidebar {
     display: none;
   }
   .nav-splitter,
   .preview-splitter {
     display: none;
   }
-  .workbench.mobile-nav .sidebar {
+  .workbench.mobile-nav .workspace-sidebar {
     display: flex;
     position: absolute;
     left: 42px;

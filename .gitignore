@@ -33,3 +33,7 @@ workspace/
 .*.md-doc-state
 node_modules/
 parity-artifacts/
+
+# PDF.js runtime modules are source assets, not generated Python builds.
+!md-doc-web-editor/md_doc_web_editor/static/vendor/pdfjs-*/legacy/build/
+!md-doc-web-editor/md_doc_web_editor/static/vendor/pdfjs-*/legacy/build/*.mjs

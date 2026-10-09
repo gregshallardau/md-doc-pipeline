@@ -277,6 +277,35 @@ function check(condition, message) {
       artifact.subarray(0, 4).toString() === "%PDF",
       "Artifact download is PDF",
     );
+    // Check actual navigation geometry, not just the moving splitter.
+    const sidebar = page.locator("#sidebar");
+    const navBefore = await sidebar.boundingBox();
+    const navSplit = await page.locator("#nav-splitter").boundingBox();
+    await page.mouse.move(navSplit.x + 2, navSplit.y + 150);
+    await page.mouse.down();
+    await page.mouse.move(navSplit.x + 102, navSplit.y + 150, { steps: 8 });
+    await page.mouse.up();
+    const navAfter = await sidebar.boundingBox();
+    const movedSplit = await page.locator("#nav-splitter").boundingBox();
+    check(
+      navAfter.width > navBefore.width + 90,
+      "Pointer resize grows the actual sidebar",
+    );
+    check(
+      Math.abs(navAfter.x + navAfter.width - movedSplit.x) < 1,
+      "Sidebar edge follows the drag handle",
+    );
+    await page.locator("#nav-splitter").focus();
+    await page.keyboard.press("ArrowLeft");
+    check(
+      (await sidebar.boundingBox()).width < navAfter.width,
+      "Keyboard resize shrinks the actual sidebar",
+    );
+    await page.locator("#nav-splitter").dblclick();
+    check(
+      Math.abs((await sidebar.boundingBox()).width - 240) < 1,
+      "Double click restores the sidebar width",
+    );
     // Resizing works by pointer and keyboard, and persists through reload.
     const editor = page.locator("#editor-pane");
     const before = (await editor.boundingBox()).width;
