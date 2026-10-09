@@ -17,6 +17,8 @@ An available configured remote workspace is opened before local samples. Its con
 
 The Files rail button toggles the sidebar. Click the workspace row to collapse its files, or use **Expand all / Collapse all** for folders. New sessions open the first two folder levels; folder badges count Markdown documents recursively. PDFs, Office outputs, images and authoring files appear alongside Markdown. PDF/image files open in a browser tab and Office files download. **Dark mode / Light mode** is available directly in the header.
 
+Use **Pop out preview** in the output preview header to open a resizable window, including on a second monitor. It follows the editor’s rendered updates, including unsaved changes, and has independent zoom, page navigation, search, thumbnails and PDF download. Clicking the button again focuses the existing window. Rendering and automatic/manual refresh remain controlled by the editor.
+
 Linked folders whose targets remain inside the configured workspace are scanned and included in preview snapshots. Cycles, external links and unreadable directories appear as scan diagnostics instead of silently disappearing.
 
 To reproduce remote discovery with sample documents, run from the checkout:

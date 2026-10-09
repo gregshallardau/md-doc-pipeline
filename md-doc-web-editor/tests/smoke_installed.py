@@ -57,6 +57,8 @@ def main():
                 for asset in (
                     "editor.js",
                     "viewer.js",
+                    "preview-window.html",
+                    "preview-window.js",
                     "vendor/pdfjs-6.4.299/legacy/build/pdf.min.mjs",
                     "vendor/pdfjs-6.4.299/legacy/build/pdf.worker.min.mjs",
                     "vendor/pdfjs-6.4.299/web/pdf_viewer.mjs",

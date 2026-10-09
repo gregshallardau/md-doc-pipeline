@@ -21,6 +21,7 @@
     "chevron-left": "m15 6-6 6 6 6",
     list: "M9 6h12 M9 12h12 M9 18h12 M3 6h.01 M3 12h.01 M3 18h.01",
     git: "M6 3v12a4 4 0 0 0 4 4h6 M18 5v9 M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4",
+    external: "M14 3h7v7 M21 3l-9 9 M10 3H3v18h18v-7",
     maximize: "M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5",
     settings:
       "M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
@@ -89,6 +90,7 @@
     editor: null,
     fallback: null,
     view: null,
+    previewWindow: null,
     inspection: null,
     inspectTab: "properties",
     revision: 0,
@@ -855,6 +857,46 @@
     node.textContent = text;
     node.className = "render-state " + kind;
     $("preview-loading").hidden = kind !== "updating";
+    publishPreview();
+  }
+  function publishPreview(initialize = false) {
+    const target = state.previewWindow;
+    if (!target || target.closed) return;
+    target.postMessage(
+      {
+        type: "md-doc-preview",
+        markup: initialize ? $("preview-pane").outerHTML : undefined,
+        artifact: state.artifact,
+        path: state.artifactPath || state.pinned,
+        status: $("preview-status").textContent,
+        kind: $("preview-status").className,
+        theme: document.documentElement.dataset.theme,
+      },
+      location.origin,
+    );
+  }
+  window.addEventListener("message", (event) => {
+    if (
+      event.origin !== location.origin ||
+      event.source !== state.previewWindow
+    )
+      return;
+    if (event.data?.type === "md-doc-preview-ready") publishPreview(true);
+    if (event.data?.type === "md-doc-preview-refresh") schedulePreview(0, true);
+  });
+  function popOutPreview() {
+    if (state.previewWindow && !state.previewWindow.closed) {
+      state.previewWindow.focus();
+      publishPreview();
+      return;
+    }
+    state.previewWindow = window.open(
+      "/static/preview-window.html",
+      "md-doc-preview-" + state.client,
+      "popup,width=1000,height=900,resizable=yes,scrollbars=yes",
+    );
+    if (!state.previewWindow)
+      toast("Allow pop-ups for this editor to open the preview window.", true);
   }
   function schedulePreview(delay = 800, force = false) {
     clearTimeout(state.timer);
@@ -1240,6 +1282,7 @@
         matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     state.editor?.updateOptions({ theme: dark ? "vs-dark" : "mddoc-light" });
+    publishPreview();
     const button = $("appearance-button");
     button
       .querySelector("svg path")
@@ -2342,6 +2385,7 @@
       $("inspector").hidden = !$("inspector").hidden;
       renderInspector();
     },
+    "popout-preview": popOutPreview,
     "maximize-preview": () => {
       state.layout = state.layout === "preview" ? "split" : "preview";
       applyLayout();
@@ -2398,6 +2442,7 @@
       ["Export document", "export", ""],
       ["Change layout", "layout", ""],
       ["Refresh preview", "refresh-preview", ""],
+      ["Pop out preview", "popout-preview", ""],
       ["Document inspector", "inspector", ""],
       ["Save document", "save", "Ctrl S"],
       ["Focus mode", "focus", ""],

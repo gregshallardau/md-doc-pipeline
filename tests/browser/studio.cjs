@@ -416,6 +416,107 @@ function check(condition, message) {
       (await page.locator("#preview-document").textContent()) === "doc.md",
       "Document preview stays pinned during config edits",
     );
+    // A separate PDF.js window follows the editor's unsaved output.
+    const popupPromise = page.waitForEvent("popup");
+    await page
+      .getByRole("button", { name: "Pop out preview", exact: true })
+      .click();
+    const popup = await popupPromise;
+    popup.on("pageerror", (error) => errors.push(error.message));
+    await popup.waitForFunction(() =>
+      document
+        .querySelector(".pdfViewer .textLayer")
+        ?.textContent.includes("Snapshot UnsavedBrand"),
+    );
+    check(
+      (await popup.locator(".page canvas").count()) > 0,
+      "Pop-out renders the final PDF",
+    );
+    const priorPages = page.context().pages().length;
+    await page
+      .getByRole("button", { name: "Pop out preview", exact: true })
+      .click();
+    check(
+      page.context().pages().length === priorPages,
+      "Pop-out button reuses its open window",
+    );
+    await page.locator('[data-path="doc.md"]').click();
+    const popoutSource = await source();
+    await edit(
+      popoutSource.replace("# Snapshot", "# Live detached preview update"),
+    );
+    await popup.waitForFunction(() =>
+      [...document.querySelectorAll(".textLayer")].some((n) =>
+        n.textContent.includes("Live detached preview update"),
+      ),
+    );
+    check(
+      (await popup.locator("#preview-status").textContent()) === "Current",
+      "Pop-out receives unsaved PDF updates",
+    );
+    await popup.locator("#pdf-zoom").selectOption("page-fit");
+    await popup.setViewportSize({ width: 900, height: 700 });
+    check(
+      await popup.locator("#pdf-container").isVisible(),
+      "Pop-out supports independent zoom and resizing",
+    );
+    const popupDownload = popup.waitForEvent("download");
+    await popup
+      .getByRole("button", { name: "Download PDF", exact: true })
+      .click();
+    check(
+      fs
+        .readFileSync(await (await popupDownload).path())
+        .subarray(0, 4)
+        .toString() === "%PDF",
+      "Pop-out downloads the displayed PDF",
+    );
+    await edit(popoutSource);
+    await page.waitForFunction(
+      () => document.querySelector("#preview-status").textContent === "Current",
+    );
+    await page.locator('[data-path="second.md"]').click();
+    await popup.waitForFunction(() =>
+      document
+        .querySelector(".pdfViewer .textLayer")
+        ?.textContent.includes("Second document"),
+    );
+    check(
+      (await popup.locator("#preview-document").textContent()) === "second.md",
+      "Pop-out follows the selected document",
+    );
+    await page.locator('[data-path="doc.md"]').click();
+    await popup.waitForFunction(() =>
+      document
+        .querySelector(".pdfViewer .textLayer")
+        ?.textContent.includes("Snapshot UnsavedBrand"),
+    );
+    await page
+      .getByRole("button", { name: "Switch appearance", exact: true })
+      .click();
+    await popup.waitForFunction(
+      () => document.documentElement.dataset.theme === "dark",
+    );
+    check(
+      (await popup.locator("html").getAttribute("data-theme")) ===
+        (await page.locator("html").getAttribute("data-theme")),
+      "Pop-out follows editor appearance",
+    );
+    await page
+      .getByRole("button", { name: "Switch appearance", exact: true })
+      .click();
+    await popup.close();
+    const reopenPromise = page.waitForEvent("popup");
+    await page
+      .getByRole("button", { name: "Pop out preview", exact: true })
+      .click();
+    const reopened = await reopenPromise;
+    await reopened.waitForSelector(".page canvas");
+    check(
+      (await reopened.locator("#pdf-total").textContent()) === "3",
+      "Closed pop-out can be reopened",
+    );
+    await reopened.close();
     // Viewer controls, thumbnails, zoom and search.
     await page
       .getByRole("button", { name: "Page thumbnails", exact: true })
