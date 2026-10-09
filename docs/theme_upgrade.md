@@ -1,29 +1,18 @@
-# Upgrade CSS — agent prompt
+# Upgrade an existing theme
 
-For a **coding agent with file and shell access** (Claude Code, Codex, etc.) opened at the root
-of a project that uses md-doc-pipeline and has an older theme. Unlike the other files in this
-folder it is not a paste-into-chat prompt: the agent must read the theme files, run builds and
-compare output before and after.
-
-Paste everything between `---START---` and `---END---`, replacing `{{PROJECT_PATH}}` with the
-folder to upgrade (for example `workspace/acme/`). Run it on a clean git branch.
-
----
-
----START---
-
-You are upgrading the **theme CSS and visual config** of an md-doc-pipeline project to the
-current conventions, without changing how its documents look. Project: `{{PROJECT_PATH}}`.
+Use this procedure only when theme maintenance is requested. Preserve existing brand values
+and compare builds before and after. The commands use `workspace/acme/` as an example;
+substitute the actual project path.
 
 ## Hard rules
 
 1. **Brand values are untouched.** Never change a colour, font family, font size, page size or
    margin value. Move or restructure them; do not "improve" them. Never invent a colour.
 2. **Only edit** `_theme.css`, `_pdf-theme.css`, `_docx-theme.css`, `_meta.yml` (visual keys only)
-   and theme assets inside `{{PROJECT_PATH}}`. Never edit document `.md` bodies, `md_doc/`,
+   and theme assets inside `workspace/acme/`. Never edit document `.md` bodies, `md_doc/`,
    `tests/` or `pyproject.toml`.
-3. Work on a new branch (`git switch -c upgrade-css`). Commit each numbered step separately.
-   Do not push, and do not open a pull request, unless asked.
+3. Keep changes reviewable. Create a branch or commits when requested; do not push or
+   open a pull request without instruction.
 4. If two rules conflict or a change would alter appearance, **stop and ask** rather than guess.
 5. Keep comments that explain brand decisions. Delete only rules you can prove are dead.
 
@@ -36,12 +25,12 @@ current conventions, without changing how its documents look. Project: `{{PROJEC
 2. List every `_meta.yml` / frontmatter key that is purely visual: `cover_*`, `header_*`,
    `footer_*`, `page_header_bar*`, `section_bar*`, `css_vars`, `pdf_theme`, `body_text_align`.
 3. Note which documents set `pdf_forms: true`, which use covers, header bars or `section_bar`.
-4. Run `uv run md-doc doctor` and `uv run md-doc lint {{PROJECT_PATH}}`. Record the output.
+4. Run `uv run md-doc doctor` and `uv run md-doc lint workspace/acme/`. Record the output.
 
 ## Step 1 — Baseline (do not skip)
 
 ```bash
-uv run md-doc build {{PROJECT_PATH}} --force -o /tmp/css-before
+uv run md-doc build workspace/acme/ --force -o /tmp/css-before
 ```
 
 Keep `/tmp/css-before`. Render a PNG of every PDF page (for example with `pypdfium2`) so you
@@ -50,8 +39,8 @@ can compare later. If LibreOffice is installed, also convert each `.docx` to PDF
 
 ## Step 2 — Upgrade checklist
 
-Work through these in order. For each item: detect, fix, rebuild that file, confirm no visual
-change, commit.
+Work through these in order. For each item: detect, fix, rebuild that file and confirm the
+intended appearance is preserved.
 
 ### 2.1 Structure: one shared base, thin format files
 
@@ -156,8 +145,8 @@ the built HTML or the document sources before deleting). Do **not** remove `.cov
 ## Step 3 — Verify
 
 ```bash
-uv run md-doc lint {{PROJECT_PATH}}
-uv run md-doc build {{PROJECT_PATH}} --force -o /tmp/css-after
+uv run md-doc lint workspace/acme/
+uv run md-doc build workspace/acme/ --force -o /tmp/css-after
 ```
 
 Compare against `/tmp/css-before`:
@@ -180,6 +169,4 @@ Finish with a short report:
 1. A table of every change: file, rule, reason, and the checklist item (2.1–2.8) it came from.
 2. Before/after page counts per document.
 3. Anything you left alone on purpose, and anything that needs a human decision.
-4. The branch name and commit list. Do not push or open a pull request.
-
----END---
+4. Files changed and validation performed; include branch/commit details if applicable.

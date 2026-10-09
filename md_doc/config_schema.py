@@ -3,7 +3,7 @@
 The config cascade (``config.py``) accepts any YAML and silently ignores keys it
 doesn't recognise, so a typo like ``cover_bard: true`` or ``output_foramt: pdf``
 produces wrong output with no warning. This module knows the documented key set
-(see ``docs/config-reference.md`` / ``AGENTS.md``) and reports:
+(see ``docs/handbook.md#configuration`` / ``AGENTS.md``) and reports:
 
 - **warnings** for unknown keys (with a "did you mean …?" suggestion), and
 - **errors** for values of the wrong type / outside an allowed enum.

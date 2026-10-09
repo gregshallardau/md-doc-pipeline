@@ -66,7 +66,7 @@ cover_page: true
 ---
 ```
 
-- **`outputs`** — `pdf`, `docx`, `dotx`, or `pptx`. Multiple: `[pdf, dotx]`. Slide decks (`pptx`) have their own file shape — see `docs/slides-guide.md` and `docs/llm-deck-prompt.md`
+- **`outputs`** — `pdf`, `docx`, `dotx`, or `pptx`. Multiple: `[pdf, dotx]`. Slide decks (`pptx`) have their own file shape — see `docs/handbook.md#slides` and `docs/handbook.md#slides`
 - **`output_filename`** — override the output file name for all formats; Jinja2 variables allowed, extension added automatically
 - **`table_col_widths`** — relative column widths for every table, e.g. `[30, 70]` (ignored if the count doesn't match). Per table: put `<!-- col-widths: 30, 70 -->` on the line before it
 - **`css_vars`** — per-document CSS custom properties for PDF (`name: value`); a value ending in an image extension is resolved like `header_logo`
@@ -163,7 +163,7 @@ Optional Word-specific CSS overrides for `docx` and `dotx` output. Same format a
 
 **Resolution order:** When building Word output, the pipeline walks from the document directory up to the workspace root. At each level it checks for `_docx-theme.css` first, then the shared `_theme.css`, then `_pdf-theme.css`. The first file found wins — same cascading logic as all other config files. (PDF checks `_pdf-theme.css`, then `_theme.css`.)
 
-**Units:** Word only reads absolute lengths (`pt`, `px`, `mm`, `cm`, `in`) from the rules it consumes. `em`, `rem`, `%` and `calc()` are ignored there and Word falls back to defaults, so use absolute units in body, heading, table, list, form-input and `@page` rules. To bring an older theme up to date, use `prompts/upgrade-css.md`.
+**Units:** Word only reads absolute lengths (`pt`, `px`, `mm`, `cm`, `in`) from the rules it consumes. `em`, `rem`, `%` and `calc()` are ignored there and Word falls back to defaults, so use absolute units in body, heading, table, list, form-input and `@page` rules. To bring an older theme up to date, use `docs/theme_upgrade.md`.
 
 If no theme file exists in the hierarchy, Word output uses python-docx default styles.
 
@@ -366,7 +366,7 @@ cover_page: false
 
 ### Field shorthand (preferred)
 
-The `?[...]` shorthand is shorter than HTML, is wrapped in a `<form>` automatically, maps to real Word form fields in `.dotx`, and is checked by `md-doc lint` (unknown types, duplicate names, shorthand without `pdf_forms: true`). Full reference: `docs/pdf-forms-guide.md`.
+The `?[...]` shorthand is shorter than HTML, is wrapped in a `<form>` automatically, maps to real Word form fields in `.dotx`, and is checked by `md-doc lint` (unknown types, duplicate names, shorthand without `pdf_forms: true`). Full reference: `docs/handbook.md#forms`.
 
 ```markdown
 **Full name** ?[text: full_name, required]      (also email, date, number, tel, url)
