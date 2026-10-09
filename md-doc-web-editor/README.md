@@ -65,7 +65,7 @@ The inspector shows editable common properties, the configuration cascade and pr
 
 Use the insertion toolbar for formatting, tables, fields, PDF forms, page breaks, Mermaid, includes and slide directives. Local raster images can be copied into an asset directory; existing filenames are never silently overwritten. New document scaffolds support reports, fillable PDF forms, decks and blank documents. File actions include folder creation, duplicate, rename/move and recoverable trash. After moving a document, review relative asset/include references; the studio preserves them as written.
 
-Workspace search finds text in Markdown, YAML and CSS. The outline navigates source headings. Quick open and the command palette provide access to documents and actions.
+Workspace search finds text in Markdown, YAML and CSS. The outline navigates source headings. The shared command bar opens with **Ctrl+P** for file search or **Ctrl+Shift+P** / **F1** for commands (**Ctrl+K** also opens commands). Type `>` to switch to commands, or delete it to search files in the same input. File names, paths and commands support fuzzy matching. Use ⌘ instead of Ctrl on macOS.
 
 | Shortcut | Action |
 | --- | --- |

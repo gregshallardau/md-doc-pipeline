@@ -144,6 +144,84 @@ function check(condition, message) {
         .textContent()) === "1",
       "Folders show document counts",
     );
+    // One input switches between fuzzy file search and commands via >.
+    await page.keyboard.press("Control+p");
+    check(
+      (await page.locator("#command-query").inputValue()) === "",
+      "Quick open starts in file mode",
+    );
+    await page.locator("#command-query").fill("scnd");
+    check(
+      (await page
+        .locator("#command-results .command-item strong")
+        .first()
+        .textContent()) === "second.md",
+      "File search fuzzy-matches names",
+    );
+    await page.locator("#command-query").fill("> chly");
+    check(
+      (await page
+        .locator("#command-results .command-item strong")
+        .first()
+        .textContent()) === "Change layout",
+      "Leading > fuzzy-matches commands in the same bar",
+    );
+    check(
+      (await page.locator("#command-results").textContent()).includes(
+        "Command",
+      ) &&
+        !(await page.locator("#command-results").textContent()).includes(
+          "second.md",
+        ),
+      "Command mode excludes file results",
+    );
+    await page.locator("#command-query").fill("rptsnstd");
+    check(
+      (await page.locator("#command-results").textContent()).includes(
+        "reports/nested.md",
+      ),
+      "Removing > switches to fuzzy path search",
+    );
+    await page.locator("#command-query").fill("no-such-file-xyz");
+    await page.keyboard.press("Enter");
+    check(
+      await page.locator("#command-dialog").isVisible(),
+      "Enter with no results keeps the search open",
+    );
+    await page.keyboard.press("Control+Shift+p");
+    check(
+      (await page.locator("#command-query").inputValue()) === "> ",
+      "Command shortcut prefills > in the existing bar",
+    );
+    await page.keyboard.press("ArrowDown");
+    check(
+      (await page
+        .locator("#command-query")
+        .getAttribute("aria-activedescendant")) === "command-option-1" &&
+        (await page
+          .locator("#command-option-1")
+          .getAttribute("aria-selected")) === "true",
+      "Keyboard selection exposes the active command option",
+    );
+    await page.locator("#command-query").fill("second.md");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() =>
+      monaco.editor.getEditors()[0].getValue().includes("Second document"),
+    );
+    check(
+      !(await page.locator("#command-dialog").isVisible()),
+      "Enter opens the selected file from the unified bar",
+    );
+    await page.keyboard.press("F1");
+    check(
+      (await page.locator("#command-query").inputValue()) === "> ",
+      "F1 opens command mode",
+    );
+    await page.keyboard.press("Escape");
+    await page.locator('[data-path="doc.md"]').click();
+    await page.waitForFunction(() =>
+      monaco.editor.getEditors()[0].getValue().includes("Snapshot"),
+    );
     await page.locator('[data-nav="files"]').click();
     check(
       await page
@@ -646,7 +724,7 @@ function check(condition, message) {
     await page.setViewportSize({ width: 760, height: 900 });
     await page.getByRole("button", { name: "Commands", exact: true }).count();
     await page.keyboard.press("Control+k");
-    await page.locator("#command-query").fill("Change layout");
+    await page.locator("#command-query").fill("> Change layout");
     await page.keyboard.press("Enter");
     await page
       .getByRole("button", { name: "Preview only", exact: false })
@@ -672,7 +750,7 @@ function check(condition, message) {
       "Side by side",
     ]) {
       await page.keyboard.press("Control+k");
-      await page.locator("#command-query").fill("Change layout");
+      await page.locator("#command-query").fill("> Change layout");
       await page.keyboard.press("Enter");
       await page.getByRole("button", { name, exact: false }).click();
       if (
