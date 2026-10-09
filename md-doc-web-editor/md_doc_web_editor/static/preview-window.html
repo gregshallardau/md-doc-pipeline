@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Output preview · md-doc editor</title>
+    <link rel="icon" href="/static/mark.svg" type="image/svg+xml" />
+    <link
+      rel="stylesheet"
+      href="/static/vendor/pdfjs-6.4.299/web/pdf_viewer.css"
+    />
+    <link rel="stylesheet" href="/static/editor.css" />
+    <style>
+      body {
+        height: 100dvh;
+        display: flex;
+      }
+      #preview-pane {
+        flex: 1;
+        min-width: 0;
+      }
+      .preview-heading .button {
+        font-size: 11px;
+      }
+    </style>
+    <script type="module" src="/static/preview-window.js"></script>
+  </head>
+  <body>
+    <p id="startup" role="status">Connecting to the editor…</p>
+  </body>
+</html>
