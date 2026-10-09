@@ -66,7 +66,7 @@ def author_path(workspace: Path, relative: str) -> Path:
     if not (
         path.name in {"_meta.yml", "_merge_fields.yml"}
         or path.suffix == ".css"
-        or path.suffix == ".md"
+        or path.suffix.lower() in {".md", ".html", ".jinja", ".j2", ".txt"}
     ):
         raise ValueError("Only inherited metadata, themes and template fragments can be edited")
     return path

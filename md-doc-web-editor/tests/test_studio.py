@@ -300,6 +300,16 @@ def test_inline_template_resolution_uses_cascade_and_authoring_boundary(project)
             client.get("/api/file", params={"path": root_fragment.json()["path"]}).json()["content"]
             == "Root fragment\n"
         )
+        (project.parent / "templates/header.html").write_text("<p>HTML fragment</p>")
+        html_fragment = client.get(
+            "/api/template", params={"path": "doc.md", "name": "header.html"}
+        )
+        assert html_fragment.status_code == 200
+        assert html_fragment.json()["path"] == "project:templates/header.html"
+        assert (
+            client.get("/api/file", params={"path": html_fragment.json()["path"]}).json()["content"]
+            == "<p>HTML fragment</p>"
+        )
         (project / "templates").mkdir()
         (project / "templates/shared.md").write_text("Local override\n")
         assert (

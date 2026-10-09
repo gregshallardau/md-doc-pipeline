@@ -314,6 +314,8 @@
         : "") + "md-doc studio";
   }
   function language(buffer) {
+    if (/\.html$/i.test(buffer.path)) return "html";
+    if (/\.txt$/i.test(buffer.path)) return "plaintext";
     return buffer.type === "css"
       ? "css"
       : buffer.type === "meta"

@@ -358,8 +358,8 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         resolved = _resolve_template(name, full, ws.root)
         if resolved is None:
             raise HTTPException(404, "Included template not found")
-        if resolved.suffix != ".md":
-            raise HTTPException(400, "Only Markdown templates can be edited inline")
+        if resolved.suffix.lower() not in {".md", ".html", ".jinja", ".j2", ".txt"}:
+            raise HTTPException(400, "Only text template fragments can be edited inline")
         relative = (
             _prefix(ws) + resolved.relative_to(ws.root).as_posix()
             if resolved.is_relative_to(ws.root)
