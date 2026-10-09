@@ -635,7 +635,10 @@
     const path = sourceAtCursor()?.path || state.active;
     const buffer = state.buffers.get(path);
     expanded.title.textContent =
-      "Editing " + path + (dirty(buffer) ? " · Unsaved" : "");
+      (path === state.active ? "Document: " : "Template: ") +
+      path +
+      (path === state.active ? "" : " · Editing upstream source") +
+      (dirty(buffer) ? " · Unsaved" : "");
     expanded.title.title = path;
     expanded.saveButton.disabled = !dirty(buffer) || !!buffer.saving;
   }
@@ -676,7 +679,7 @@
           ...(entry.child
             ? {
                 after: {
-                  content: "  · " + entry.child,
+                  content: "  TEMPLATE · " + entry.child,
                   inlineClassName: "template-source-label",
                 },
               }
@@ -687,7 +690,7 @@
     for (const part of composed.segments) {
       if (!part.path || part.path === state.active) continue;
       const start = model.getPositionAt(part.start),
-        end = model.getPositionAt(part.end);
+        end = model.getPositionAt(Math.max(part.start, part.end - 1));
       decorations.push({
         range: new monaco.Range(
           start.lineNumber,
@@ -696,8 +699,46 @@
           end.column,
         ),
         options: {
-          hoverMessage: { value: "Source: " + part.path },
-          glyphMarginClassName: "included-source-glyph",
+          hoverMessage: {
+            value:
+              "Template: " + part.path + ". Edits change this upstream file.",
+          },
+          isWholeLine: true,
+          className: "template-source-region",
+          linesDecorationsClassName: "template-source-edge",
+        },
+      });
+    }
+    const endings = new Map();
+    for (const region of [...composed.regions].sort(
+      (a, b) => b.depth - a.depth,
+    )) {
+      if (region.path === state.active || region.end <= region.start) continue;
+      const start = model.getPositionAt(region.start),
+        end = model.getPositionAt(region.end - 1);
+      decorations.push({
+        range: new monaco.Range(start.lineNumber, 1, start.lineNumber, 1),
+        options: { isWholeLine: true, className: "template-source-start" },
+      });
+      decorations.push({
+        range: new monaco.Range(end.lineNumber, 1, end.lineNumber, 1),
+        options: { isWholeLine: true, className: "template-source-end" },
+      });
+      const names = endings.get(end.lineNumber) || [];
+      names.push(region.path.split("/").pop());
+      endings.set(end.lineNumber, names);
+    }
+    for (const [line, names] of endings) {
+      const column = model.getLineMaxColumn(line);
+      decorations.push({
+        range: new monaco.Range(line, column, line, column),
+        options: {
+          showIfCollapsed: true,
+          after: {
+            content: "  END TEMPLATE · " + names.join(" · "),
+            inlineClassName: "template-end-label",
+            inlineClassNameAffectsLetterSpacing: true,
+          },
         },
       });
     }
