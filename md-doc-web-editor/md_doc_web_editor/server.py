@@ -31,7 +31,6 @@ import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from md_doc.config import _find_repo_root
@@ -467,7 +466,9 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
     install_git(app, fixed.root if fixed else discover(project_root)[0].root, write_lock)
 
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    from .static_assets import EditorStaticFiles
+
+    app.mount("/static", EditorStaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     @app.get("/")
     def index() -> FileResponse:
