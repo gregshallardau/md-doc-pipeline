@@ -14,11 +14,11 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **PDF output** — WeasyPrint builder with branded cover page, headers, footers, and pagination
 - **DOCX output** — python-docx builder for copy-to-email Word documents
 - **DOTX output** — Word merge template builder; your other application fills the fields
-- **PPTX output** — python-pptx slide builder with a deck-first authoring schema: headings segment into slides, plus layout directives for section dividers, multi-column bodies, big-number stat tiles, pull-quotes, image showcases, per-slide backgrounds, and speaker notes ([slides guide](docs/slides-guide.md))
-- **Cascading themes** — `_pdf-theme.css`, shared `_theme.css` and Word-only `_docx-theme.css` at any folder level; deepest wins. `md-doc theme init` generates a full theme, `md-doc theme override` a colour-only override, and `--mddoc-*` custom properties set brand defaults in CSS ([theming guide](docs/theming-guide.md))
-- **Fillable PDF forms** — `pdf_forms: true` with a `?[text: name]` shorthand, bordered `?[box]` grids, signatures and Yes/No pairs; the same source gives real Word form fields in `.dotx` ([forms guide](docs/pdf-forms-guide.md))
-- **Diagrams and maths** — Mermaid flowcharts, charts, Gantt, sequence, mind map, ER and state diagrams, plus LaTeX equations, in PDF and Word ([Markdown reference](docs/markdown-reference.md))
-- **Export and extract** — `md-doc export` builds only the notes marked `export: true` ([export guide](docs/export-guide.md)); `md-doc extract` turns a PDF or DOCX back into Markdown ([extraction guide](docs/extraction-guide.md))
+- **PPTX output** — python-pptx slide builder with a deck-first authoring schema: headings segment into slides, plus layout directives for section dividers, multi-column bodies, big-number stat tiles, pull-quotes, image showcases, per-slide backgrounds, and speaker notes ([slides guide](docs/handbook.md#slides))
+- **Cascading themes** — `_pdf-theme.css`, shared `_theme.css` and Word-only `_docx-theme.css` at any folder level; deepest wins. `md-doc theme init` generates a full theme, `md-doc theme override` a colour-only override, and `--mddoc-*` custom properties set brand defaults in CSS ([theming guide](docs/handbook.md#themes))
+- **Fillable PDF forms** — `pdf_forms: true` with a `?[text: name]` shorthand, bordered `?[box]` grids, signatures and Yes/No pairs; the same source gives real Word form fields in `.dotx` ([forms guide](docs/handbook.md#forms))
+- **Diagrams and maths** — Mermaid flowcharts, charts, Gantt, sequence, mind map, ER and state diagrams, plus LaTeX equations, in PDF and Word ([Markdown reference](docs/handbook.md#markdown))
+- **Export and extract** — `md-doc export` builds only the notes marked `export: true` ([export guide](docs/handbook.md#exporting)); `md-doc extract` turns a PDF or DOCX back into Markdown ([extraction guide](docs/handbook.md#extracting))
 - **Editors** — a browser editor with live preview ([md-doc-web-editor](md-doc-web-editor/README.md), [Filament plugin](filament-md-doc/README.md)) and a [Neovim plugin](nvim-plugin/README.md) that resolves includes and variables inline
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
@@ -115,6 +115,11 @@ All `_` prefixed files (`_meta.yml`, `_theme.css`, `_merge_fields.yml`) are pipe
 
 ## Getting Started
 
+**Author a draft with an agent:** paste the entire [handbook](docs/handbook.md)
+into your agent with your draft and the output you want. It includes the rules for documents,
+forms, Word templates and decks in one file; project config is optional. Save the returned
+Markdown in your project folder, then lint and build it.
+
 ### 1. Set up your first project
 
 ```bash
@@ -138,10 +143,10 @@ This generates `proposal.pdf` — a branded, professional document with cover pa
 | **PDF** | Reports, proposals, final documents | Branded cover pages, custom themes, professional formatting |
 | **DOCX** | Documents to email or edit in Word | Editable format, preserves formatting, good for drafts |
 | **DOTX** | Fillable templates, mail merge | `[[field_name]]` becomes Word Text Form Field (default) or MERGEFIELD |
-| **PPTX** | Slide decks, quarterly reviews, pitches | Deck-first schema: section/columns/stat/quote/image/center layouts, per-slide backgrounds, speaker notes ([guide](docs/slides-guide.md)) |
+| **PPTX** | Slide decks, quarterly reviews, pitches | Deck-first schema: section/columns/stat/quote/image/center layouts, per-slide backgrounds, speaker notes ([guide](docs/handbook.md#slides)) |
 | **PDF Forms** | Interactive surveys, intake forms, applications | `<input>`, `<select>`, `<textarea>` become fillable form fields |
 
-See the [Output Types Guide](docs/quickstart.md#output-types) for detailed examples of each format, and the [Slides Guide](docs/slides-guide.md) for authoring decks.
+See the [handbook](docs/handbook.md) for authoring rules and examples for every format.
 
 ### 3. Common commands
 
@@ -162,7 +167,7 @@ md-doc sync workspace/acme/ --backend azure
 md-doc register workspace/acme/
 ```
 
-**→ [Full Quickstart Guide](docs/quickstart.md)** — Installation, all output types, cascading config, Jinja2 variables, merge fields, PDF forms, troubleshooting, and more.
+**→ [md-doc handbook](docs/handbook.md)** — the complete documentation in one file.
 
 ---
 
@@ -398,27 +403,18 @@ The `.dotx` file is ready to open in Word — tab through the Text Form Fields a
 
 Global options go before the subcommand: `--debug`, `--quiet`, `--log-level LEVEL`, `--version`.
 Every command and option, the remote-workspaces file and the environment variables are in the
-[CLI reference](docs/cli-reference.md).
+[CLI reference](docs/handbook.md#commands).
 
 ---
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — install, output types, config, Jinja2, forms
-- [CLI reference](docs/cli-reference.md) — every command, option, environment variable and the remote-workspaces file
-- [Config reference](docs/config-reference.md) — every `_meta.yml` / frontmatter key, with a complete key index
-- [Theming guide](docs/theming-guide.md) — theme files and cascade, `--mddoc-*` brand properties, `css_vars`, what Word reads, form styling
-- [Markdown reference](docs/markdown-reference.md) — extensions, tables, images, page breaks, Mermaid, differences between formats
-- [Word and PDF parity](docs/word-pdf-parity.md) — what the two formats keep in step, how it is checked, known differences
-- [Export guide](docs/export-guide.md) — `md-doc export` and its frontmatter keys
-- [Extraction guide](docs/extraction-guide.md) — `md-doc extract`
-- [Authoring guide](docs/authoring-guide.md) — Markdown authoring conventions
-- [Slides guide](docs/slides-guide.md) — deck-first PPTX authoring: layouts, backgrounds, columns, stats, quotes
-- [LLM deck prompt](docs/llm-deck-prompt.md) — turn raw content into a valid deck file with any LLM
-- [Prompts](prompts/) — `document-author.md` (write a document from a description), `document-converter-standalone.md` (convert an existing document), `new-workspace.md` (agent prompt to onboard a new company workspace), `upgrade-css.md` (agent prompt to bring an older theme up to date)
-- [PDF forms guide](docs/pdf-forms-guide.md) — interactive fillable PDFs
-- [Troubleshooting](docs/troubleshooting.md) — system libs, Mermaid-in-Word, sync
-- [Python API](docs/python-api.md) — using the pipeline as a library
+[The md-doc handbook](docs/handbook.md) is the single guide for authoring, Markdown,
+forms, slides, themes, configuration, commands, export, extraction and troubleshooting.
+Read it directly or paste the entire file into an agent with your draft.
+
+Workspace setup is covered in the handbook. Theme maintenance has its own
+[theme upgrade guide](docs/theme_upgrade.md).
 
 ---
 

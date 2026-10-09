@@ -29,7 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python, browser, PHP and Neovim regressions for the application review findings;
   clean-wheel server startup/build smoke checks and expanded CI.
 - **PDF forms build-out** (insurance-application grade; full guide in
-  `docs/pdf-forms-guide.md`):
+  `docs/handbook.md#forms`):
   - `?[box] … ?[/box]` — bordered field-grid construct (labels + `*hints*`
     inside cells, `|` column splits, `widths=72,28`, colspan for short rows)
     and `?[yesno: name]` Yes/No checkbox pairs.
@@ -80,7 +80,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fills flip the text to white automatically. A directive starts a new slide
   and the next heading titles it; unknown layout names degrade to the default
   content layout with a warning. Overlong slides now **shrink text to fit**
-  instead of spilling off the canvas. New guide: `docs/slides-guide.md`;
+  instead of spilling off the canvas. New guide: `docs/handbook.md#slides`;
   worked example: `examples/blueshift/decks/quarterly-review.md`.
 
 ### Changed
@@ -342,7 +342,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - Shipped-feature planning records (`docs/superpowers/`, `docs/pdf-forms-plan.md`), the unreferenced
   `docs/_theme.example.css` (`md-doc theme init` generates a theme), and dead code in the
-  builders. `docs/sample-parity-audit.md` became the evergreen `docs/word-pdf-parity.md`, and the
+  builders. `docs/sample-parity-audit.md` became the evergreen `docs/handbook.md#word-and-pdf`, and the
   sample documents moved from `docs/examples/` to `examples/starter/` so `docs/` holds only docs.
 
 ## 0.3.0 — 2026-07-02 (never tagged; shipped in 0.4.0)

@@ -76,7 +76,7 @@ the repo-root default (blue palette), auto-generated on first build.
 ### Deck-first PPTX authoring (`decks/`)
 
 `decks/quarterly-review.md` is a PowerPoint deck written with the slide schema
-(full guide: [`docs/slides-guide.md`](../../docs/slides-guide.md)). `decks/_meta.yml`
+(full guide: [`docs/handbook.md#slides`](../../docs/handbook.md#slides)). `decks/_meta.yml`
 sets `outputs: [pptx]`, so the folder builds to slides. The deck exercises every
 layout in one file:
 
@@ -91,7 +91,7 @@ layout in one file:
 
 It also inherits the navy `_theme.css` palette (heading colours + fonts), so the
 slides match the PDFs and Word docs. To generate a deck from raw content with an
-LLM, see [`docs/llm-deck-prompt.md`](../../docs/llm-deck-prompt.md).
+LLM, see [`docs/handbook.md#slides`](../../docs/handbook.md#slides).
 
 ## Building
 

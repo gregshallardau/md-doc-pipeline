@@ -85,17 +85,18 @@ Every user-facing feature must be documented before it ships. Where things live:
 
 | Topic | File |
 |-------|------|
-| Install and first steps | `README.md`, `docs/quickstart.md` |
-| Every command, option, env var, remote workspaces | `docs/cli-reference.md` |
-| Every config key (with a complete key index) | `docs/config-reference.md` |
-| Writing documents, variables, includes, page breaks, maths | `docs/authoring-guide.md`, `docs/markdown-reference.md` |
-| Themes, `--mddoc-*`, `css_vars`, what Word reads, form styling | `docs/theming-guide.md` |
-| Fillable forms | `docs/pdf-forms-guide.md` |
-| Slides | `docs/slides-guide.md`, `docs/llm-deck-prompt.md` |
-| Export and extract | `docs/export-guide.md`, `docs/extraction-guide.md` |
-| Word/PDF parity and known differences | `docs/word-pdf-parity.md` |
-| Troubleshooting, Python API | `docs/troubleshooting.md`, `docs/python-api.md` |
-| Agent prompts | `prompts/` |
+| Install and first steps | `README.md`, `docs/handbook.md#getting-started` |
+| Every command, option, env var, remote workspaces | `docs/handbook.md#commands` |
+| Every config key (with a complete key index) | `docs/handbook.md#configuration` |
+| Writing documents, variables, includes, page breaks, maths | `docs/handbook.md#authoring`, `docs/handbook.md#markdown` |
+| Themes, `--mddoc-*`, `css_vars`, what Word reads, form styling | `docs/handbook.md#themes` |
+| Fillable forms | `docs/handbook.md#forms` |
+| Slides | `docs/handbook.md#slides` |
+| Export and extract | `docs/handbook.md#exporting`, `docs/handbook.md#extracting` |
+| Word/PDF parity and known differences | `docs/handbook.md#word-and-pdf` |
+| Troubleshooting, Python API | `docs/handbook.md#troubleshooting`, `docs/handbook.md#python-api` |
+| Agent-assisted authoring | `docs/handbook.md` |
+| Workspace setup and theme maintenance | `docs/handbook.md#workspace-setup`, `docs/theme_upgrade.md` |
 
 `tests/test_docs_coverage.py` fails when a config key, CLI command or option, or `--mddoc-*`
 property is undocumented, when a guide is not linked from the README, or when a relative link in
@@ -211,7 +212,7 @@ Segmentation: the first `# H1` (or `title`) → title slide, later `# H1`s → s
 each `## H2` → content slide. `<!-- slide -->` forces a break; `<!-- notes: … -->` adds speaker
 notes. Mermaid diagrams embed as PNGs (needs the `[mermaid]` extra / `cairosvg`).
 
-**Deck-first layout directives** (full guide: `docs/slides-guide.md`, worked example:
+**Deck-first layout directives** (full guide: `docs/handbook.md#slides`, worked example:
 `examples/blueshift/decks/quarterly-review.md`). A directive starts a new slide; the next
 heading titles that slide instead of splitting to another. Overlong slides shrink text to fit.
 
@@ -226,7 +227,7 @@ heading titles that slide instead of splitting to another. Overlong slides shrin
 
 `background=#hex` works on any directive; dark fills flip text to white automatically.
 Unknown layout names degrade to the default content layout with a warning.
-`docs/llm-deck-prompt.md` holds a ready-made LLM prompt that converts raw content
+`docs/handbook.md#slides` holds a ready-made LLM prompt that converts raw content
 into a valid deck file in this schema.
 
 **Per-section alignment in Markdown (docx/dotx):**
@@ -448,7 +449,7 @@ WeasyPrint 68–70 support interactive AcroForm PDF fields natively (the depende
 - CSS `appearance: auto` must be set on form elements for WeasyPrint to render them as interactive fields
 - CSS controls visual appearance — form field styles should live in `_pdf-theme.css`
 
-**`?[...]` shorthand** (see `docs/pdf-forms-guide.md` for the full reference —
+**`?[...]` shorthand** (see `docs/handbook.md#forms` for the full reference —
 parsing shared via `md_doc/forms.py`):
 - `?[text: name, required]` (also email/date/number/tel/url), `?[textarea: x, rows=4]`,
   `?[checkbox: x, label=…]`, `?[yesno: x]` (Yes/No pair → `x_yes`/`x_no`),

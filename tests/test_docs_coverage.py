@@ -23,14 +23,14 @@ def _walk(cmd: click.Command, path: list[str]):
 
 
 def test_every_config_key_is_in_the_key_index() -> None:
-    reference = (DOCS / "config-reference.md").read_text()
+    reference = (DOCS / "handbook.md").read_text()
     keys = set(KNOWN_KEYS) | set(BOOL_KEYS) | set(ENUM_KEYS)
     missing = sorted(k for k in keys if f"| `{k}` |" not in reference)
-    assert not missing, f"keys missing from docs/config-reference.md key index: {missing}"
+    assert not missing, f"keys missing from docs/handbook.md#configuration key index: {missing}"
 
 
 def test_every_cli_command_and_option_is_documented() -> None:
-    text = (DOCS / "cli-reference.md").read_text()
+    text = (DOCS / "handbook.md").read_text()
     missing: list[str] = []
     for path, cmd in _walk(main, ["md-doc"]):
         name = " ".join(path[1:])
@@ -41,13 +41,13 @@ def test_every_cli_command_and_option_is_documented() -> None:
                 for opt in param.opts:
                     if opt.startswith("--") and opt != "--help" and opt not in text:
                         missing.append(f"{name or 'md-doc'} {opt}")
-    assert not missing, f"undocumented in docs/cli-reference.md: {missing}"
+    assert not missing, f"undocumented in docs/handbook.md#commands: {missing}"
 
 
 def test_every_brand_custom_property_is_documented() -> None:
-    text = (DOCS / "theming-guide.md").read_text()
+    text = (DOCS / "handbook.md").read_text()
     missing = sorted(p for p in _MDDOC_PROP_TO_KEY if f"--mddoc-{p}" not in text)
-    assert not missing, f"--mddoc-* properties missing from docs/theming-guide.md: {missing}"
+    assert not missing, f"--mddoc-* properties missing from docs/handbook.md#themes: {missing}"
 
 
 def test_every_guide_is_linked_from_the_readme() -> None:
@@ -65,7 +65,6 @@ def test_relative_links_in_docs_resolve() -> None:
     for md in [
         ROOT / "README.md",
         *sorted(DOCS.glob("*.md")),
-        *sorted((ROOT / "prompts").glob("*.md")),
     ]:
         for target in _LINK_RE.findall(md.read_text()):
             if not (md.parent / target).resolve().exists():

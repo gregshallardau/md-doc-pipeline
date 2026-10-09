@@ -11,7 +11,7 @@ builders, this one *segments* the document into slides:
 The ``slide_split`` config key selects the strategy: ``h2`` (default) splits on
 H2, ``h1`` only on H1, ``marker`` only on ``<!-- slide -->``.
 
-Deck-first layout directives (see ``docs/slides-guide.md``)::
+Deck-first layout directives (see ``docs/handbook.md#slides``)::
 
     <!-- slide: section -->      forced section divider
     <!-- slide: columns -->      multi-column body; <!-- col --> divides columns
