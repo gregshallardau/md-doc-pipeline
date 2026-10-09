@@ -554,6 +554,41 @@ function check(condition, message) {
       ),
       "The source indicator identifies the upstream file under the cursor",
     );
+    await page.locator(".template-source-region").first().waitFor();
+    check(
+      (await page.locator(".template-source-label").allTextContents())
+        .join("")
+        .includes("TEMPLATE") &&
+        (await page.locator(".template-end-label").allTextContents())
+          .join("")
+          .replace(/\s+/g, " ")
+          .includes("END TEMPLATE") &&
+        (await page.locator(".expanded-source-name").textContent()).includes(
+          "Editing upstream source",
+        ),
+      "Template sections identify their start, end and upstream editing target",
+    );
+    check(
+      (await page
+        .locator(".template-source-region")
+        .first()
+        .evaluate((node) => {
+          const color = getComputedStyle(node).backgroundColor;
+          return color !== "transparent" && color !== "rgba(0, 0, 0, 0)";
+        })) &&
+        (await page
+          .locator(".template-source-edge")
+          .first()
+          .evaluate(
+            (node) => parseFloat(getComputedStyle(node).borderLeftWidth) > 0,
+          )),
+      "Template text has a visible tint and continuous source boundary in light mode",
+    );
+    check(
+      !(await source()).includes("END TEMPLATE") &&
+        !(await source()).includes("TEMPLATE ·"),
+      "Template indicators remain editor decorations and never enter the source files",
+    );
     await page
       .getByRole("button", { name: "Switch appearance", exact: true })
       .click();
@@ -567,6 +602,16 @@ function check(condition, message) {
             .classList.contains("vs-dark"),
       ),
       "Expanded source shares the main editor's dark theme",
+    );
+    check(
+      await page
+        .locator(".template-source-region")
+        .first()
+        .evaluate((node) => {
+          const color = getComputedStyle(node).backgroundColor;
+          return color !== "transparent" && color !== "rgba(0, 0, 0, 0)";
+        }),
+      "Template boundaries remain visible in dark mode",
     );
     await page
       .getByRole("button", { name: "Collapse templates", exact: true })

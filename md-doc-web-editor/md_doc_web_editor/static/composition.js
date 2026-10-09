@@ -12,6 +12,7 @@
       this.text = "";
       this.segments = [];
       this.includes = [];
+      this.regions = [];
       let instanceSequence = 0;
       const append = (path, start, end, text, instance = null) => {
         if (!text) return;
@@ -41,9 +42,18 @@
         if (ancestors.includes(path) || ancestors.length >= 16)
           throw new Error("A recursive template cannot be expanded here.");
         const instance = instanceSequence++;
+        const region = {
+          path,
+          instance,
+          depth: ancestors.length,
+          start: this.text.length,
+          end: this.text.length,
+        };
+        this.regions.push(region);
         const raw = this.buffers.get(path).content;
         if (!raw && path !== this.root) {
           append(path, 0, 0, "\n", instance);
+          region.end = this.text.length;
           return;
         }
         let offset = 0,
@@ -84,6 +94,7 @@
           offset += line.length;
         }
         append(path, start, raw.length, raw.slice(start), instance);
+        region.end = this.text.length;
       };
       visit(this.root, []);
       return this.text;
