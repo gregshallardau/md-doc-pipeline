@@ -272,7 +272,12 @@
   }
   function persist() {
     store("session", {
-      paths: [...state.buffers.keys()],
+      paths: [...state.buffers.values()]
+        .filter((buffer) => !buffer.tabHidden)
+        .map((buffer) => buffer.path),
+      editedPaths: [...state.buffers.values()]
+        .filter((buffer) => buffer.edited)
+        .map((buffer) => buffer.path),
       active: state.active,
       pinned: state.pinned,
     });
@@ -340,6 +345,7 @@
     const buffer = current();
     if (!buffer) return;
     buffer.content = value;
+    buffer.edited = true;
     decorateIncludes();
     state.revision++;
     persist();
@@ -751,6 +757,7 @@
     const listener = buffer.model.onDidChangeContent(() => {
       if (state.active === buffer.path) return;
       buffer.content = buffer.model.getValue();
+      buffer.edited = true;
       state.revision++;
       persist();
       renderTree();
@@ -787,6 +794,7 @@
             viewState: null,
           };
           if (draft) {
+            buffer.edited = true;
             buffer.content = draft.content;
             buffer.saved = draft.saved;
             buffer.revision = draft.revision;
@@ -827,6 +835,7 @@
       previous.viewState = state.editor.saveViewState();
     state.active = path;
     const buffer = current();
+    buffer.tabHidden = false;
     state.switching = true;
     if (state.editor) {
       if (!buffer.model)
@@ -875,6 +884,19 @@
       }
       schedulePreview(0, true);
     }
+    if (
+      previous &&
+      previous.path !== path &&
+      !previous.edited &&
+      !dirty(previous) &&
+      !previous.saving
+    ) {
+      if (previous.path === state.pinned) previous.tabHidden = true;
+      else {
+        state.buffers.delete(previous.path);
+        previous.model?.dispose();
+      }
+    }
     setEditMode(state.mode);
     decorateIncludes();
     updateSaveState();
@@ -888,6 +910,7 @@
     const container = $("document-tabs");
     container.replaceChildren();
     for (const [path, buffer] of state.buffers) {
+      if (buffer.tabHidden) continue;
       const tab = el(
         "div",
         "document-tab" + (path === state.active ? " active" : ""),
@@ -2097,6 +2120,7 @@
       "---\n" + yaml + "\n---\n" + source.slice(match ? match[0].length : 0);
     if (buffer.model) buffer.model.setValue(next);
     buffer.content = next;
+    buffer.edited = true;
     if (state.active === buffer.path && state.fallback)
       state.fallback.value = next;
     state.revision++;
@@ -3208,8 +3232,17 @@
       const session = readStorage("session", {});
       for (const path of session.paths || [])
         try {
-          await openFile(path);
+          const restored = await loadBuffer(path);
+          restored.edited =
+            (session.editedPaths || []).includes(path) || dirty(restored);
         } catch {}
+      if (session.pinned && !state.buffers.has(session.pinned))
+        try {
+          const previewBuffer = await loadBuffer(session.pinned);
+          previewBuffer.tabHidden = true;
+        } catch {}
+      if (session.pinned && state.buffers.has(session.pinned))
+        state.pinned = session.pinned;
       if (session.active && state.buffers.has(session.active))
         await openFile(session.active);
       if (session.pinned && state.buffers.has(session.pinned))

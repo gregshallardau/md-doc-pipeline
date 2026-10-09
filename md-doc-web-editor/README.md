@@ -82,7 +82,7 @@ Workspace search finds text in Markdown, YAML and CSS. The outline navigates sou
 
 ## Saves and recovery
 
-Save is an explicit action. Atomic, revision-checked writes detect external edits and offer a comparison before choosing the disk version or saving your draft. Switching tabs preserves unsaved changes. Closing an unsaved tab offers Save, Discard or Cancel.
+Save is an explicit action. Atomic, revision-checked writes detect external edits and offer a comparison before choosing the disk version or saving your draft. Opening another file replaces the previous tab if it has never been edited. Once edited, a tab stays open even after saving or undoing its changes; this is preserved across reloads. Switching tabs preserves unsaved changes. Closing an unsaved tab offers Save, Discard or Cancel.
 
 Drafts and session preferences are stored in this browser's local storage, scoped to the workspace path. Reloading or reopening restores drafts without writing them to disk. If the disk revision changed, review the recovered draft before saving. Private browsing, storage limits and clearing browser data can remove these drafts; save important work to disk.
 

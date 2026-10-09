@@ -222,6 +222,33 @@ function check(condition, message) {
     await page.waitForFunction(() =>
       monaco.editor.getEditors()[0].getValue().includes("Snapshot"),
     );
+    check(
+      (
+        await page.locator("#document-tabs .tab-name").allTextContents()
+      ).join() === "doc.md",
+      "Browsing another file replaces the unedited tab",
+    );
+    await page.evaluate(() => {
+      const editor = monaco.editor.getEditors()[0];
+      editor.executeEdits("test", [
+        { range: new monaco.Range(1, 1, 1, 1), text: "Temporary tab edit\n" },
+      ]);
+      editor.trigger("test", "undo", null);
+    });
+    await page.locator('[data-path="second.md"]').click();
+    await page.waitForFunction(() =>
+      monaco.editor.getEditors()[0].getValue().includes("Second document"),
+    );
+    check(
+      (
+        await page.locator("#document-tabs .tab-name").allTextContents()
+      ).includes("doc.md"),
+      "An edited tab stays open even after its changes are undone",
+    );
+    await page.locator('[data-path="doc.md"]').click();
+    await page.waitForFunction(() =>
+      monaco.editor.getEditors()[0].getValue().includes("Snapshot"),
+    );
     await page.locator('[data-nav="files"]').click();
     check(
       await page
