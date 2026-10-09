@@ -151,6 +151,10 @@ function check(condition, message) {
         .evaluate((node) => node.classList.contains("nav-hidden")),
       "Files rail collapses its sidebar",
     );
+    check(
+      Math.abs((await page.locator("#editor-pane").boundingBox()).x - 46) < 1,
+      "Collapsed sidebar leaves no blank navigation track",
+    );
     await page.locator('[data-nav="files"]').click();
     check(
       await page.locator("#sidebar").isVisible(),
@@ -353,6 +357,31 @@ function check(condition, message) {
       .getByRole("button", { name: "Document properties", exact: true })
       .click();
     await page.waitForSelector("#prop-title");
+    await page.locator('[data-inspect="fields"]').click();
+    check(
+      await page
+        .getByRole("button", { name: "{{ product }}", exact: true })
+        .isVisible(),
+      "Fields offers resolved metadata values",
+    );
+    check(
+      await page
+        .getByRole("button", { name: "[[contact_name]]", exact: true })
+        .isVisible(),
+      "Fields distinguishes Word placeholders",
+    );
+    const beforeFieldInsertion = await source();
+    await page
+      .getByRole("button", { name: "{{ product }}", exact: true })
+      .click();
+    check(
+      (await source()).length ===
+        beforeFieldInsertion.length + "{{ product }}".length,
+      "Metadata insertion uses Jinja syntax",
+    );
+    await edit(beforeFieldInsertion);
+    await page.locator('[data-inspect="properties"]').click();
+
     await page.locator(".layer summary").first().click();
     await page
       .getByRole("button", { name: "Open source", exact: true })
@@ -535,6 +564,31 @@ function check(condition, message) {
     await page
       .getByRole("button", { name: "Side by side", exact: false })
       .click();
+    for (const name of [
+      "Preview only",
+      "Source only",
+      "Stacked",
+      "Side by side",
+    ]) {
+      await page.keyboard.press("Control+k");
+      await page.locator("#command-query").fill("Change layout");
+      await page.keyboard.press("Enter");
+      await page.getByRole("button", { name, exact: false }).click();
+      if (
+        !(await page
+          .locator("#workbench")
+          .evaluate((n) => n.classList.contains("nav-hidden")))
+      )
+        await page
+          .getByRole("button", { name: "Hide file sidebar", exact: true })
+          .click();
+      const pane = name === "Preview only" ? "#preview-pane" : "#editor-pane";
+      check(
+        Math.abs((await page.locator(pane).boundingBox()).x - 46) < 1,
+        "Hidden sidebar reclaims navigation space in " + name,
+      );
+    }
+    await page.locator('[data-nav="files"]').click();
     await page.screenshot({
       path: path.join(os.tmpdir(), "md-doc-studio-final.png"),
     });
