@@ -346,6 +346,33 @@
     renderOutline();
     schedulePreview();
   }
+  function sourceEditorOptions(extra = {}) {
+    return {
+      theme:
+        document.documentElement.dataset.theme === "dark"
+          ? "vs-dark"
+          : "mddoc-light",
+      fontSize: 13,
+      fontFamily: '"SFMono-Regular",Consolas,"Liberation Mono",monospace',
+      lineHeight: 23,
+      minimap: { enabled: false },
+      wordWrap: "on",
+      scrollBeyondLastLine: false,
+      padding: { top: 22, bottom: 20 },
+      automaticLayout: true,
+      renderLineHighlight: "gutter",
+      occurrencesHighlight: "off",
+      smoothScrolling: true,
+      roundedSelection: false,
+      overviewRulerBorder: false,
+      lineNumbersMinChars: 3,
+      scrollbar: {
+        verticalScrollbarSize: 7,
+        horizontalScrollbarSize: 7,
+      },
+      ...extra,
+    };
+  }
   function initMonaco() {
     return new Promise((resolve) => {
       if (typeof window.require !== "function") {
@@ -373,30 +400,10 @@
         () => {
           try {
             window.registerMdDocLanguages?.(monaco);
-            state.editor = monaco.editor.create($("md-doc-monaco"), {
-              value: "",
-              language: "mddoc-markdown",
-              theme: "mddoc-light",
-              fontSize: 13,
-              fontFamily:
-                '"SFMono-Regular",Consolas,"Liberation Mono",monospace',
-              lineHeight: 23,
-              minimap: { enabled: false },
-              wordWrap: "on",
-              scrollBeyondLastLine: false,
-              padding: { top: 22, bottom: 20 },
-              automaticLayout: true,
-              renderLineHighlight: "gutter",
-              occurrencesHighlight: "off",
-              smoothScrolling: true,
-              roundedSelection: false,
-              overviewRulerBorder: false,
-              lineNumbersMinChars: 3,
-              scrollbar: {
-                verticalScrollbarSize: 7,
-                horizontalScrollbarSize: 7,
-              },
-            });
+            state.editor = monaco.editor.create(
+              $("md-doc-monaco"),
+              sourceEditorOptions({ value: "", language: "mddoc-markdown" }),
+            );
             state.editor.onDidChangeModelContent(() => {
               if (!state.switching) changed(state.editor.getValue());
             });
@@ -734,15 +741,13 @@
     // Monaco hides view zones from accessibility by default; this zone is interactive.
     zoneContainer?.removeAttribute("aria-hidden");
     zoneContainer?.classList.add("template-peek-zones");
-    const editor = monaco.editor.create(container, {
-      model: buffer.model,
-      automaticLayout: true,
-      fontSize: 13,
-      wordWrap: "on",
-      minimap: { enabled: false },
-      scrollBeyondLastLine: false,
-      ariaLabel: "Edit included template " + result.path,
-    });
+    const editor = monaco.editor.create(
+      container,
+      sourceEditorOptions({
+        model: buffer.model,
+        ariaLabel: "Edit included template " + result.path,
+      }),
+    );
     const listener = buffer.model.onDidChangeContent(() => {
       if (state.active === buffer.path) return;
       buffer.content = buffer.model.getValue();

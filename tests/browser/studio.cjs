@@ -520,6 +520,78 @@ function check(condition, message) {
     await page.waitForFunction(
       () => document.querySelector("#preview-status").textContent === "Current",
     );
+    check(
+      await page.evaluate(() => {
+        const editors = monaco.editor.getEditors();
+        const main = editors[0],
+          inline = editors.find((editor) =>
+            editor.getDomNode()?.closest(".template-peek"),
+          );
+        const font = (editor) => {
+          const f = editor.getOption(monaco.editor.EditorOption.fontInfo);
+          return [f.fontFamily, f.fontSize, f.lineHeight, f.letterSpacing];
+        };
+        const styles = (editor) => {
+          const s = getComputedStyle(
+            editor.getDomNode().querySelector(".view-lines"),
+          );
+          return [s.fontFamily, s.fontSize, s.lineHeight];
+        };
+        return (
+          JSON.stringify(font(main)) === JSON.stringify(font(inline)) &&
+          JSON.stringify(styles(main)) === JSON.stringify(styles(inline)) &&
+          [
+            "padding",
+            "lineNumbersMinChars",
+            "scrollbar",
+            "renderLineHighlight",
+            "smoothScrolling",
+            "roundedSelection",
+          ].every(
+            (key) =>
+              JSON.stringify(main.getRawOptions()[key]) ===
+              JSON.stringify(inline.getRawOptions()[key]),
+          )
+        );
+      }),
+      "Inline and main source editors share rendered typography, spacing, gutters and scrolling",
+    );
+    await page
+      .getByRole("button", { name: "Switch appearance", exact: true })
+      .click();
+    check(
+      await page.evaluate(() => {
+        const main = monaco.editor.getEditors()[0].getDomNode(),
+          inline = document.querySelector(".template-peek .monaco-editor");
+        return (
+          main.classList.contains("vs-dark") &&
+          inline.classList.contains("vs-dark") &&
+          getComputedStyle(main.querySelector(".monaco-editor-background"))
+            .backgroundColor ===
+            getComputedStyle(inline.querySelector(".monaco-editor-background"))
+              .backgroundColor
+        );
+      }),
+      "Inline and main editors share dark mode backgrounds",
+    );
+    await page
+      .getByRole("button", { name: "Close inline template", exact: true })
+      .click();
+    await page.locator(".template-include-link").first().click();
+    await page.waitForSelector(".template-peek");
+    check(
+      await page.evaluate(
+        () =>
+          document.documentElement.dataset.theme === "dark" &&
+          [...document.querySelectorAll("#md-doc-monaco .monaco-editor")].every(
+            (node) => node.classList.contains("vs-dark"),
+          ),
+      ),
+      "Opening the inline editor in dark mode preserves the main theme",
+    );
+    await page
+      .getByRole("button", { name: "Switch appearance", exact: true })
+      .click();
     const jobRequests = [];
     const recordPreview = (request) => {
       if (
