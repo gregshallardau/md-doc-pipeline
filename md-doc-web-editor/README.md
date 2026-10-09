@@ -55,6 +55,8 @@ Drag either separator to resize navigation or source/preview. Focus a separator 
 
 The PDF viewer supports page navigation, fit page/width, zoom, text selection, search, lazy thumbnails, bookmarks and maximised preview. Form test mode is available in Settings; test values do not change source defaults or exported artifacts. Print opens the displayed PDF in a browser tab for the browser's print controls.
 
+JavaScript modules and PDF.js workers are served with explicit browser-compatible content types, independent of system MIME settings. If a viewer module fails to load, Diagnostics reports the failing asset or response type and **Open generated PDF** remains available. Restart the editor and reload the page after updating; the browser can retain a failed module import until reload.
+
 ## Document tools
 
 The inspector shows editable common properties, the configuration cascade and provenance, the resolved PDF theme, included templates, and documented merge fields. Simple property changes update individual frontmatter lines. Structured YAML is edited in Source to preserve its syntax. Inherited metadata, theme and template files can be opened without changing the selected document.

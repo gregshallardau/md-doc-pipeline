@@ -868,7 +868,11 @@
   }
   function reportError(error) {
     state.error = error.message;
-    setRenderState("Render failed", "failed");
+    $("preview-recovery-link")?.remove();
+    setRenderState(
+      error.viewerAssetFailure ? "Viewer unavailable" : "Render failed",
+      "failed",
+    );
     $("diagnostic-count").replaceChildren(
       icon("alert"),
       document.createTextNode("1 issue"),
@@ -877,8 +881,66 @@
     if (!state.artifact) {
       $("preview-empty").hidden = false;
       $("preview-empty").querySelector("h2").textContent =
-        "Your document needs attention";
+        error.viewerAssetFailure
+          ? "Your PDF is ready; the viewer could not load"
+          : "Your document needs attention";
       $("preview-empty").querySelector("p").textContent = error.message;
+      if (error.generatedArtifact) {
+        const link = el("a", "button primary", "Open generated PDF");
+        link.id = "preview-recovery-link";
+        link.href = error.generatedArtifact.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        $("preview-empty").append(link);
+      }
+    }
+  }
+  async function loadViewerModule() {
+    try {
+      return await import("/static/viewer.js");
+    } catch (cause) {
+      const assets = [
+        "/static/viewer.js",
+        "/static/vendor/pdfjs-6.4.299/legacy/build/pdf.min.mjs",
+        "/static/vendor/pdfjs-6.4.299/web/pdf_viewer.mjs",
+        "/static/vendor/pdfjs-6.4.299/legacy/build/pdf.worker.min.mjs",
+      ];
+      const problems = (
+        await Promise.all(
+          assets.map(async (url) => {
+            try {
+              const response = await fetch(url, {
+                method: "HEAD",
+                cache: "no-store",
+              });
+              if (!response.ok)
+                return url + " returned HTTP " + response.status;
+              const type =
+                response.headers.get("content-type") || "missing Content-Type";
+              if (
+                !/^(text|application)\/(javascript|ecmascript|x-javascript)(;|$)/i.test(
+                  type,
+                )
+              )
+                return url + " was served as " + type;
+            } catch (error) {
+              return url + ": " + error.message;
+            }
+            return null;
+          }),
+        )
+      ).filter(Boolean);
+      const error = new Error(
+        problems.length
+          ? "The PDF was generated, but its viewer could not load. " +
+              problems.join("; ") +
+              ". Restart the updated editor and reload this page."
+          : "The PDF was generated, but the browser could not load its viewer modules: " +
+              cause.message +
+              ". Reload this page; the generated PDF is available below.",
+      );
+      error.viewerAssetFailure = true;
+      throw error;
     }
   }
   async function renderPreview() {
@@ -936,7 +998,13 @@
       if (result.state !== "succeeded")
         throw new Error(result.error || "Rendering failed");
       if (!state.view) {
-        const module = await import("/static/viewer.js");
+        let module;
+        try {
+          module = await loadViewerModule();
+        } catch (error) {
+          error.generatedArtifact = result.artifact;
+          throw error;
+        }
         state.view = new module.DocumentViewer((error) =>
           toast("PDF viewer: " + error.message, true),
         );
@@ -958,6 +1026,7 @@
       state.artifactPath = path;
       state.artifactRevision = revision;
       state.error = null;
+      $("preview-recovery-link")?.remove();
       setRenderState("Current", "");
       $("preview-time").textContent =
         "Updated " +

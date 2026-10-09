@@ -66,8 +66,8 @@ function check(condition, message) {
   const server = spawn(
     process.env.MD_DOC_TEST_PYTHON || path.join(root, ".venv/bin/python"),
     [
-      "-m",
-      "md_doc_web_editor.cli",
+      "-c",
+      "import mimetypes; mimetypes.add_type('text/plain', '.js'); mimetypes.add_type('application/octet-stream', '.mjs'); from md_doc_web_editor.cli import main; raise SystemExit(main())",
       "serve",
       workspace,
       "--no-browser",
@@ -196,7 +196,10 @@ function check(condition, message) {
       .locator(".workspace-folder")
       .filter({ hasText: "reports" })
       .click();
-    await page.locator("#dialog-body .workspace-choice-path").filter({hasText: path.join(workspace, "reports")}).waitFor();
+    await page
+      .locator("#dialog-body .workspace-choice-path")
+      .filter({ hasText: path.join(workspace, "reports") })
+      .waitFor();
     check(
       (await page
         .locator("#dialog-body .workspace-choice-path")
@@ -273,6 +276,35 @@ function check(condition, message) {
     check(
       artifact.subarray(0, 4).toString() === "%PDF",
       "Artifact download is PDF",
+    );
+    // Check actual navigation geometry, not just the moving splitter.
+    const sidebar = page.locator("#sidebar");
+    const navBefore = await sidebar.boundingBox();
+    const navSplit = await page.locator("#nav-splitter").boundingBox();
+    await page.mouse.move(navSplit.x + 2, navSplit.y + 150);
+    await page.mouse.down();
+    await page.mouse.move(navSplit.x + 102, navSplit.y + 150, { steps: 8 });
+    await page.mouse.up();
+    const navAfter = await sidebar.boundingBox();
+    const movedSplit = await page.locator("#nav-splitter").boundingBox();
+    check(
+      navAfter.width > navBefore.width + 90,
+      "Pointer resize grows the actual sidebar",
+    );
+    check(
+      Math.abs(navAfter.x + navAfter.width - movedSplit.x) < 1,
+      "Sidebar edge follows the drag handle",
+    );
+    await page.locator("#nav-splitter").focus();
+    await page.keyboard.press("ArrowLeft");
+    check(
+      (await sidebar.boundingBox()).width < navAfter.width,
+      "Keyboard resize shrinks the actual sidebar",
+    );
+    await page.locator("#nav-splitter").dblclick();
+    check(
+      Math.abs((await sidebar.boundingBox()).width - 240) < 1,
+      "Double click restores the sidebar width",
     );
     // Resizing works by pointer and keyboard, and persists through reload.
     const editor = page.locator("#editor-pane");
@@ -514,6 +546,41 @@ function check(condition, message) {
       errors.length === 0,
       "No uncaught browser errors: " + errors.join(", "),
     );
+    const broken = await browser.newPage();
+    await broken.route(
+      "**/static/vendor/pdfjs-6.4.299/legacy/build/pdf.min.mjs",
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "text/plain",
+          body: "PDF module served with an incorrect MIME type",
+        }),
+    );
+    await broken.goto(origin + "/?file=second.md");
+    await broken.waitForFunction(
+      () =>
+        document.querySelector("#preview-status").textContent ===
+        "Viewer unavailable",
+      null,
+      { timeout: 30000 },
+    );
+    check(
+      (await broken.locator("#diagnostics-content").textContent()).includes(
+        "pdf.min.mjs was served as text/plain",
+      ),
+      "A nested module failure identifies the exact asset and response type",
+    );
+    const generated = await broken.request.get(
+      new URL(
+        await broken.locator("#preview-recovery-link").getAttribute("href"),
+        origin,
+      ).href,
+    );
+    check(
+      (await generated.body()).subarray(0, 4).toString() === "%PDF",
+      "The generated PDF remains accessible when its browser viewer cannot load",
+    );
+    await broken.close();
     console.log(
       `${checks} production studio browser checks passed (real Monaco, PDF, offline assets, resizing, recovery, conflicts, visual editing, Git)`,
     );
