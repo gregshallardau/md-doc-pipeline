@@ -2055,18 +2055,19 @@ kbd {
   cursor: pointer;
 }
 .template-peek {
-  border: 1px solid var(--accent);
-  border-left-width: 3px;
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--bg);
   overflow: hidden;
 }
 .template-peek-heading {
   height: 40px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .template-peek-heading strong {
   flex: 1;
@@ -2074,10 +2075,6 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.template-peek-heading .button {
-  font-size: 10px;
-  padding: 5px 8px;
 }
 .template-peek-status {
   color: var(--muted);
