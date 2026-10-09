@@ -17,7 +17,9 @@ An available configured remote workspace is opened before local samples. Its con
 
 The Files rail button toggles the sidebar. Click the workspace row to collapse its files, or use **Expand all / Collapse all** for folders. New sessions open the first two folder levels; folder badges count Markdown documents recursively. PDFs, Office outputs, images and authoring files appear alongside Markdown. PDF/image files open in a browser tab and Office files download. **Dark mode / Light mode** is available directly in the header.
 
-In Source mode, click a `{% include "fragment.md" %}` line (or place the cursor there and press **Alt+Enter**) to edit the resolved template directly below it. Template lookup follows the pipeline’s directory cascade, including upstream Markdown, HTML and Jinja fragments. Inline drafts update the parent PDF without changing the parent source; **Save template** writes the template file, and closing the inline editor retains unsaved drafts. **Open file** opens the same draft in a tab.
+In Source mode, click a `{% include "fragment.md" %}` line (or press **Alt+Enter**) to expand its source directly into the main editor. Multiple and nested templates share the document's font, background, cursor, selection and scrolling. Click an expanded include again to collapse it, or use **Collapse templates** to collapse them all. The source indicator identifies the file under the cursor; **Save source** saves that file, and the main **Save** button / **Ctrl+S** saves changed sources in the expanded document. Template drafts stay separate from the parent source and update the final document's PDF without writing to disk. Collapsing keeps drafts. Selections crossing file boundaries cannot be changed in one edit; collapse templates to change an include declaration.
+
+The **Outline** shows the composed downstream document, using the pipeline's Jinja rendering and Markdown parser. It includes nested Markdown/HTML template headings, resolves variables, follows loops and excludes conditional sections that will not appear in the output. It updates from unsaved document, metadata and template drafts, including when automatic PDF preview is paused. Clicking a heading expands its source in the main document and navigates there. Template lookup uses the same directory cascade as the final build.
 
 Automatic preview generation waits **1.5 seconds** after typing stops. Choose **3 seconds** or **5 seconds** in **Studio settings → Preview delay after typing**, or use manual refresh. The full PDF is regenerated to keep page flow, numbering and theme output accurate.
 
@@ -82,7 +84,7 @@ Workspace search finds text in Markdown, YAML and CSS. The outline navigates sou
 
 ## Saves and recovery
 
-Save is an explicit action. Atomic, revision-checked writes detect external edits and offer a comparison before choosing the disk version or saving your draft. Switching tabs preserves unsaved changes. Closing an unsaved tab offers Save, Discard or Cancel.
+Save is an explicit action. Atomic, revision-checked writes detect external edits and offer a comparison before choosing the disk version or saving your draft. Opening another file replaces the previous tab if it has never been edited. Once edited, a tab stays open even after saving or undoing its changes; this is preserved across reloads. Switching tabs preserves unsaved changes. Closing an unsaved tab offers Save, Discard or Cancel.
 
 Drafts and session preferences are stored in this browser's local storage, scoped to the workspace path. Reloading or reopening restores drafts without writing them to disk. If the disk revision changed, review the recovered draft before saving. Private browsing, storage limits and clearing browser data can remove these drafts; save important work to disk.
 
@@ -113,6 +115,7 @@ Limits: 128 MiB / 10,000 snapshot inputs, 20 MiB text files, 100 unsaved buffers
 | Endpoint | Purpose |
 | --- | --- |
 | GET `/api/capabilities` | Workspace, project context, formats, limits and local session token |
+| POST `/api/outline` | Composed document headings and source locations from an isolated snapshot of authoring buffers |
 | GET `/api/tree` | Workspace authoring files |
 | GET/PUT `/api/file` | Buffer contents and revision; conditional atomic save |
 | POST `/api/preview/jobs` | Immutable buffer snapshot; format, revision, client and purpose |

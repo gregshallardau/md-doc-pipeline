@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jinja2 import (
     BaseLoader,
@@ -40,7 +40,13 @@ class _MarkdownLoader(BaseLoader):
     5. Any additional ``search_dirs`` supplied by the caller
     """
 
-    def __init__(self, search_dirs: list[Path], allowed_roots: list[Path] | None = None) -> None:
+    def __init__(
+        self,
+        search_dirs: list[Path],
+        allowed_roots: list[Path] | None = None,
+        source_transform: Callable[[str, Path], str] | None = None,
+    ) -> None:
+        self._source_transform = source_transform
         roots = [p.resolve() for p in (allowed_roots or search_dirs)]
         self._roots = roots
         self._dirs = [
@@ -53,7 +59,10 @@ class _MarkdownLoader(BaseLoader):
         for directory in self._dirs:
             candidate = (directory / template).resolve()
             if any(candidate.is_relative_to(root) for root in self._roots) and candidate.is_file():
-                source = candidate.read_text(encoding="utf-8").rstrip() + "\n"
+                source = candidate.read_text(encoding="utf-8")
+                if self._source_transform:
+                    source = self._source_transform(source, candidate)
+                source = source.rstrip() + "\n"
                 mtime = candidate.stat().st_mtime
                 return source, str(candidate), lambda: candidate.stat().st_mtime == mtime
         raise TemplateNotFound(template)
@@ -128,6 +137,7 @@ def render(
     extra_context: dict[str, Any] | None = None,
     extra_search_dirs: list[Path] | None = None,
     strict: bool = False,
+    source_transform: Callable[[str, Path], str] | None = None,
 ) -> str:
     """
     Render a Markdown file through Jinja2.
@@ -149,6 +159,9 @@ def render(
     strict:
         When True, use :class:`~jinja2.StrictUndefined` so any missing
         variable raises an error.  Default is False (silently renders blank).
+    source_transform:
+        Optional in-memory source annotation for editor tooling. Applied to the
+        document and loaded fragments without changing files or configuration.
 
     Returns
     -------
@@ -170,7 +183,9 @@ def render(
     if extra_search_dirs:
         search_dirs = search_dirs + [Path(d) for d in extra_search_dirs]
 
-    loader = _MarkdownLoader(search_dirs, [repo_root] + list(extra_search_dirs or []))
+    loader = _MarkdownLoader(
+        search_dirs, [repo_root] + list(extra_search_dirs or []), source_transform
+    )
 
     undefined_cls = StrictUndefined if strict else Undefined
     # SandboxedEnvironment blocks access to unsafe attributes/dunders so a
@@ -186,6 +201,8 @@ def render(
     )
 
     raw = doc_path.read_text(encoding="utf-8")
+    if source_transform:
+        raw = source_transform(raw, doc_path)
     frontmatter, body = _strip_frontmatter(raw)
 
     context: dict[str, Any] = dict(config)

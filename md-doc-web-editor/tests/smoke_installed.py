@@ -56,6 +56,7 @@ def main():
                     raise RuntimeError("Editor did not become ready")
                 for asset in (
                     "editor.js",
+                    "composition.js",
                     "viewer.js",
                     "preview-window.html",
                     "preview-window.js",
@@ -72,6 +73,26 @@ def main():
                         assert response.read()
                 with urlopen(url + "/api/tree") as response:
                     assert json.load(response)["workspace"] == str(workspace)
+                request = Request(
+                    url + "/api/outline",
+                    data=json.dumps(
+                        {
+                            "path": "doc.md",
+                            "buffers": {
+                                "doc.md": '# Composed title\n\n{% include "fragment.md" %}\n',
+                                "fragment.md": "## Included heading\n",
+                            },
+                        }
+                    ).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urlopen(request, timeout=30) as response:
+                    outline = json.load(response)
+                    assert [item["title"] for item in outline["headings"]] == [
+                        "Composed title",
+                        "Included heading",
+                    ]
+                    assert outline["headings"][1]["path"] == "fragment.md"
                 request = Request(
                     url + "/api/build",
                     data=json.dumps({"path": "doc.md", "format": "docx"}).encode(),

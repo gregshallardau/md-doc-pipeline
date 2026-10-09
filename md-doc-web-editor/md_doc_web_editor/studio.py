@@ -11,6 +11,7 @@ import secrets
 import shutil
 import sys
 import time
+import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+from jinja2 import TemplateError
 
 from .snapshots import make_snapshot, project_files, revision, safe_path, atomic_write
 from md_doc.config import _find_repo_root
@@ -225,6 +227,23 @@ def install_studio(app, workspace, build_root, builds, write_lock):
             "timeoutSeconds": 180,
             "projectRoot": str(_find_repo_root(workspace)),
         }
+
+    @app.post("/api/outline")
+    def outline(req: SnapshotRequest):
+        from .outline import document_outline
+
+        full = path(req.path)
+        if full.suffix != ".md" or (not full.is_file() and req.path not in req.buffers):
+            raise HTTPException(400, "Choose a Markdown document")
+        try:
+            with tempfile.TemporaryDirectory(prefix="outline-", dir=build_root) as directory:
+                snapshot_workspace, _ = make_snapshot(
+                    workspace, Path(directory) / "project", req.buffers
+                )
+                result = document_outline(snapshot_workspace / req.path, snapshot_workspace)
+                return {**result, "path": req.path, "revision": req.revision}
+        except (ValueError, OSError, TemplateError, RecursionError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.post("/api/preview/jobs")
     async def create_job(req: SnapshotRequest):

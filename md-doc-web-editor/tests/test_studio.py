@@ -47,6 +47,71 @@ def wait_job(client, job):
     return job
 
 
+def test_composed_outline_uses_unsaved_context_nested_templates_and_source_locations(project):
+    source = (
+        "---\ncover_page: true\n---\n# {{ product }} report\n\n"
+        '{% include "shared.md" %}\n\n'
+        "{% if show_extra %}\n## Optional section\n{% endif %}\n"
+        "```markdown\n# Example, not a heading\n```\n"
+    )
+    (project.parent / "templates/nested.html").write_text("<h3>Nested <em>section</em></h3>\n")
+    fragment = (
+        "## Shared {{ product }}\n\n"
+        '{% include "nested.html" %}\n\n'
+        "{% for item in sections %}\n### {{ item }}\n{% endfor %}\n\n"
+        "Setext section\n--------------\n"
+    )
+    with TestClient(create_app(project)) as client:
+        response = client.post(
+            "/api/outline",
+            json={
+                "path": "doc.md",
+                "revision": 3,
+                "buffers": {
+                    "doc.md": source,
+                    "project:templates/shared.md": fragment,
+                    "project:_meta.yml": "product: Draft\nshow_extra: false\nsections: [Alpha, Beta]\n",
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["revision"] == 3
+        assert [heading["title"] for heading in data["headings"]] == [
+            "Draft report",
+            "Shared Draft",
+            "Nested section",
+            "Alpha",
+            "Beta",
+            "Setext section",
+        ]
+        assert data["headings"][0]["path"] == "doc.md"
+        assert data["headings"][0]["line"] == 4
+        assert data["headings"][1]["path"] == "project:templates/shared.md"
+        assert data["headings"][2]["path"] == "project:templates/nested.html"
+        assert data["headings"][3]["line"] == data["headings"][4]["line"] == 6
+        assert {link["path"] for link in data["includes"]} == {
+            "project:templates/shared.md",
+            "project:templates/nested.html",
+        }
+        assert (project.parent / "templates/shared.md").read_text() == "Included original\n"
+        assert "Original" in (project.parent / "_meta.yml").read_text()
+        assert "Snapshot" in (project / "doc.md").read_text()
+
+
+def test_outline_rejects_invalid_templates_and_paths(project):
+    with TestClient(create_app(project)) as client:
+        assert client.post("/api/outline", json={"path": "../outside.md"}).status_code == 400
+        response = client.post(
+            "/api/outline",
+            json={
+                "path": "doc.md",
+                "buffers": {"doc.md": '{% include "missing.md" %}'},
+            },
+        )
+        assert response.status_code == 422
+
+
 def test_exact_snapshot_preview_keeps_sources_untouched(project):
     original = (project / "doc.md").read_text()
     request = {

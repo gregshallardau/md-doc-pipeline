@@ -2054,40 +2054,48 @@ kbd {
   text-underline-offset: 4px;
   cursor: pointer;
 }
-.template-peek {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  overflow: hidden;
-}
-.template-peek-heading {
-  height: 40px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+.source-expansion-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
-  font-size: 12px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 11px;
+  min-height: 36px;
 }
-.template-peek-heading strong {
+.expanded-source-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
 }
-.template-peek-status {
+.template-source-label {
+  color: var(--muted);
+  font-style: italic;
+}
+.workspace-sidebar[data-navigation-panel="outline"] .tree-controls,
+.workspace-sidebar[data-navigation-panel="outline"] .sidebar-workspace,
+.workspace-sidebar[data-navigation-panel="outline"] #workspace-path,
+.workspace-sidebar[data-navigation-panel="outline"] .pane-heading .heading-actions {
+  display: none;
+}
+.outline-document {
+  display: grid;
+  gap: 6px;
+  padding: 12px 8px 16px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.outline-document span {
   color: var(--muted);
   font-size: 10px;
 }
-.template-peek-editor {
-  height: 278px;
-}
-
-.monaco-editor .template-peek-zones {
-  z-index: 5;
-  pointer-events: none;
-}
-.template-peek {
-  pointer-events: auto;
+.included-source-glyph {
+  border-left: 2px solid var(--accent);
+  opacity: 0.35;
 }
