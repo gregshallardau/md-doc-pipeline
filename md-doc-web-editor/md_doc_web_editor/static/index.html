@@ -31,7 +31,7 @@
         </button>
         <button class="quick-search" data-action="quick-open">
           <span data-icon="search"></span
-          ><span>Find a document or command…</span><kbd>Ctrl K</kbd>
+          ><span>Find a document or command…</span><kbd>Ctrl P</kbd>
         </button>
         <div class="header-actions">
           <button
@@ -582,8 +582,12 @@
         <span data-icon="search"></span
         ><input
           id="command-query"
-          placeholder="Search files and commands…"
+          placeholder="Search files, or type &gt; for commands…"
           aria-label="Search files and commands"
+          role="combobox"
+          aria-controls="command-results"
+          aria-expanded="true"
+          aria-autocomplete="list"
           autocomplete="off"
         /><kbd>Esc</kbd>
       </div>
@@ -591,7 +595,7 @@
       <div class="command-footer">
         <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span
         ><span><kbd>↵</kbd> Open</span
-        ><span id="command-hint">Files & commands</span>
+        ><span id="command-hint">Files · type &gt; for commands</span>
       </div>
     </dialog>
     <dialog class="form-dialog" id="form-dialog">

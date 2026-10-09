@@ -2427,16 +2427,47 @@
       else state.view?.closeFind();
     },
   };
-  function commandPalette(kind = "all") {
-    $("command-query").value = "";
-    state.commandKind = kind;
+  function commandPalette(kind = "files") {
+    $("command-query").value = kind === "commands" ? "> " : "";
+    state.commandKind = kind === "templates" ? "templates" : "quick-open";
     state.commandIndex = 0;
     commandResults();
-    $("command-dialog").showModal();
+    if (!$("command-dialog").open) $("command-dialog").showModal();
     $("command-query").focus();
+    $("command-query").setSelectionRange(
+      $("command-query").value.length,
+      $("command-query").value.length,
+    );
+  }
+  function matchScore(value, query) {
+    value = value.toLowerCase();
+    if (!query) return 0;
+    const direct = value.indexOf(query);
+    if (direct >= 0) return direct;
+    let position = -1,
+      score = 100;
+    for (const character of query.replace(/\s+/g, "")) {
+      const next = value.indexOf(character, position + 1);
+      if (next < 0) return Infinity;
+      score += next - position - 1;
+      position = next;
+    }
+    return score;
   }
   function commandResults() {
-    const query = $("command-query").value.toLowerCase();
+    const input = $("command-query");
+    const raw = input.value.trimStart();
+    const templates = state.commandKind === "templates";
+    const commands = !templates && raw.startsWith(">");
+    const query = (commands ? raw.slice(1) : raw).trim().toLowerCase();
+    input.placeholder = templates
+      ? "Find a template…"
+      : "Search files, or type > for commands…";
+    $("command-hint").textContent = templates
+      ? "Insert template"
+      : commands
+        ? "Commands · remove > to search files"
+        : "Files · type > for commands";
     const commandList = [
       ["Create document", "new", "Ctrl N"],
       ["Export document", "export", ""],
@@ -2450,52 +2481,58 @@
       ["Source control", "git", ""],
       ["Insert form or diagram", "insert-menu", ""],
     ];
-    let items = [];
-    if (state.commandKind !== "templates")
-      for (const file of state.files) {
-        if (file.path.toLowerCase().includes(query))
-          items.push({
-            title: file.name,
-            detail: file.path,
-            icon:
-              file.type === "css"
-                ? "code"
-                : file.type === "meta"
-                  ? "settings"
-                  : "file",
-            run: () => openFile(file.path),
-          });
-      }
-    else
-      for (const file of state.files.filter(
-        (f) => f.type === "md" && f.path.includes("templates/"),
-      )) {
-        if (file.path.toLowerCase().includes(query)) {
-          const name = file.path.split("templates/").pop();
-          items.push({
-            title: file.name,
-            detail: file.path,
-            icon: "file",
-            run: () => insert("include", '{% include "' + name + '" %}'),
-          });
-        }
-      }
-    if (state.commandKind !== "files" && state.commandKind !== "templates")
+    const items = [];
+    if (commands) {
       for (const [title, action, shortcut] of commandList) {
-        if (title.toLowerCase().includes(query))
-          items.push({
-            title,
-            detail: "Command",
-            icon: "settings",
-            shortcut,
-            run: () =>
-              action === "save"
-                ? save()
-                : action === "git"
-                  ? nav("git")
-                  : actions[action](),
-          });
+        const score = matchScore(title, query);
+        if (!Number.isFinite(score)) continue;
+        items.push({
+          title,
+          detail: "Command",
+          icon: "settings",
+          shortcut,
+          score,
+          run: () =>
+            action === "save"
+              ? save()
+              : action === "git"
+                ? nav("git")
+                : actions[action](),
+        });
       }
+    } else {
+      for (const file of state.files) {
+        if (
+          templates &&
+          !(file.type === "md" && file.path.includes("templates/"))
+        )
+          continue;
+        const filenameScore = matchScore(file.name, query);
+        const score = Math.min(
+          filenameScore,
+          matchScore(file.path, query) + 30,
+        );
+        if (!Number.isFinite(score)) continue;
+        const name = file.path.split("templates/").pop();
+        items.push({
+          title: file.name,
+          detail: file.path,
+          score,
+          icon:
+            file.type === "css"
+              ? "code"
+              : file.type === "meta"
+                ? "settings"
+                : "file",
+          run: () =>
+            templates
+              ? insert("include", '{% include "' + name + '" %}')
+              : openFile(file.path),
+        });
+      }
+    }
+    if (query)
+      items.sort((a, b) => a.score - b.score || a.title.localeCompare(b.title));
     state.commands = items.slice(0, 70);
     state.commandIndex = Math.min(
       state.commandIndex,
@@ -2508,6 +2545,7 @@
         "button",
         "command-item" + (index === state.commandIndex ? " selected" : ""),
       );
+      button.id = "command-option-" + index;
       button.setAttribute("role", "option");
       button.setAttribute(
         "aria-selected",
@@ -2524,15 +2562,32 @@
       button.onclick = () => executeCommand(index);
       container.append(button);
     });
-    if (!items.length)
-      container.append(
-        el("p", "diagnostic-info", "No matching files or commands."),
+    if (state.commands.length)
+      input.setAttribute(
+        "aria-activedescendant",
+        "command-option-" + state.commandIndex,
       );
+    else {
+      input.removeAttribute("aria-activedescendant");
+      container.append(
+        el(
+          "p",
+          "diagnostic-info",
+          commands
+            ? "No matching commands."
+            : templates
+              ? "No matching templates."
+              : "No matching files. Type > to search commands.",
+        ),
+      );
+    }
   }
   async function executeCommand(index) {
+    const command = state.commands[index];
+    if (!command) return;
     $("command-dialog").close();
     try {
-      await state.commands[index]?.run();
+      await command.run();
     } catch (error) {
       toast(error.message, true);
     }
@@ -2868,20 +2923,36 @@
         executeCommand(state.commandIndex);
       }
     };
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        $("studio").classList.remove("focus");
-        $("inspector").hidden = true;
-        $("workbench").classList.remove("mobile-nav");
-        applyLayout();
-      }
-      if (!(event.ctrlKey || event.metaKey)) return;
-      if (["p", "k", "s"].includes(event.key.toLowerCase())) {
-        event.preventDefault();
-        if (event.key.toLowerCase() === "s") save();
-        else commandPalette(event.key.toLowerCase() === "p" ? "files" : "all");
-      }
-    });
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "Escape") {
+          $("studio").classList.remove("focus");
+          $("inspector").hidden = true;
+          $("workbench").classList.remove("mobile-nav");
+          applyLayout();
+        }
+        if (event.key === "F1") {
+          event.preventDefault();
+          event.stopPropagation();
+          commandPalette("commands");
+          return;
+        }
+        if (!(event.ctrlKey || event.metaKey)) return;
+        if (["p", "k", "s"].includes(event.key.toLowerCase())) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key.toLowerCase() === "s") save();
+          else
+            commandPalette(
+              event.key.toLowerCase() === "p" && !event.shiftKey
+                ? "files"
+                : "commands",
+            );
+        }
+      },
+      true,
+    );
     window.addEventListener("beforeunload", (event) => {
       if ([...state.buffers.values()].some(dirty)) {
         event.preventDefault();
