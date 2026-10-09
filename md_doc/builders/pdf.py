@@ -194,21 +194,6 @@ _BOX_BLOCK_RE = re.compile(
 )
 
 
-def _parse_field_attrs(attr_str: str) -> dict[str, str | bool]:
-    """Parse comma-separated key=value or bare flag attributes."""
-    attrs: dict[str, str | bool] = {}
-    for part in attr_str.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "=" in part:
-            k, v = part.split("=", 1)
-            attrs[k.strip()] = v.strip()
-        else:
-            attrs[part] = True
-    return attrs
-
-
 # Input types the ?[...] shorthand passes through verbatim; anything else
 # falls back to a plain text input.
 _INPUT_TYPES = ("text", "email", "date", "number", "tel", "url")
@@ -243,15 +228,15 @@ def _field_to_html(field_spec: str) -> str:
     if ":" not in field_spec:
         return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
-    type_part, rest = field_spec.split(":", 1)
-    ftype = type_part.strip().lower()
+    from ..forms import parse_field_spec
+
+    parsed = parse_field_spec(field_spec)
+    if parsed is None:
+        return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
+    ftype, name, options, attrs = parsed
 
     if ftype in ("select", "radio", "radio-inline", "checkbox-inline"):
-        parts = [p.strip() for p in rest.split("|")]
-        name = parts[0].split(",")[0].strip() if parts else "field"
-        name_attrs = _parse_field_attrs(parts[0]) if parts else {}
-        name = list(name_attrs.keys())[0] if name_attrs else "field"
-        options = parts[1:] if len(parts) > 1 else []
+        name_attrs = attrs
 
         if ftype == "select":
             # One line: a multi-line <select> is split by the Markdown step and
@@ -297,10 +282,6 @@ def _field_to_html(field_spec: str) -> str:
         return f"<!-- unknown form field: {_escape_html(field_spec)} -->"
 
     else:
-        parts = rest.split(",")
-        name = parts[0].strip()
-        attrs = _parse_field_attrs(",".join(parts[1:])) if len(parts) > 1 else {}
-
         req = " required" if attrs.get("required") else ""
         extra = _extra_attrs_html(attrs, skip=("required", "label", "rows"))
 

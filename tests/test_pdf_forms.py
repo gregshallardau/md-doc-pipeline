@@ -99,6 +99,41 @@ class TestSpecParsing:
         assert parse_field_spec("box: widths=70,30") is None
         assert parse_field_spec("submit Send") is None
 
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "$10,000,000",
+            '"$10,000,000"',
+            r"$10\,000\,000",
+            "'Cover, including tax'",
+            r'"Say \"yes\", then continue"',
+            "Customer's cover",
+        ],
+    )
+    def test_delimited_labels_preserve_following_flags(self, label):
+        from md_doc.forms import parse_field_attrs
+
+        expected = {
+            "$10,000,000": "$10,000,000",
+            '"$10,000,000"': "$10,000,000",
+            r"$10\,000\,000": "$10,000,000",
+            "'Cover, including tax'": "Cover, including tax",
+            r'"Say \"yes\", then continue"': 'Say "yes", then continue',
+            "Customer's cover": "Customer's cover",
+        }[label]
+        spec = f"checkbox: amount, label={label}, required, checked, value=YES"
+        parsed = parse_field_spec(spec)
+        assert parsed[3] == {"label": expected, "required": True, "checked": True, "value": "YES"}
+        assert parse_field_attrs(r"title=C:\Temp\cover, value=10,000") == {
+            "title": r"C:\Temp\cover",
+            "value": "10,000",
+        }
+        html = _field_to_html(spec)
+        from html import unescape
+
+        assert expected in unescape(html)
+        assert 'required checked value="YES"' in html
+
     def test_iter_skips_structure(self):
         md = "?[box]\n?[text: a] | ?[yesno: b]\n?[/box]\n?[submit Go]\n"
         specs = iter_field_specs(md)
@@ -119,6 +154,13 @@ class TestAcroFormIntegration:
         out = tmp_repo / "form.pdf"
         build(md, {"title": "F", "pdf_forms": True}, out, doc_path=doc, repo_root=tmp_repo)
         return out
+
+    def test_currency_label_is_visible_in_pdf(self, tmp_repo):
+        import pdfplumber
+
+        out = self._build(tmp_repo, 'Amount: ?[checkbox: amount, label="$10,000,000", required]')
+        with pdfplumber.open(out) as pdf:
+            assert "$10,000,000" in "\n".join(page.extract_text() or "" for page in pdf.pages)
 
     def test_fields_are_real_acroform(self, tmp_repo):
         pdfium = pytest.importorskip("pypdfium2")
@@ -230,18 +272,18 @@ class TestFormLint:
 
 
 class TestDotxFormFields:
-    def _build_dotx(self, tmp_repo: Path, body: str) -> str:
+    def _build_dotx(self, tmp_repo: Path, body: str, output_format: str = "dotx") -> str:
         from md_doc.builders.docx import build
 
         doc = tmp_repo / "t.md"
         md = f"---\ntitle: T\n---\n\n# T\n\n{body}"
         doc.write_text(md, encoding="utf-8")
-        out = tmp_repo / "t.dotx"
+        out = tmp_repo / f"t.{output_format}"
         build(
             md,
             {"title": "T", "cover_page": False},
             out,
-            output_format="dotx",
+            output_format=output_format,
             doc_path=doc,
             repo_root=tmp_repo,
         )
@@ -255,6 +297,15 @@ class TestDotxFormFields:
     def test_checkbox_maps_to_formcheckbox(self, tmp_repo):
         xml = self._build_dotx(tmp_repo, "?[checkbox: agree, label=I agree]\n")
         assert "FORMCHECKBOX" in xml and "I agree" in xml
+
+    @pytest.mark.parametrize("output_format", ["docx", "dotx"])
+    def test_currency_and_comma_labels_survive_word_export(self, tmp_repo, output_format):
+        xml = self._build_dotx(
+            tmp_repo, 'Amount: ?[checkbox: amount, label="$10,000,000", checked]\n', output_format
+        )
+        assert "$10,000,000" in xml
+        if output_format == "dotx":
+            assert "FORMCHECKBOX" in xml
 
     def test_select_maps_to_dropdown_with_options(self, tmp_repo):
         xml = self._build_dotx(tmp_repo, "?[select: region | North | South]\n")
