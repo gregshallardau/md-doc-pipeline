@@ -280,3 +280,41 @@ def test_git_stage_commit_only_workspace_files(tmp_path):
         assert (workspace / "doc.md").read_text() == "# Later unstaged draft\n"
         assert "outside.md" in git("diff", "--cached", "--name-only")
         assert git("show", "HEAD:outside.md") == "Outside initial\n"
+
+
+def test_inline_template_resolution_uses_cascade_and_authoring_boundary(project):
+    with TestClient(create_app(project)) as client:
+        response = client.get("/api/template", params={"path": "doc.md", "name": "shared.md"})
+        assert response.status_code == 200
+        assert response.json()["path"] == "project:templates/shared.md"
+        assert (
+            client.get("/api/file", params={"path": response.json()["path"]}).json()["content"]
+            == "Included original\n"
+        )
+        (project.parent / "root-fragment.md").write_text("Root fragment\n")
+        root_fragment = client.get(
+            "/api/template", params={"path": "doc.md", "name": "root-fragment.md"}
+        )
+        assert root_fragment.json()["path"] == "project:root-fragment.md"
+        assert (
+            client.get("/api/file", params={"path": root_fragment.json()["path"]}).json()["content"]
+            == "Root fragment\n"
+        )
+        (project / "templates").mkdir()
+        (project / "templates/shared.md").write_text("Local override\n")
+        assert (
+            client.get("/api/template", params={"path": "doc.md", "name": "shared.md"}).json()[
+                "path"
+            ]
+            == "templates/shared.md"
+        )
+        assert (
+            client.get("/api/template", params={"path": "doc.md", "name": "missing.md"}).status_code
+            == 404
+        )
+        assert (
+            client.get(
+                "/api/template", params={"path": "doc.md", "name": "/etc/passwd"}
+            ).status_code
+            == 404
+        )

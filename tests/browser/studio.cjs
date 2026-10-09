@@ -494,6 +494,134 @@ function check(condition, message) {
       (await page.locator("#preview-document").textContent()) === "doc.md",
       "Document preview stays pinned during config edits",
     );
+    // Click the include declaration and edit the upstream template in place.
+    await page.locator('[data-path="doc.md"]').click();
+    await page.evaluate(() => {
+      const editor = monaco.editor.getEditors()[0];
+      const line =
+        editor
+          .getValue()
+          .split("\n")
+          .findIndex((line) => line.includes("{% include")) + 1;
+      editor.revealLineInCenter(line);
+    });
+    await page.locator(".template-include-link").first().click();
+    await page.waitForSelector(".template-peek");
+    check(
+      (await source()).includes("Snapshot"),
+      "Inline editing leaves the parent document open",
+    );
+    check(
+      (await page.locator(".template-peek-heading").textContent()).includes(
+        "project:templates/shared.md",
+      ),
+      "Inline editor resolves the upstream template",
+    );
+    await page.waitForFunction(
+      () => document.querySelector("#preview-status").textContent === "Current",
+    );
+    const jobRequests = [];
+    const recordPreview = (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().includes("/api/preview/jobs")
+      )
+        jobRequests.push(request);
+    };
+    page.on("request", recordPreview);
+    await page.evaluate(() =>
+      monaco.editor
+        .getEditors()
+        .find((editor) => editor.getDomNode()?.closest(".template-peek"))
+        .getModel()
+        .setValue("Included inline draft\n"),
+    );
+    await page.waitForTimeout(900);
+    check(
+      jobRequests.length === 0,
+      "Preview waits for the longer typing pause",
+    );
+    await page.waitForFunction(
+      () => document.querySelector("#preview-status").textContent === "Current",
+    );
+    await page.locator("#pdf-page").fill("2");
+    await page.locator("#pdf-page").press("Enter");
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll(".textLayer")].some((node) =>
+        node.textContent.includes("Included inline draft"),
+      ),
+    );
+    page.off("request", recordPreview);
+    check(
+      fs.readFileSync(path.join(project, "templates/shared.md"), "utf8") ===
+        "Included baseline\n",
+      "Inline draft previews without writing the upstream file",
+    );
+    check(
+      (await page.locator("#preview-document").textContent()) === "doc.md",
+      "Inline edit keeps the parent PDF pinned",
+    );
+    await page
+      .getByRole("button", { name: "Close inline template", exact: true })
+      .click();
+    await page.locator(".template-include-link").first().click();
+    await page.waitForSelector(".template-peek");
+    check(
+      (await page.evaluate(() =>
+        monaco.editor
+          .getEditors()
+          .find((editor) => editor.getDomNode()?.closest(".template-peek"))
+          .getValue(),
+      )) === "Included inline draft\n",
+      "Closing inline editing retains the draft",
+    );
+    await page
+      .getByRole("button", { name: "Save template", exact: true })
+      .click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector(".template-peek-status").textContent ===
+        "Saved template",
+    );
+    check(
+      fs.readFileSync(path.join(project, "templates/shared.md"), "utf8") ===
+        "Included inline draft\n",
+      "Save template writes the actual upstream file",
+    );
+    await page
+      .getByRole("button", { name: "Close inline template", exact: true })
+      .click();
+    await page.keyboard.press("Control+k");
+    await page.locator("#command-query").fill("> Studio settings");
+    await page.keyboard.press("Enter");
+    check(
+      (await page.locator("#settings-delay").inputValue()) === "1500",
+      "Default preview delay is 1.5 seconds",
+    );
+    await page.locator("#settings-delay").selectOption("3000");
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    check(
+      await page.evaluate(() =>
+        Object.keys(localStorage).some(
+          (key) =>
+            key.endsWith(":previewDelay") &&
+            localStorage.getItem(key) === "3000",
+        ),
+      ),
+      "Preview delay preference persists for the workspace",
+    );
+    await page.keyboard.press("Control+k");
+    await page.locator("#command-query").fill("> Studio settings");
+    await page.keyboard.press("Enter");
+    check(
+      (await page.locator("#settings-delay").inputValue()) === "3000",
+      "Settings restores the chosen preview delay",
+    );
+    await page.locator("#settings-delay").selectOption("1500");
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    await page.waitForFunction(
+      () => document.querySelector("#preview-status").textContent === "Current",
+    );
     // A separate PDF.js window follows the editor's unsaved output.
     const popupPromise = page.waitForEvent("popup");
     await page

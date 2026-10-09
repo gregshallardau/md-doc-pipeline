@@ -99,6 +99,8 @@
     job: null,
     timer: null,
     auto: true,
+    previewDelay: 1500,
+    inlineTemplate: null,
     nav: "files",
     layout: "split",
     navWidth: 240,
@@ -297,6 +299,15 @@
     $("editor-word-count").textContent =
       `${buffer?.content.trim().split(/\s+/).filter(Boolean).length || 0} words`;
     renderTabs();
+    if (state.inlineTemplate) {
+      const peek = state.inlineTemplate;
+      peek.status.textContent = peek.buffer.saving
+        ? "Saving…"
+        : dirty(peek.buffer)
+          ? "Unsaved template"
+          : "Saved template";
+      peek.saveButton.disabled = !dirty(peek.buffer) || !!peek.buffer.saving;
+    }
     document.title =
       (buffer
         ? (dirty(buffer) ? "• " : "") + buffer.path.split("/").pop() + " · "
@@ -327,6 +338,7 @@
     const buffer = current();
     if (!buffer) return;
     buffer.content = value;
+    decorateIncludes();
     state.revision++;
     persist();
     renderOutline();
@@ -385,6 +397,25 @@
             });
             state.editor.onDidChangeModelContent(() => {
               if (!state.switching) changed(state.editor.getValue());
+            });
+            state.editor.onMouseDown((event) => {
+              if (
+                event.event.leftButton &&
+                event.target.position &&
+                !state.inlineTemplate?.node.contains(event.target.element)
+              )
+                editIncludeAtLine(event.target.position.lineNumber).catch(
+                  (error) => toast(error.message, true),
+                );
+            });
+            state.editor.addAction({
+              id: "md-doc.edit-include",
+              label: "Edit included template inline",
+              keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.Enter],
+              run: () =>
+                editIncludeAtLine(state.editor.getPosition().lineNumber).catch(
+                  (error) => toast(error.message, true),
+                ),
             });
             state.editor.onDidChangeCursorPosition((event) => {
               $("editor-position").textContent =
@@ -585,18 +616,156 @@
         ),
       );
   }
-  async function openFile(path, line = null) {
-    const file = state.files.find((file) => file.path === path);
-    if (file && ["pdf", "office", "image"].includes(file.type)) {
-      window.open(
-        workspaceUrl("/api/asset?path=" + encodeURIComponent(path)),
-        "_blank",
-        "noopener",
-      );
-      return;
+  const includePattern = /\{%-?\s*include\s+["']([^"']+)["'][^%]*-?%\}/;
+  function decorateIncludes() {
+    if (!state.editor || current()?.type !== "md") return;
+    const decorations = [];
+    current()
+      .content.split("\n")
+      .forEach((line, index) => {
+        const match = line.match(includePattern);
+        if (match)
+          decorations.push({
+            range: new monaco.Range(
+              index + 1,
+              match.index + 1,
+              index + 1,
+              match.index + match[0].length + 1,
+            ),
+            options: {
+              inlineClassName: "template-include-link",
+              hoverMessage: {
+                value:
+                  "Click this include line to edit its template inline. Alt+Enter also opens it.",
+              },
+            },
+          });
+      });
+    state.includeDecorations = state.editor.deltaDecorations(
+      state.includeDecorations || [],
+      decorations,
+    );
+  }
+  function closeInlineTemplate() {
+    state.inlineRequest = (state.inlineRequest || 0) + 1;
+    const peek = state.inlineTemplate;
+    if (!peek) return;
+    state.inlineTemplate = null;
+    peek.listener.dispose();
+    peek.editor.dispose();
+    if (peek.zoneContainer) {
+      peek.zoneContainer.setAttribute("aria-hidden", "true");
+      peek.zoneContainer.classList.remove("template-peek-zones");
     }
-    const sequence = ++state.openSequence;
-    await monacoReady;
+    state.editor.changeViewZones((accessor) => accessor.removeZone(peek.zone));
+  }
+  async function editIncludeAtLine(lineNumber) {
+    const parent = current();
+    const match = parent?.content
+      .split("\n")
+      [lineNumber - 1]?.match(includePattern);
+    if (!match || !state.editor) return;
+    if (
+      state.inlineTemplate?.parent === parent.path &&
+      state.inlineTemplate.line === lineNumber
+    )
+      return;
+    const request = (state.inlineRequest = (state.inlineRequest || 0) + 1);
+    const result = await api(
+      "/api/template?path=" +
+        encodeURIComponent(parent.path) +
+        "&name=" +
+        encodeURIComponent(match[1]),
+    );
+    const buffer = await loadBuffer(result.path);
+    if (
+      state.active !== parent.path ||
+      request !== state.inlineRequest ||
+      parent.content.split("\n")[lineNumber - 1]?.match(includePattern)?.[1] !==
+        match[1]
+    )
+      return;
+    closeInlineTemplate();
+    if (!buffer.model)
+      buffer.model = monaco.editor.createModel(
+        buffer.content,
+        language(buffer),
+        monaco.Uri.parse("inmemory://workspace/" + encodeURI(buffer.path)),
+      );
+    const node = el("section", "template-peek");
+    node.setAttribute("aria-label", "Inline template editor");
+    const header = el("div", "template-peek-heading");
+    const title = el("strong", null, result.path);
+    title.title = result.path;
+    const status = el("span", "template-peek-status");
+    const saveButton = el("button", "button", "Save template");
+    saveButton.onclick = () => save(buffer.path);
+    const openButton = el("button", "button", "Open file");
+    openButton.onclick = () => openFile(buffer.path, null, true);
+    const closeButton = el("button", "icon-button small");
+    closeButton.setAttribute("aria-label", "Close inline template");
+    closeButton.append(icon("close"));
+    closeButton.onclick = () => {
+      closeInlineTemplate();
+      state.editor.focus();
+    };
+    header.append(
+      icon("file"),
+      title,
+      status,
+      saveButton,
+      openButton,
+      closeButton,
+    );
+    const container = el("div", "template-peek-editor");
+    node.append(header, container);
+    let zone;
+    state.editor.changeViewZones((accessor) => {
+      zone = accessor.addZone({
+        afterLineNumber: lineNumber,
+        heightInPx: 320,
+        domNode: node,
+        suppressMouseDown: false,
+      });
+    });
+    const zoneContainer = node.parentElement;
+    // Monaco hides view zones from accessibility by default; this zone is interactive.
+    zoneContainer?.removeAttribute("aria-hidden");
+    zoneContainer?.classList.add("template-peek-zones");
+    const editor = monaco.editor.create(container, {
+      model: buffer.model,
+      automaticLayout: true,
+      fontSize: 13,
+      wordWrap: "on",
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      ariaLabel: "Edit included template " + result.path,
+    });
+    const listener = buffer.model.onDidChangeContent(() => {
+      if (state.active === buffer.path) return;
+      buffer.content = buffer.model.getValue();
+      state.revision++;
+      persist();
+      renderTree();
+      schedulePreview();
+    });
+    state.inlineTemplate = {
+      parent: parent.path,
+      line: lineNumber,
+      buffer,
+      node,
+      zone,
+      editor,
+      listener,
+      status,
+      saveButton,
+      zoneContainer,
+    };
+    updateSaveState();
+    state.editor.revealLineInCenter(lineNumber);
+    editor.focus();
+  }
+  async function loadBuffer(path) {
     if (!state.buffers.has(path)) {
       if (state.loadingFiles.has(path)) await state.loadingFiles.get(path);
       else {
@@ -629,7 +798,23 @@
         }
       }
     }
+    return state.buffers.get(path);
+  }
+  async function openFile(path, line = null, dependency = false) {
+    const file = state.files.find((file) => file.path === path);
+    if (file && ["pdf", "office", "image"].includes(file.type)) {
+      window.open(
+        workspaceUrl("/api/asset?path=" + encodeURIComponent(path)),
+        "_blank",
+        "noopener",
+      );
+      return;
+    }
+    const sequence = ++state.openSequence;
+    await monacoReady;
+    await loadBuffer(path);
     if (sequence !== state.openSequence) return state.buffers.get(path);
+    closeInlineTemplate();
     const previous = current();
     if (previous && state.editor)
       previous.viewState = state.editor.saveViewState();
@@ -670,6 +855,7 @@
     $("format-toolbar").hidden = buffer.type !== "md";
     if (
       buffer.type === "md" &&
+      !dependency &&
       (!state.pinned ||
         !/(^|\/)templates\//.test(path.replace(/^project:/, "")))
     ) {
@@ -683,6 +869,7 @@
       schedulePreview(0, true);
     }
     setEditMode(state.mode);
+    decorateIncludes();
     updateSaveState();
     renderOutline();
     renderTree();
@@ -743,6 +930,11 @@
       if (!choice || choice === "cancel") return;
       if (choice === "save" && !(await save(path))) return;
     }
+    if (
+      state.inlineTemplate?.buffer.path === path ||
+      state.inlineTemplate?.parent === path
+    )
+      closeInlineTemplate();
     state.buffers.delete(path);
     buffer.model?.dispose();
     if (state.active === path) {
@@ -766,7 +958,11 @@
     persist();
     renderTree();
   }
-  async function save(path = state.active) {
+  async function save(
+    path = state.inlineTemplate?.editor.hasTextFocus()
+      ? state.inlineTemplate.buffer.path
+      : state.active,
+  ) {
     const buffer = state.buffers.get(path);
     if (!buffer || buffer.saving) return false;
     const content = buffer.content;
@@ -898,7 +1094,7 @@
     if (!state.previewWindow)
       toast("Allow pop-ups for this editor to open the preview window.", true);
   }
-  function schedulePreview(delay = 800, force = false) {
+  function schedulePreview(delay = state.previewDelay, force = false) {
     clearTimeout(state.timer);
     if (!state.pinned) return;
     setRenderState(
@@ -1616,6 +1812,7 @@
     });
   }
   function setEditMode(mode) {
+    if (mode === "write") closeInlineTemplate();
     state.mode = mode;
     const write = mode === "write" && current()?.type === "md";
     $("write-editor").hidden = !write;
@@ -2290,7 +2487,7 @@
   function settings() {
     dialog(
       "Studio settings",
-      `<p>Preferences are saved for this workspace on this browser.</p><label for="settings-appearance">Appearance</label><select class="input" id="settings-appearance"><option value="system">Use system setting</option><option value="light">Light</option><option value="dark">Dark</option></select><label for="settings-refresh">Preview updates</label><select class="input" id="settings-refresh"><option value="auto">Automatic after typing pauses</option><option value="manual">Manual refresh</option></select><label for="settings-page">PDF reading layout</label><select class="input" id="settings-page"><option value="continuous">Continuous pages</option><option value="single">Single page</option></select><label for="settings-forms">PDF form test mode</label><select class="input" id="settings-forms"><option value="off">Off — show exported appearance</option><option value="on">On — fill fields for testing</option></select><p style="margin-top:15px">Form test values do not change document defaults or downloaded artifacts.</p>`,
+      `<p>Preferences are saved for this workspace on this browser.</p><label for="settings-appearance">Appearance</label><select class="input" id="settings-appearance"><option value="system">Use system setting</option><option value="light">Light</option><option value="dark">Dark</option></select><label for="settings-refresh">Preview updates</label><select class="input" id="settings-refresh"><option value="auto">Automatic after typing pauses</option><option value="manual">Manual refresh</option></select><label for="settings-delay">Preview delay after typing</label><select class="input" id="settings-delay"><option value="1500">1.5 seconds</option><option value="3000">3 seconds</option><option value="5000">5 seconds</option></select><label for="settings-page">PDF reading layout</label><select class="input" id="settings-page"><option value="continuous">Continuous pages</option><option value="single">Single page</option></select><label for="settings-forms">PDF form test mode</label><select class="input" id="settings-forms"><option value="off">Off — show exported appearance</option><option value="on">On — fill fields for testing</option></select><p style="margin-top:15px">Form test values do not change document defaults or downloaded artifacts.</p>`,
       [
         {
           label: "Done",
@@ -2298,6 +2495,8 @@
           run: async (d) => {
             state.appearance = $("settings-appearance").value;
             state.auto = $("settings-refresh").value === "auto";
+            state.previewDelay = Number($("settings-delay").value);
+            store("previewDelay", state.previewDelay);
             $("auto-preview").checked = state.auto;
             store("auto", state.auto);
             applyAppearance();
@@ -2312,6 +2511,7 @@
     );
     $("settings-appearance").value = state.appearance;
     $("settings-refresh").value = state.auto ? "auto" : "manual";
+    $("settings-delay").value = String(state.previewDelay);
   }
   function help() {
     dialog(
@@ -2927,6 +3127,10 @@
       "keydown",
       (event) => {
         if (event.key === "Escape") {
+          if (state.inlineTemplate) {
+            closeInlineTemplate();
+            state.editor.focus();
+          }
           $("studio").classList.remove("focus");
           $("inspector").hidden = true;
           $("workbench").classList.remove("mobile-nav");
@@ -2989,6 +3193,7 @@
       $("workbench").classList.toggle("nav-hidden", !!layout.navHidden);
       state.appearance = readStorage("appearance", "system");
       state.auto = readStorage("auto", true);
+      state.previewDelay = readStorage("previewDelay", 1500);
       $("auto-preview").checked = state.auto;
       applyAppearance();
       await loadTree();
