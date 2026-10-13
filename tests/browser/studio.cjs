@@ -355,6 +355,19 @@ function check(condition, message) {
       (await page.locator("#pdf-total").textContent()) === "3",
       "Viewer page count",
     );
+    await page.selectOption("#pdf-page-view", "spread");
+    await page.waitForFunction(() => {
+      const pages = document.querySelectorAll(".pdfViewer .spread:first-child .page");
+      if (pages.length !== 2) return false;
+      const left = pages[0].getBoundingClientRect();
+      const right = pages[1].getBoundingClientRect();
+      return Math.abs(left.top - right.top) < 1 && right.left >= left.right;
+    });
+    check(await page.locator(".pdfViewer .spread").count() === 2,
+      "Side-by-side view pairs pages and preserves the final odd page");
+    await page.selectOption("#pdf-page-view", "single");
+    check(await page.locator(".pdfViewer .spread").count() === 0,
+      "Single-page view restores individual rows");
     const source = () =>
       page.evaluate(() => monaco.editor.getEditors()[0].getValue());
     const edit = (content) =>
@@ -1145,6 +1158,19 @@ function check(condition, message) {
         .includes("Edited in visual mode."),
       "Explicit conflict resolution saves draft",
     );
+    const savedBeforeExternal = fs.readFileSync(path.join(workspace, "doc.md"), "utf8");
+    fs.writeFileSync(path.join(workspace, "doc.md"), savedBeforeExternal + "\nLive external update.\n");
+    await page.waitForFunction(() => monaco.editor.getEditors()[0].getValue().includes("Live external update."));
+    check(await page.locator("#md-doc-save-btn").isDisabled(),
+      "External refresh keeps the source buffer saved");
+    await page.getByRole("button", { name: "Write", exact: true }).click();
+    fs.writeFileSync(path.join(workspace, "doc.md"), savedBeforeExternal + "\nVisual external update.\n");
+    await page.locator("#write-editor").getByText("Visual external update.", { exact: true }).waitFor();
+    check(await page.locator("#md-doc-save-btn").isDisabled(),
+      "External refresh updates visual mode without creating a draft");
+    await page.getByRole("button", { name: "Source", exact: true }).click();
+    fs.writeFileSync(path.join(workspace, "doc.md"), savedBeforeExternal);
+    await page.waitForFunction(() => !monaco.editor.getEditors()[0].getValue().includes("Visual external update."));
     // Source control is scoped to workspace and renders real diff.
     await page
       .getByRole("button", { name: "Source control", exact: true })
@@ -1253,6 +1279,17 @@ function check(condition, message) {
         Math.abs((await page.locator(pane).boundingBox()).x - 46) < 1,
         "Hidden sidebar reclaims navigation space in " + name,
       );
+      if (["Stacked", "Side by side"].includes(name)) {
+        await page.getByRole("button", { name: "Hide preview", exact: true }).click();
+        check(!(await page.locator("#preview-pane").isVisible()),
+          "Editor toolbar hides the preview in " + name);
+        await page.getByRole("button", { name: "Show preview", exact: true }).click();
+        check(await page.locator("#preview-pane").isVisible(),
+          "Editor toolbar restores the preview in " + name);
+        check(await page.locator("#workbench").evaluate(
+          (n) => n.classList.contains("layout-horizontal")) === (name === "Stacked"),
+          "Preview toggle restores the previous layout");
+      }
     }
     await page.locator('[data-nav="files"]').click();
     await page.screenshot({

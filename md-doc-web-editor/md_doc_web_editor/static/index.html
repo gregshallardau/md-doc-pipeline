@@ -216,6 +216,16 @@
           <div class="editor-toolbar">
             <div class="breadcrumbs" id="md-doc-filename">No file selected</div>
             <button
+              id="preview-toggle"
+              class="button ghost"
+              data-action="toggle-preview"
+              aria-controls="preview-pane"
+              aria-pressed="true"
+              title="Hide preview"
+            >
+              <span data-icon="panel"></span><span id="preview-toggle-label">Hide preview</span>
+            </button>
+            <button
               id="md-doc-save-btn"
               class="button save-button"
               disabled
@@ -414,6 +424,9 @@
             >
               <span data-icon="chevron-right"></span></button
             ><span class="toolbar-divider"></span
+            ><select id="pdf-page-view" aria-label="Page view">
+              <option value="single">Single page</option>
+              <option value="spread">Side by side</option></select
             ><select id="pdf-zoom" aria-label="Preview zoom">
               <option value="page-width">Fit width</option>
               <option value="page-fit">Fit page</option>

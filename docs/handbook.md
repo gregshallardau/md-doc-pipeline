@@ -481,7 +481,7 @@ in config are resolved through the document, ancestors, repo-root cascade instea
 
 ### Page breaks and sections
 
-- `<!-- pagebreak -->` on its own line starts a new page in PDF and Word.
+- `<!-- pagebreak -->` on its own line starts a new page in PDF and Word. The PDF builder enforces this even with a custom theme that has no page-break styling.
 - With a theme that sets `h1 { page-break-before: always }` every H1 starts a page (never the
   first one).
 - Every `##` subsection inside a `# APPENDIX` section starts a new page.

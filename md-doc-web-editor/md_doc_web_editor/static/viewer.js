@@ -34,6 +34,7 @@ export class DocumentViewer {
     });
     this.linkService.setViewer(this.viewer);
     this.eventBus.on("pagesinit", () => {
+      this.setPageView();
       this.viewer.currentScaleValue = $("pdf-zoom").value;
       if (this.pendingPage)
         this.viewer.currentPageNumber = Math.min(
@@ -64,6 +65,7 @@ export class DocumentViewer {
     $("pdf-prev").onclick = () => this.go(this.viewer.currentPageNumber - 1);
     $("pdf-next").onclick = () => this.go(this.viewer.currentPageNumber + 1);
     $("pdf-page").onchange = () => this.go(Number($("pdf-page").value));
+    $("pdf-page-view").onchange = () => this.setPageView();
     $("pdf-zoom").onchange = () => {
       if (this.document) this.viewer.currentScaleValue = $("pdf-zoom").value;
     };
@@ -135,6 +137,12 @@ export class DocumentViewer {
         1,
         Math.min(page, this.document.numPages),
       );
+  }
+  setPageView() {
+    this.viewer.spreadMode = $("pdf-page-view").value === "spread"
+      ? components.SpreadMode.ODD
+      : components.SpreadMode.NONE;
+    this.resize();
   }
   resize() {
     if (this.document) {

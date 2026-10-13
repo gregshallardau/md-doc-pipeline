@@ -861,6 +861,9 @@ kbd {
 .pdfViewer .textLayer {
   color: transparent;
 }
+.pdfViewer .spread .page {
+  margin: 0 6px 18px !important;
+}
 .pdfViewer .page canvas {
   background: white;
 }

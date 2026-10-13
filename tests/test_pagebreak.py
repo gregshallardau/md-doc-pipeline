@@ -51,6 +51,43 @@ class TestInjectPageBreaks:
 class TestPdfBuildPagebreak:
     """Verify the marker survives the full PDF build pipeline."""
 
+    @pytest.mark.parametrize("following", ["Second page", "# Second page"])
+    def test_custom_theme_starts_a_new_page(self, tmp_path, monkeypatch, following):
+        weasyprint = pytest.importorskip("weasyprint")
+        from md_doc.builders.pdf import build as build_pdf
+
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "_pdf-theme.css").write_text(
+            "@page { size: A4; margin: 20mm; }\n"
+            "body { font-size: 12pt; }\n"
+            "h1 { page-break-before: always; break-before: page; }\n"
+        )
+        rendered = []
+
+        def write_pdf(html, target, **kwargs):
+            document = html.render()
+            rendered.append(document)
+            return document.write_pdf(target, **kwargs)
+
+        monkeypatch.setattr(weasyprint.HTML, "write_pdf", write_pdf)
+        build_pdf(
+            f"First page\n\n<!-- pagebreak -->\n\n{following}\n",
+            {"cover_page": False},
+            tmp_path / "out.pdf",
+            repo_root=tmp_path,
+        )
+        assert len(rendered[0].pages) == 2
+        texts = [
+            " ".join(
+                box.text
+                for box in page._page_box.descendants()
+                if isinstance(box, weasyprint.formatting_structure.boxes.TextBox)
+            )
+            for page in rendered[0].pages
+        ]
+        assert "First page" in texts[0] and "Second page" not in texts[0]
+        assert "Second page" in texts[1] and "First page" not in texts[1]
+
     def test_builds_without_error(self, tmp_path):
         pytest.importorskip("weasyprint")
         from md_doc.builders.pdf import build as build_pdf

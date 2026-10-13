@@ -1807,6 +1807,13 @@
   }
   function applyLayout() {
     const bench = $("workbench");
+    if (["split", "horizontal"].includes(state.layout))
+      state.lastPreviewLayout = state.layout;
+    const previewVisible = state.layout !== "source" &&
+      (window.innerWidth > 850 || ["preview", "horizontal"].includes(state.layout));
+    $("preview-toggle").setAttribute("aria-pressed", String(previewVisible));
+    $("preview-toggle").title = previewVisible ? "Hide preview" : "Show preview";
+    $("preview-toggle-label").textContent = previewVisible ? "Hide preview" : "Show preview";
     for (const value of ["source", "preview", "horizontal"])
       bench.classList.toggle("layout-" + value, state.layout === value);
     const available =
@@ -2900,6 +2907,12 @@
     },
     "insert-menu": insertionMenu,
     layout: layoutMenu,
+    "toggle-preview": () => {
+      state.layout = $("preview-toggle").getAttribute("aria-pressed") === "true"
+        ? "source"
+        : window.innerWidth <= 850 ? "preview" : state.lastPreviewLayout || "split";
+      applyLayout();
+    },
     inspector: () => {
       $("inspector").hidden = !$("inspector").hidden;
       renderInspector();
@@ -3292,7 +3305,8 @@
     }
   }
   async function checkChanges() {
-    if (document.hidden) return;
+    if (document.hidden || state.checkingChanges) return;
+    state.checkingChanges = true;
     try {
       const data = await api("/api/changes");
       $("connection-dot").classList.remove("offline");
@@ -3304,20 +3318,26 @@
             const disk = await api(
               "/api/file?path=" + encodeURIComponent(path),
             );
-            if (disk.revision !== buffer.revision) {
-              if (!dirty(buffer)) {
+            if (disk.revision !== buffer.revision && !buffer.saving) {
+              if (!dirty(buffer) || disk.content === buffer.content) {
+                const viewState = state.active === path
+                  ? state.editor?.saveViewState() : null;
                 buffer.saved = disk.content;
                 buffer.content = disk.content;
                 buffer.revision = disk.revision;
-                buffer.model?.setValue(disk.content);
+                state.switching = true;
+                try {
+                  if (buffer.model && buffer.model.getValue() !== disk.content)
+                    buffer.model.setValue(disk.content);
+                } finally {
+                  state.switching = false;
+                }
+                if (viewState) state.editor.restoreViewState(viewState);
                 if (state.active === path && state.fallback)
                   state.fallback.value = disk.content;
-              } else if (buffer.warnedRevision !== disk.revision) {
-                buffer.warnedRevision = disk.revision;
-                toast("Changed on disk: " + path, true, {
-                  label: "Review",
-                  run: () => compareBuffer(buffer, disk),
-                });
+                if (state.active === path && state.mode === "write") renderWrite();
+              } else if (disk.content === buffer.saved) {
+                buffer.revision = disk.revision;
               }
             }
           } catch (error) {
@@ -3334,6 +3354,8 @@
     } catch {
       $("connection-dot").classList.add("offline");
       $("connection-status").textContent = "Reconnecting…";
+    } finally {
+      state.checkingChanges = false;
     }
   }
   async function init() {
@@ -3537,7 +3559,9 @@
         state.pinned = session.pinned;
       await checkChanges();
       loadGit().catch(() => {});
-      setInterval(checkChanges, 4000);
+      setInterval(checkChanges, 1000);
+      window.addEventListener("focus", checkChanges);
+      document.addEventListener("visibilitychange", checkChanges);
       const parameters = new URLSearchParams(location.search);
       if (parameters.get("file")) await openFile(parameters.get("file"));
       else if (parameters.get("sample") === "1") await actions["open-sample"]();

@@ -61,9 +61,9 @@ Add `--no-browser` to start only the server. The editor and pipeline must be ins
 - **Pinned document**: opening its metadata, theme or included template keeps the document visible in the preview. Opening another document selects that document's output.
 - **Current output**: a status label distinguishes current, updating, out-of-date and failed output. The last successful PDF remains visible during updates and errors. Errors and renderer logs are available from the status bar.
 
-Drag either separator to resize navigation or source/preview. Focus a separator and use arrows (Shift for larger steps), Home/End, or double-click to reset. **Change layout** offers side-by-side, stacked, source-only and preview-only. Layouts and appearance persist per workspace. Narrow windows use a single main pane and navigation drawers.
+Drag either separator to resize navigation or source/preview. Focus a separator and use arrows (Shift for larger steps), Home/End, or double-click to reset. **Change layout** offers side-by-side, stacked, source-only and preview-only. Use **Hide preview** / **Show preview** beside Save in the editor toolbar to toggle the output pane; showing it restores the most recent side-by-side or stacked layout. Layouts and appearance persist per workspace. Narrow windows use a single main pane and navigation drawers; **Show preview** opens the preview pane there.
 
-The PDF viewer supports page navigation, fit page/width, zoom, text selection, search, lazy thumbnails, bookmarks and maximised preview. Form test mode is available in Settings; test values do not change source defaults or exported artifacts. Print opens the displayed PDF in a browser tab for the browser's print controls.
+The PDF viewer supports page navigation, fit page/width, zoom, text selection, search, lazy thumbnails, bookmarks and maximised preview. Choose **Side by side** in the **Page view** selector to review pairs of pages (1–2, 3–4, and so on), or **Single page** for one page per row. **Fit width** fits the pair to the available width. This also works in the pop-out preview. Form test mode is available in Settings; test values do not change source defaults or exported artifacts. Print opens the displayed PDF in a browser tab for the browser's print controls.
 
 JavaScript modules and PDF.js workers are served with explicit browser-compatible content types, independent of system MIME settings. If a viewer module fails to load, Diagnostics reports the failing asset or response type and **Open generated PDF** remains available. Restart the editor and reload the page after updating; the browser can retain a failed module import until reload.
 
@@ -90,7 +90,7 @@ Save is an explicit action. Atomic, revision-checked writes detect external edit
 
 Drafts and session preferences are stored in this browser's local storage, scoped to the workspace path. Reloading or reopening restores drafts without writing them to disk. If the disk revision changed, review the recovered draft before saving. Private browsing, storage limits and clearing browser data can remove these drafts; save important work to disk.
 
-External file changes are checked every four seconds while the tab is visible. Clean buffers refresh; dirty buffers are preserved and offer a comparison. Dependency changes refresh the pinned preview.
+External file changes are checked every second while the tab is visible, and when you return to the editor. Saved files refresh automatically in source and visual mode, including expanded templates and the pinned preview. Unsaved edits are preserved without repeated warning pop-ups; if both versions changed, saving offers a comparison before overwriting the disk file. Dependency changes refresh the pinned preview.
 
 ## Source control
 
