@@ -1403,6 +1403,29 @@ kbd {
   padding: 12px 20px;
   border-top: 1px solid var(--border);
 }
+.insert-submenu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: 280px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.insert-submenu .option-button {
+  padding: 8px;
+  gap: 8px;
+}
+.insert-submenu .option-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .option-button {
   display: flex;
   align-items: center;

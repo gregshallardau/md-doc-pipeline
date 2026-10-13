@@ -918,6 +918,7 @@ _BASE_FIXES_CSS = (
     ".report-body h1[data-md-doc-first-heading] { page-break-before: auto; break-before: auto; }\n"
     ".running-date { display: block; position: absolute; visibility: hidden; width: 0; height: 0; overflow: hidden; }\n"
     ".report-body table + table { margin-top: 10pt; }\n"
+    ".report-body table :is(th, td) { overflow-wrap: anywhere; box-sizing: border-box; }\n"
     ".report-body .md-doc-page-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }\n"
     # WeasyPrint does not reliably carry break-inside:avoid from a keep-together
     # wrapper down to a list inside it, and then splits a heading's short list

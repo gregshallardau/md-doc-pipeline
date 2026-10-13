@@ -40,6 +40,7 @@ def _layout(
     del css_mtime  # part of the cache key only: a changed theme must re-layout
     try:
         from weasyprint import CSS, HTML
+        from .builders.pdf import _BASE_FIXES_CSS
 
         path = Path(css_path)
         document = HTML(
@@ -50,6 +51,7 @@ def _layout(
         ).render(
             stylesheets=[
                 CSS(filename=str(path)),
+                CSS(string=re.sub(r"</?style>", "", _BASE_FIXES_CSS)),
                 CSS(string=f"@page {{ size: {width_pt}pt 4000pt; margin: 0 }}"),
             ]
         )

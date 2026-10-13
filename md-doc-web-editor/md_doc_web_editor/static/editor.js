@@ -2707,7 +2707,19 @@
     );
   }
   function insertionMenu() {
-    const body = el("div");
+    const anchor = document.querySelector('[data-action="insert-menu"]');
+    const existing = $("insert-submenu");
+    if (existing?.matches(":popover-open")) {
+      existing.hidePopover();
+      anchor.focus();
+      return;
+    }
+    existing?.remove();
+    const body = el("div", "insert-submenu");
+    body.id = "insert-submenu";
+    body.setAttribute("popover", "auto");
+    body.setAttribute("role", "menu");
+    body.setAttribute("aria-label", "Insert into document");
     body.append(
       option(
         "Image",
@@ -2748,7 +2760,39 @@
         () => commandPalette("templates"),
       ),
     );
-    dialog("Insert into document", body);
+    const items = [...body.querySelectorAll("button")];
+    items.forEach((button) => {
+      button.setAttribute("role", "menuitem");
+      button.tabIndex = -1;
+      button.addEventListener("click", () => body.hidePopover(), { capture: true });
+    });
+    body.onkeydown = (event) => {
+      const index = items.indexOf(document.activeElement);
+      let next;
+      if (event.key === "ArrowDown") next = (index + 1) % items.length;
+      else if (event.key === "ArrowUp") next = (index - 1 + items.length) % items.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = items.length - 1;
+      else if (event.key === "Escape" || event.key === "Tab") {
+        body.hidePopover();
+        anchor.focus();
+        if (event.key === "Escape") event.preventDefault();
+        return;
+      } else return;
+      event.preventDefault();
+      items[next].focus();
+    };
+    body.addEventListener("toggle", () => {
+      anchor.setAttribute("aria-expanded", String(body.matches(":popover-open")));
+    });
+    document.body.append(body);
+    body.showPopover();
+    const rect = anchor.getBoundingClientRect();
+    body.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - body.offsetWidth - 8)) + "px";
+    body.style.top = (rect.bottom + body.offsetHeight + 8 <= window.innerHeight
+      ? rect.bottom + 6 : Math.max(8, rect.top - body.offsetHeight - 6)) + "px";
+    anchor.setAttribute("aria-expanded", "true");
+    items[0].focus();
   }
   function insertImage() {
     if (!current() || current().type !== "md") {

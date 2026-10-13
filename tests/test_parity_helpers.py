@@ -36,6 +36,14 @@ def test_code_line_pitch_is_positive(tmp_path) -> None:
     assert pitch is not None and pitch > 0
 
 
+def test_table_column_measurement_wraps_long_tokens(tmp_path) -> None:
+    css = tmp_path / "t.css"
+    css.write_text("table { width: 100%; border-collapse: collapse } td { padding: 2pt }")
+    widths = css_column_weights([[(False, "abcdefghij" * 30), (False, "Other")]], css, 400)
+    assert widths is not None
+    assert sum(widths) <= 400 / 0.75 + 1
+
+
 def test_collapse_select_markup_single_line() -> None:
     src = '<select name="a">\n<option>A</option>\n<option>B</option>\n</select>'
     out = collapse_select_markup(src)

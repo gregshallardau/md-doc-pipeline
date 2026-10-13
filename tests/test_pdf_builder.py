@@ -13,6 +13,43 @@ def tmp_repo(tmp_path):
     return tmp_path
 
 
+@pytest.mark.parametrize("weights", [None, [25, 75]])
+def test_long_table_text_stays_inside_page(tmp_repo, monkeypatch, weights):
+    weasyprint = pytest.importorskip("weasyprint")
+    (tmp_repo / "_pdf-theme.css").write_text(
+        "@page { size: A4; margin: 20mm; }\n"
+        "table { width: 100%; border-collapse: collapse; }\n"
+        "td, th { padding: 4pt; }\n"
+    )
+    rendered = []
+
+    def write_pdf(html, target, **kwargs):
+        document = html.render()
+        rendered.append(document)
+        return document.write_pdf(target, **kwargs)
+
+    monkeypatch.setattr(weasyprint.HTML, "write_pdf", write_pdf)
+    token = "abcdefghij" * 30
+    config = {"cover_page": False}
+    if weights:
+        config["table_col_widths"] = weights
+    build_pdf(
+        f"| Value | Notes |\n| --- | --- |\n| {token} | Other |\n",
+        config,
+        tmp_repo / "table.pdf",
+        repo_root=tmp_repo,
+    )
+    for page in rendered[0].pages:
+        page_box = page._page_box
+        right = page_box.content_box_x() + page_box.width
+        boxes = list(page_box.descendants())
+        table = next(box for box in boxes if type(box).__name__ == "TableBox")
+        assert table.position_x + table.border_width() <= right + 1
+        text_boxes = [box for box in boxes if type(box).__name__ == "TextBox"]
+        assert all(box.position_x + box.width <= right + 1 for box in text_boxes)
+        assert token in "".join(box.text for box in text_boxes)
+
+
 class TestResolveCss:
     def test_explicit_pdf_theme_absolute(self, tmp_repo):
         css = tmp_repo / "custom.css"

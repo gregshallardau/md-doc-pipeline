@@ -375,6 +375,24 @@ function check(condition, message) {
         (content) => monaco.editor.getEditors()[0].getModel().setValue(content),
         content,
       );
+    await page.getByRole("button", { name: "More insert options", exact: true }).click();
+    check(await page.getByRole("menu", { name: "Insert into document" }).isVisible(),
+      "Insert options open a compact submenu");
+    check(!(await page.locator("#form-dialog").evaluate((n) => n.open)),
+      "Insert submenu does not open a modal");
+    await page.keyboard.press("ArrowDown");
+    check(await page.getByRole("menuitem", { name: "Page break", exact: false }).evaluate(
+      (n) => n === document.activeElement), "Insert submenu supports arrow navigation");
+    await page.keyboard.press("Escape");
+    check(!(await page.locator("#insert-submenu").isVisible()), "Escape dismisses insert submenu");
+    await page.getByRole("button", { name: "More insert options", exact: true }).click();
+    await page.locator("#md-doc-filename").click();
+    check(!(await page.locator("#insert-submenu").isVisible()), "Outside click dismisses insert submenu");
+    await page.getByRole("button", { name: "More insert options", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Page break", exact: false }).click();
+    check((await source()).split("<!-- pagebreak -->").length === 3,
+      "Insert submenu inserts at the source selection");
+    check(!(await page.locator("#insert-submenu").isVisible()), "Insertion closes the submenu");
     await edit(
       original.replace("A simple paragraph.", "Unsaved source paragraph."),
     );

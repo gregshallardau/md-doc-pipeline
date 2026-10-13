@@ -455,6 +455,19 @@ and `div style="text-align: …"`.
   `table_col_widths: [30, 70]` for every table. The counts must match the column count or the
   widths are ignored. PDF, DOCX and DOTX all honour them; without them columns are sized to
   their content, as in PDF.
+- **Wrapping wide content.** PDF table cells wrap long URLs and unbroken text so they
+  do not force the table beyond the text width. Use column widths above to stop one
+  column taking most of the available space. For an approximate character width in
+  a PDF theme, use `ch` units (the width of the font's zero character):
+
+  ```css
+  .report-body table { width: 100%; table-layout: fixed; }
+  .report-body th:first-child, .report-body td:first-child { width: 25ch; }
+  ```
+
+  This wraps at the available width, preferably between words; it is not an exact
+  25-character limit with proportional fonts. The CSS example affects the first
+  column of every PDF table. Use `col-widths` for per-table control across PDF and Word.
 - **Headerless tables.** Make every header cell empty and the header row is dropped in every
   format. Useful for signature blocks:
 
