@@ -2144,3 +2144,14 @@ kbd {
   font-size: 10px;
   font-weight: 600;
 }
+/* Provisional updated page, displayed while the final PDF is paginating. */
+.preview-page-update {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: white;
+}
+.preview-provisional .textLayer,
+.preview-provisional .annotationLayer {
+  visibility: hidden;
+}

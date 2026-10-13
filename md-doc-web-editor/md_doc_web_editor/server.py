@@ -110,6 +110,10 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         async def sweep() -> None:
             while True:
                 prune_builds()
+                if hasattr(app.state, "studio"):
+                    await app.state.studio.prune_sessions()
+                for child in getattr(app.state, "workspace_apps", {}).values():
+                    await child.state.studio.prune_sessions()
                 await asyncio.sleep(60)
 
         task = asyncio.create_task(sweep())

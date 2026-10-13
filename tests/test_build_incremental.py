@@ -60,6 +60,31 @@ def test_force_rebuilds_even_when_fresh(tmp_repo):
     assert "up to date" not in r.output
 
 
+def test_force_only_scans_signature_after_build(tmp_repo, monkeypatch):
+    from md_doc import dependencies
+    from md_doc.config import load_config
+
+    _write_doc(tmp_repo)
+    original = dependencies.signature
+    calls = []
+
+    def track_signature(*args, **kwargs):
+        assert (tmp_repo / "doc.pdf").exists()
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    def unexpected_mtime(*args, **kwargs):
+        pytest.fail("forced builds do not need a freshness scan")
+
+    monkeypatch.setattr(dependencies, "signature", track_signature)
+    monkeypatch.setattr("md_doc.cli._newest_dep_mtime", unexpected_mtime)
+    result = _build(tmp_repo, "--force")
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+    config = load_config(tmp_repo / "doc.md", repo_root=tmp_repo)
+    assert (tmp_repo / ".doc.pdf.md-doc-state").read_text() == original(tmp_repo, config)
+
+
 def test_editing_meta_yml_triggers_rebuild(tmp_repo):
     _write_doc(tmp_repo)
     _build(tmp_repo)

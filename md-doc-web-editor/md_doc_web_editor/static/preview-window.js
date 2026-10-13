@@ -81,6 +81,11 @@ async function update(data) {
     loadedUrl = data.artifact.url;
     loadedPath = data.path;
   }
+  if (data.previewRevision !== viewer.previewRevision) {
+    viewer.clearPreviewPages();
+    viewer.previewRevision = data.previewRevision;
+  }
+  await viewer.showPreviewPages(data.previewPages, data.previewRevision);
 }
 window.addEventListener("message", (event) => {
   if (

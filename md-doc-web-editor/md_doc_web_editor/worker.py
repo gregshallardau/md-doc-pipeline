@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import io
 import logging
+import shutil
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+_base_fetch = None
 
-def main() -> int:
-    document, root, output, format_name = sys.argv[1:]
+
+def build(document, root, output, format_name) -> int:
+    global _base_fetch
     project = Path(root).resolve()
     from md_doc.builders import pdf
 
-    fetch = pdf._local_url_fetcher
+    if _base_fetch is None:
+        _base_fetch = pdf._local_url_fetcher
+    fetch = _base_fetch
 
     def scoped_fetch(url, *args, **kwargs):
         parsed = urlsplit(url)
@@ -98,6 +106,71 @@ def main() -> int:
     )
     print(json.dumps(result, default=str))
     return 1 if result["errored"] else 0
+
+
+def persistent(root: Path) -> int:
+    """JSON-lines protocol; one sequential, isolated preview session."""
+    from .incremental import IncrementalPreview
+    from .snapshots import TEXT_SUFFIXES
+    from md_doc.builders import pdf
+
+    preview = IncrementalPreview()
+    settings = {}
+    stream = sys.stdout
+
+    def emit(event):
+        print(json.dumps(event), file=stream, flush=True)
+
+    def write_pdf(markup, base_url, output, options):
+        preview.write_pdf(
+            markup,
+            base_url,
+            output,
+            options,
+            inputs=settings["inputs"],
+            visible_page=settings["visible_page"],
+            emit=emit,
+        )
+
+    pdf._write_pdf = write_pdf
+    previous_document = None
+    project = root / "project"
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            source = Path(request["project"]).resolve()
+            document = request["document"]
+            if document != previous_document:
+                preview.clear()
+            previous_document = document
+            shutil.rmtree(project, ignore_errors=True)
+            shutil.copytree(source, project)
+            digest = hashlib.sha256()
+            for path in sorted(project.rglob("*")):
+                if not path.is_file():
+                    continue
+                raw = path.read_bytes()
+                if path.suffix.lower() in TEXT_SUFFIXES:
+                    raw = raw.replace(str(source).encode(), str(project).encode())
+                    path.write_bytes(raw)
+                if path.suffix.lower() != ".md":
+                    digest.update(path.relative_to(project).as_posix().encode() + raw)
+            settings.update(inputs=digest.hexdigest(), visible_page=request.get("visible_page", 1))
+            captured = io.StringIO()
+            with redirect_stdout(captured):
+                code = build(str(project / document), str(project), request["output"], "pdf")
+            result = json.loads(captured.getvalue().strip().splitlines()[-1])
+            emit({"type": "result", "result": result, "stats": preview.stats, "code": code})
+        except Exception as exc:
+            preview.clear()
+            emit({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+    return 0
+
+
+def main() -> int:
+    if sys.argv[1:2] == ["--persistent"]:
+        return persistent(Path(sys.argv[2]).resolve())
+    return build(*sys.argv[1:])
 
 
 if __name__ == "__main__":

@@ -1919,8 +1919,16 @@ def build(
         field_meta = _collect_form_field_meta(html_body)
         if field_meta:
             wp_kwargs["finisher"] = _make_forms_finisher(field_meta)
-    weasyprint.HTML(
-        string=html,
-        base_url=str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
-        url_fetcher=_make_url_fetcher(),
-    ).write_pdf(str(out_path), **wp_kwargs)
+    _write_pdf(
+        html,
+        str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
+        out_path,
+        wp_kwargs,
+    )
+
+
+def _write_pdf(html: str, base_url: str, out_path: Path, options: dict[str, Any]) -> None:
+    """Output boundary shared with the editor's isolated preview worker."""
+    weasyprint.HTML(string=html, base_url=base_url, url_fetcher=_make_url_fetcher()).write_pdf(
+        str(out_path), **options
+    )

@@ -3435,6 +3435,19 @@ Builds are incremental: an output newer than its source, config, theme, and
 md-doc build workspace/ --force
 ```
 
+Forced builds skip the preliminary freshness checks and record dependencies after
+each output is built. For batches of independent documents, use `-j 4` to build
+with four worker processes. Each worker needs memory for its document's layout;
+choose a worker count that fits your machine. Use `--debug` before `build` to see
+per-document timing for sequential builds.
+
+The browser editor also supports incremental PDF preview for inline Markdown
+edits, with early updates to the visible page. It keeps layout checkpoints in
+isolated workers and uses a full-render fallback for global changes or unsupported
+layouts. See the [editor preview guide](../md-doc-web-editor/README.md#editing-and-preview)
+for its supported WeasyPrint version and preview limitations. CLI builds and
+exports continue to produce complete documents.
+
 
 <a id="python-api"></a>
 

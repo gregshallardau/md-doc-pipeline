@@ -85,6 +85,7 @@ export class DocumentViewer {
     new ResizeObserver(() => this.resize()).observe($("pdf-container"));
   }
   async load(artifact, sameDocument = false) {
+    this.clearPreviewPages();
     const sequence = ++this.sequence;
     this.loading?.destroy().catch(() => {});
     const task = pdfjs.getDocument({
@@ -126,7 +127,62 @@ export class DocumentViewer {
     if (!$("pdf-thumbnails").hidden) this.thumbnails();
     if (oldTask) await oldTask.destroy();
   }
+  clearPreviewPages() {
+    this.previewSequence = (this.previewSequence || 0) + 1;
+    this.previewUrls = new Set();
+    $("pdf-viewer").querySelectorAll(".preview-page-update").forEach(node => node.remove());
+    $("pdf-viewer").querySelectorAll(".preview-provisional").forEach(node => {
+      node.classList.remove("preview-provisional");
+      delete node.dataset.previewRevision;
+    });
+  }
+  async showPreviewPages(pages, revision) {
+    if (!this.document) return;
+    this.previewUrls ||= new Set();
+    const sequence = this.sequence;
+    const previewSequence = this.previewSequence || 0;
+    for (const page of pages || []) {
+      if (page.revision !== revision || this.previewUrls.has(page.url)) continue;
+      const host = this.viewer.getPageView(page.page - 1)?.div;
+      if (!host) continue;
+      this.previewUrls.add(page.url);
+      const task = pdfjs.getDocument({
+        url: page.url, cMapUrl: base + "cmaps/", cMapPacked: true,
+        standardFontDataUrl: base + "standard_fonts/", wasmUrl: base + "wasm/",
+        isEvalSupported: false, enableXfa: false,
+      });
+      try {
+        const doc = await task.promise;
+        const pdfPage = await doc.getPage(1);
+        const intrinsic = pdfPage.getViewport({scale: 1});
+        const scale = host.clientWidth / intrinsic.width;
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        const viewport = pdfPage.getViewport({scale: scale * ratio});
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        await pdfPage.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
+        if (sequence !== this.sequence || previewSequence !== (this.previewSequence || 0)) return;
+        const overlay = document.createElement("div");
+        overlay.className = "preview-page-update";
+        overlay.title = "Updated page; page totals and references are provisional";
+        overlay.append(canvas);
+        host.querySelector(".preview-page-update")?.remove();
+        host.append(overlay);
+        host.classList.add("preview-provisional");
+        host.dataset.previewRevision = revision;
+      } catch (error) {
+        this.previewUrls.delete(page.url);
+        this.onError(error);
+      } finally {
+        await task.destroy();
+      }
+    }
+  }
   invalidate() {
+    this.clearPreviewPages();
     ++this.sequence;
     this.loading?.destroy().catch(() => {});
     this.loading = null;

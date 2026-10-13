@@ -30,7 +30,13 @@ Expanded template sections have a **TEMPLATE · filename** label, a subtle tint 
 
 The **Outline** shows the composed downstream document, using the pipeline's Jinja rendering and Markdown parser. It includes nested Markdown/HTML template headings, resolves variables, follows loops and excludes conditional sections that will not appear in the output. It updates from unsaved document, metadata and template drafts, including when automatic PDF preview is paused. Clicking a heading expands its source in the main document and navigates there. Template lookup uses the same directory cascade as the final build.
 
-Automatic preview generation waits **1.5 seconds** after typing stops. Choose **3 seconds** or **5 seconds** in **Studio settings → Preview delay after typing**, or use manual refresh. The full PDF is regenerated to keep page flow, numbering and theme output accurate.
+Automatic preview generation waits **1.5 seconds** after typing stops. Choose **3 seconds** or **5 seconds** in **Studio settings → Preview delay after typing**, or use manual refresh. While a render is running, automatic updates are combined into one follow-up using the latest drafts, so edits do not repeatedly cancel long document builds. Manual refresh can replace a running render immediately.
+
+For inline Markdown edits, including unsaved included `.md` files, PDF preview retains the previous layout in an isolated worker. It maps composed content blocks to pages and resumes layout ten pages before the earliest changed block, moving farther back for enclosing paragraphs, tables, heading groups or an unsafe page boundary. Unchanged earlier body pages are reused; headers and footers are refreshed so final page totals remain correct. Markdown composition and CSS calculation still run for the complete document.
+
+The page visible when rendering starts can update before the rest of the document finishes. It appears over the previous PDF with **Updating · visible page ready** status. This page is provisional: total-page counts and references may change, and text selection/forms on it wait for the completed PDF. The final PDF replaces the temporary page, restoring normal viewer features. Downloads, search and thumbnails continue to refer to the last completed PDF during rendering. Pop-out preview receives the same page updates.
+
+Theme, metadata and asset changes invalidate the cache. Interactive forms, footnotes, cross-reference counters, multi-column/flex/grid layouts and general floating/absolutely positioned content use a full render. The pipeline's hidden running date and cover artwork are supported. The adapter is verified against **WeasyPrint 68.1**, pinned by the editor package; other installed versions fall back to the public full-render API. PDF exports always use the normal full renderer. This first implementation rebuilds the tail after an edit; it does not yet reuse an unchanged tail or provide exact Markdown-line-to-page navigation.
 
 Use **Pop out preview** in the output preview header to open a resizable window, including on a second monitor. It follows the editor’s rendered updates, including unsaved changes, and has independent zoom, page navigation, search, thumbnails and PDF download. Clicking the button again focuses the existing window. Rendering and automatic/manual refresh remain controlled by the editor.
 
@@ -63,7 +69,7 @@ Add `--no-browser` to start only the server. The editor and pipeline must be ins
 
 - **Source**: Monaco with Markdown, Jinja2, Word fields, PDF forms and YAML highlighting. Each tab retains its buffer, cursor, undo stack and scroll position.
 - **Write**: visual editing for supported paragraphs and headings. Frontmatter, templates, forms, tables, HTML, images and other advanced syntax remain protected source blocks. Clicking a protected block opens it in Source. Untouched blocks retain their original source.
-- **Output preview**: the actual PDF, including the complete theme, imported CSS, local fonts and images, cover, page breaks, diagrams, headers and footers. Automatic rendering starts after 800ms of idle time; pause it or refresh manually for large documents.
+- **Output preview**: the actual PDF, including the complete theme, imported CSS, local fonts and images, cover, page breaks, diagrams, headers and footers. Automatic rendering starts after 1.5 seconds of idle time and combines edits made during a running render into one follow-up; pause it or refresh manually for large documents.
 - **Unsaved edits**: previews include open unsaved document, YAML, CSS and template buffers. The renderer uses an isolated project snapshot. Preview and export never save these buffers or generate themes in your source project.
 - **Pinned document**: opening its metadata, theme or included template keeps the document visible in the preview. Opening another document selects that document's output.
 - **Current output**: a status label distinguishes current, updating, out-of-date and failed output. The last successful PDF remains visible during updates and errors. Errors and renderer logs are available from the status bar.
@@ -117,7 +123,7 @@ The editor defaults to loopback and is intended for use on your own machine. It 
 
 Snapshots retain project-relative paths so the CLI's cascade, template resolution, CSS imports and assets continue to work when a subdirectory is selected. Hidden directories, symlinks, dependency packages and generated outputs are excluded. Preview can use inherited project metadata/themes/templates; there is no general filesystem browser.
 
-Limits: 128 MiB / 10,000 snapshot inputs, 20 MiB text files, 100 unsaved buffers, 10 MiB uploaded raster images, two render workers, eight pending/running jobs, and 180 seconds per render. Artifact leases expire after 30 minutes and are refreshed by downloads. Refresh an expired preview to produce it again. Temporary snapshots are discarded after rendering; artifacts are cleaned on expiry/shutdown.
+Limits: 128 MiB / 10,000 snapshot inputs, 20 MiB text files, 100 unsaved buffers, 10 MiB uploaded raster images, two render workers, eight pending/running jobs, and 180 seconds per render. Up to two preview sessions retain a snapshot and layout cache; idle sessions expire after 30 minutes or are evicted for another client. Job snapshots are discarded after rendering. Artifact leases expire after 30 minutes and are refreshed by downloads. Refresh an expired preview to produce it again. Artifacts and workers are cleaned on expiry/shutdown.
 
 ## Service APIs
 
@@ -138,6 +144,13 @@ Limits: 128 MiB / 10,000 snapshot inputs, 20 MiB text files, 100 unsaved buffers
 | POST `/api/git/action` | Explicit stage, unstage, commit, branch or pull |
 
 Snapshot job responses include effective configuration, provenance, theme, fields and includes. Editable inherited resources use scoped `project:` handles. Legacy config/CSS/includes and saved-file `/api/build` endpoints remain available for existing integrations. Browser mutations send `X-Editor-Token` from capabilities; cross-origin requests are rejected.
+
+PDF preview requests accept `visible_page` (1-based, default 1). While a job runs,
+`preview_pages` can contain `{page, url, revision, provisional}` entries for early
+page updates. `preview_reset` clears provisional output if a checkpoint fails.
+Completed jobs include `render_stats` with the render mode, fallback reason,
+reused/rebuilt page counts and composed block-to-page mapping. Page artifacts use
+the existing artifact endpoint; the final `artifact` is the complete document.
 
 ## Verification
 

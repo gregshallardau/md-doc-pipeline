@@ -292,11 +292,13 @@ def _build_document(
             )
 
     theme_dep = [theme.resolve()] if theme is not None else None
-    dep_mtime = _newest_dep_mtime(doc_path, cascade_root, extra=theme_dep)
+    # Forced builds cannot reuse outputs, so avoid scanning inputs until the
+    # builders have finished (and possibly initialised a default theme).
+    dep_mtime = 0.0 if force else _newest_dep_mtime(doc_path, cascade_root, extra=theme_dep)
 
     from .dependencies import signature
 
-    dependency_signature = signature(cascade_root, config, theme_dep)
+    dependency_signature = "" if force else signature(cascade_root, config, theme_dep)
     stale: list[tuple[str, Path]] = []
     for format_name in formats:
         ext = (
@@ -310,10 +312,12 @@ def _build_document(
             errored = True
             continue
         state_path = out_path.with_name("." + out_path.name + ".md-doc-state")
-        try:
-            same_inputs = state_path.read_text() == dependency_signature
-        except OSError:
-            same_inputs = False
+        same_inputs = False
+        if not force:
+            try:
+                same_inputs = state_path.read_text() == dependency_signature
+            except OSError:
+                pass
         if (
             not force
             and same_inputs

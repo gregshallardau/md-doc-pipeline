@@ -1356,6 +1356,61 @@ function check(condition, message) {
       "The generated PDF remains accessible when its browser viewer cannot load",
     );
     await broken.close();
+    // A late inline edit reuses the prefix and updates the visible page
+    // before PDF.js receives the complete replacement document.
+    const longFolder = path.join(workspace, "long");
+    fs.mkdirSync(longFolder);
+    fs.writeFileSync(path.join(longFolder, "_theme.css"),
+      "@page {size:A4;margin:20mm;@bottom-right{content:counter(page)}} body{font:12pt serif} p{line-height:1.4}");
+    const filler = " Ordinary flowing text for paragraph layout.".repeat(16);
+    const longSource = Array.from({length: 100}, (_, i) =>
+      `## Page ${i + 1}\n\nOriginal ${i + 1}.${filler}`
+    ).join("\n\n<!-- pagebreak -->\n\n");
+    fs.writeFileSync(path.join(longFolder, "chapter.md"), longSource);
+    fs.writeFileSync(path.join(longFolder, "report.md"),
+      '---\ncover_page: false\n---\n{% include "chapter.md" %}');
+    const incremental = await browser.newPage({viewport: {width: 1500, height: 1000}});
+    await incremental.goto(origin + "/?file=long/report.md");
+    await incremental.waitForFunction(() =>
+      document.querySelector("#preview-status").textContent === "Current", null, {timeout: 60000});
+    check((await incremental.locator("#pdf-total").textContent()) === "100", "Long preview has 100 pages");
+    await incremental.locator("#pdf-page").fill("50");
+    await incremental.locator("#pdf-page").dispatchEvent("change");
+    await incremental.locator('[data-page-number="50"] canvas').waitFor();
+    let earlyPage = false, incrementalStats;
+    incremental.on("response", async (response) => {
+      if (!response.url().includes("/api/jobs/") || response.request().method() !== "GET") return;
+      const job = await response.json();
+      if (job.state === "running" && job.preview_pages?.length) earlyPage = true;
+      if (job.state === "succeeded") incrementalStats = job.render_stats;
+    });
+    // Edit the included Markdown through its source buffer, with the report
+    // remaining pinned in the output pane.
+    await incremental.locator(".template-include-link").first().click();
+    await incremental.waitForFunction(() =>
+      monaco.editor.getEditors()[0].getModel().getValue().includes("Original 50."));
+    await incremental.evaluate(() => {
+      const model = monaco.editor.getEditors()[0].getModel();
+      const offset = model.getValue().indexOf("Original 50.");
+      const from = model.getPositionAt(offset), to = model.getPositionAt(offset + "Original 50.".length);
+      model.pushEditOperations([], [{
+        range: new monaco.Range(from.lineNumber, from.column, to.lineNumber, to.column),
+        text: "Progressive update 50.",
+      }], () => null);
+    });
+    await incremental.waitForSelector('[data-page-number="50"] .preview-page-update', {timeout: 60000});
+    check((await incremental.locator("#preview-status").textContent()).includes("visible page ready"),
+      "Visible page updates while the tail is rendering");
+    await incremental.waitForFunction(() =>
+      document.querySelector("#preview-status").textContent === "Current", null, {timeout: 60000});
+    check(earlyPage, "Server publishes page 50 before finishing the job");
+    check(incrementalStats?.reused_pages === 39 && incrementalStats?.restart_page === 40,
+      "Page-50 edit resumes at page 40 and preserves the first 39 body pages");
+    check((await incremental.locator(".preview-page-update").count()) === 0,
+      "Completed PDF replaces provisional page overlays");
+    check(fs.readFileSync(path.join(longFolder, "chapter.md"), "utf8") === longSource,
+      "Incremental preview leaves the included Markdown draft unsaved");
+    await incremental.close();
     console.log(
       `${checks} production studio browser checks passed (real Monaco, PDF, offline assets, resizing, recovery, conflicts, visual editing, Git)`,
     );

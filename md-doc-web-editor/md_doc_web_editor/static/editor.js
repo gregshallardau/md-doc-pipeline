@@ -1268,6 +1268,8 @@
         type: "md-doc-preview",
         markup: initialize ? $("preview-pane").outerHTML : undefined,
         artifact: state.artifact,
+        previewPages: state.previewPages || [],
+        previewRevision: state.previewRevision,
         path: state.artifactPath || state.pinned,
         status: $("preview-status").textContent,
         kind: $("preview-status").className,
@@ -1308,7 +1310,7 @@
       "stale",
     );
     if (state.auto || force)
-      state.timer = setTimeout(() => renderPreview().catch(reportError), delay);
+      state.timer = setTimeout(() => renderPreview(force).catch(reportError), delay);
   }
   function reportError(error) {
     state.error = error.message;
@@ -1387,13 +1389,24 @@
       throw error;
     }
   }
-  async function renderPreview() {
+  async function renderPreview(force = false) {
     if (!state.pinned) return;
+    // Long documents must be allowed to finish. Coalesce automatic updates
+    // into one follow-up instead of repeatedly killing their layout process.
+    if (state.previewRunning && !force) {
+      state.previewPending = true;
+      return;
+    }
     const path = state.pinned;
     const revision = state.revision;
     const content = buffers();
     const jobKey = crypto.randomUUID();
     state.jobKey = jobKey;
+    state.previewRunning = jobKey;
+    state.previewPending = false;
+    state.previewPages = [];
+    state.previewRevision = revision;
+    state.view?.clearPreviewPages();
     setRenderState("Updating", "updating");
     $("preview-document").textContent = path;
     $("preview-document").title = path;
@@ -1408,6 +1421,7 @@
           revision,
           client: state.client,
           purpose: "preview",
+          visible_page: state.view?.viewer.currentPageNumber || 1,
         }),
       });
       if (state.jobKey !== jobKey) {
@@ -1422,6 +1436,24 @@
         await new Promise((r) => setTimeout(r, 250));
         if (state.jobKey !== jobKey) return;
         result = await api("/api/jobs/" + job.id);
+        if (state.jobKey !== jobKey) return;
+        if (result.preview_reset) {
+          state.view?.clearPreviewPages();
+          state.previewPages = [];
+        } else if (
+          result.preview_pages?.length && state.pinned === path && state.revision === revision
+        ) {
+          state.previewPages = result.preview_pages;
+          await state.view?.showPreviewPages(result.preview_pages, revision);
+          if (state.jobKey !== jobKey) return;
+          if (state.pinned === path && state.revision === revision) {
+            setRenderState("Updating · visible page ready", "updating");
+          } else {
+            state.view?.clearPreviewPages();
+            state.previewPages = [];
+            setRenderState("Out of date", "stale");
+          }
+        }
       }
       if (
         state.jobKey !== jobKey ||
@@ -1430,7 +1462,7 @@
       ) {
         if (state.jobKey === jobKey) {
           setRenderState("Out of date", "stale");
-          if (state.auto) schedulePreview(0);
+          if (state.auto) state.previewPending = true;
         }
         return;
       }
@@ -1467,6 +1499,7 @@
       )
         return;
       state.artifact = result.artifact;
+      state.previewPages = [];
       state.artifactPath = path;
       state.artifactRevision = revision;
       state.error = null;
@@ -1484,7 +1517,19 @@
       );
       renderDiagnostics();
     } catch (error) {
-      if (state.jobKey === jobKey) reportError(error);
+      if (state.jobKey === jobKey) {
+        state.view?.clearPreviewPages();
+        state.previewPages = [];
+        reportError(error);
+      }
+    } finally {
+      if (state.previewRunning === jobKey) {
+        state.previewRunning = null;
+        if (state.previewPending && state.auto) {
+          state.previewPending = false;
+          schedulePreview();
+        }
+      }
     }
   }
   function renderDiagnostics() {

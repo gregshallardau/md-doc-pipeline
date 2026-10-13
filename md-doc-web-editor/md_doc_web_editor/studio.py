@@ -33,6 +33,7 @@ class SnapshotRequest(BaseModel):
     revision: int = 0
     purpose: Literal["preview", "export"] = "preview"
     client: str = Field(default="default", min_length=1, max_length=128)
+    visible_page: int = Field(default=1, ge=1, le=10000)
 
 
 class FileAction(BaseModel):
@@ -85,6 +86,89 @@ def inspect_snapshot(path: Path, workspace: Path) -> dict[str, Any]:
     return jsonable_encoder(result)
 
 
+class PreviewSession:
+    """A bounded persistent process, retaining one document's layout cache."""
+
+    def __init__(self, directory):
+        self.directory = directory
+        self.process = None
+        self.lock = asyncio.Lock()
+        self.close_lock = asyncio.Lock()
+        self.owner = None
+        self.log = ""
+        self.drain = None
+        self.used = time.monotonic()
+
+    async def start(self):
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "md_doc_web_editor.worker",
+            "--persistent",
+            str(self.directory),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=2 * 1024 * 1024,
+        )
+        self.drain = asyncio.create_task(self._drain())
+
+    async def _drain(self):
+        process = self.process
+        while chunk := await process.stderr.read(4096):
+            self.log = (self.log + chunk.decode(errors="replace"))[-12000:]
+
+    async def close(self, owner=None):
+        async with self.close_lock:
+            # An obsolete job must never kill a newer job sharing the session.
+            if owner is not None and self.owner not in (None, owner):
+                return
+            process, drain = self.process, self.drain
+            if process and process.returncode is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(process.wait(), 2)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+            if drain:
+                await drain
+            self.process = self.drain = None
+            shutil.rmtree(self.directory, ignore_errors=True)
+            try:
+                self.directory.parent.rmdir()
+            except OSError:
+                pass
+
+    async def render(self, request, event):
+        async with self.lock:
+            self.owner = request["job_id"]
+            try:
+                async with self.close_lock:
+                    if not self.process or self.process.returncode is not None:
+                        await self.start()
+                    process = self.process
+                self.used = time.monotonic()
+                self.log = ""
+                process.stdin.write((json.dumps(request) + "\n").encode())
+                await process.stdin.drain()
+                while line := await process.stdout.readline():
+                    message = json.loads(line)
+                    if message["type"] == "error":
+                        raise ValueError(message["error"])
+                    if message["type"] == "result":
+                        self.used = time.monotonic()
+                        return message, self.log
+                    event(message)
+                raise ValueError("Preview worker exited before completing its output")
+            finally:
+                self.owner = None
+
+
 class Studio:
     def __init__(self, workspace, build_root, builds):
         self.workspace = workspace
@@ -95,6 +179,34 @@ class Studio:
         self.tasks: dict[str, asyncio.Task] = {}
         self.processes: dict[str, asyncio.subprocess.Process] = {}
         self.slots = asyncio.Semaphore(2)
+        self.sessions: dict[str, PreviewSession] = {}
+        self.session_lock = asyncio.Lock()
+        self.job_sessions: dict[str, PreviewSession] = {}
+
+    async def preview_session(self, client):
+        async with self.session_lock:
+            session = self.sessions.get(client)
+            if session:
+                return session
+            if len(self.sessions) >= 2:
+                idle = [
+                    (key, value) for key, value in self.sessions.items() if not value.lock.locked()
+                ]
+                if not idle:
+                    return None
+                key, old = min(idle, key=lambda item: item[1].used)
+                self.sessions.pop(key)
+                await old.close()
+            session = PreviewSession(self.root / ".sessions" / secrets.token_urlsafe(24))
+            self.sessions[client] = session
+            return session
+
+    async def prune_sessions(self):
+        async with self.session_lock:
+            for key, session in list(self.sessions.items()):
+                if not session.lock.locked() and session.used < time.monotonic() - 1800:
+                    self.sessions.pop(key)
+                    await session.close()
 
     async def cancel(self, job_id):
         job = self.jobs.get(job_id)
@@ -102,6 +214,9 @@ class Studio:
             return
         if job["state"] in {"queued", "running"}:
             job["state"] = "cancelled"
+            session = self.job_sessions.get(job_id)
+            if session:
+                await session.close(job_id)
             process = self.processes.get(job_id)
             if process and process.returncode is None:
                 try:
@@ -114,6 +229,10 @@ class Studio:
                     if process.returncode is None:
                         process.kill()
                     await process.wait()
+            task = self.tasks.get(job_id)
+            if task and task is not asyncio.current_task():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             # Let the runner reap its process and clean its directory.
 
     async def close(self):
@@ -121,9 +240,42 @@ class Studio:
             await self.cancel(job_id)
         if self.tasks:
             await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+        for session in self.sessions.values():
+            await session.close()
+        self.sessions.clear()
+
+    def page_event(self, job_id, directory, event):
+        job = self.jobs[job_id]
+        if job["state"] == "cancelled":
+            return
+        if event["type"] == "reset":
+            job["preview_pages"] = []
+            job["preview_reset"] = True
+        elif event["type"] == "page":
+            partial = Path(event["path"]).resolve()
+            if not partial.is_relative_to(directory / "output") or not partial.is_file():
+                raise ValueError("Invalid progressive preview artifact")
+            if partial.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError("Preview page exceeds 128 MiB")
+            identifier = secrets.token_urlsafe(24)
+            self.builds[identifier] = {
+                "path": str(partial),
+                "filename": partial.name,
+                "format": "pdf",
+                "expires_at": time.time() + 1800,
+            }
+            job.setdefault("preview_pages", []).append(
+                {
+                    "page": event["page"],
+                    "url": f"/api/artifacts/{identifier}",
+                    "revision": job["revision"],
+                    "provisional": True,
+                }
+            )
 
     async def run(self, job_id, req, directory, snapshot_workspace):
         job = self.jobs[job_id]
+        session = None
         try:
             async with self.slots:
                 if job["state"] == "cancelled":
@@ -131,6 +283,52 @@ class Studio:
                 job["state"] = "running"
                 output = directory / "output"
                 output.mkdir()
+                session = (
+                    await self.preview_session(req.client)
+                    if req.format == "pdf" and req.purpose == "preview"
+                    else None
+                )
+                if session:
+                    self.job_sessions[job_id] = session
+                    try:
+                        message, log = await asyncio.wait_for(
+                            session.render(
+                                {
+                                    "job_id": job_id,
+                                    "project": str(directory / "project"),
+                                    "document": str(
+                                        (snapshot_workspace / req.path).relative_to(
+                                            directory / "project"
+                                        )
+                                    ),
+                                    "output": str(output),
+                                    "visible_page": req.visible_page,
+                                },
+                                lambda event: self.page_event(job_id, directory, event),
+                            ),
+                            180,
+                        )
+                    except asyncio.TimeoutError:
+                        await session.close(job_id)
+                        raise ValueError(
+                            "Rendering exceeded 180 seconds; simplify the document and retry"
+                        ) from None
+                    except Exception:
+                        await session.close(job_id)
+                        raise
+                    job["render_stats"] = message["stats"]
+                    if message["code"]:
+                        raise ValueError(
+                            next(
+                                text
+                                for level, text in message["result"]["events"]
+                                if level == "error"
+                            )
+                        )
+                    if job["state"] == "cancelled":
+                        return
+                    self.complete(job_id, directory, output, req.format, log)
+                    return
                 process = await asyncio.create_subprocess_exec(
                     sys.executable,
                     "-m",
@@ -168,38 +366,50 @@ class Studio:
                     except (ValueError, KeyError, IndexError, StopIteration):
                         message = stderr.decode(errors="replace")[-2000:] or message
                     raise ValueError(message.replace(str(directory / "project"), "[project]"))
-                artifacts = list(output.rglob(f"*.{req.format}"))
-                if len(artifacts) != 1:
-                    raise ValueError("Renderer did not produce a single output artifact")
-                artifact = artifacts[0]
-                if artifact.stat().st_size > 128 * 1024 * 1024:
-                    raise ValueError("Output artifact exceeds 128 MiB")
-                self.builds[job_id] = {
-                    "path": str(artifact),
-                    "filename": artifact.name,
-                    "format": req.format,
-                    "expires_at": time.time() + 1800,
-                }
-                job.update(
-                    state="succeeded",
-                    artifact={
-                        "id": job_id,
-                        "url": f"/api/artifacts/{job_id}",
-                        "filename": artifact.name,
-                        "format": req.format,
-                    },
-                    finished=time.time(),
-                )
+                self.complete(job_id, directory, output, req.format, log)
         except Exception as exc:
             if job["state"] != "cancelled":
                 job.update(state="failed", error=str(exc), finished=time.time())
         finally:
             self.processes.pop(job_id, None)
+            self.job_sessions.pop(job_id, None)
             if job["state"] != "succeeded":
+                if session:
+                    await session.close(job_id)
                 shutil.rmtree(directory, ignore_errors=True)
             else:
                 # Output is immutable; discard potentially large source snapshots.
                 shutil.rmtree(directory / "project", ignore_errors=True)
+
+    def complete(self, job_id, directory, output, format_name, log):
+        job = self.jobs[job_id]
+        job["log"] = log.replace(str(directory / "project"), "[project]")
+        artifacts = [
+            p
+            for p in output.rglob(f"*.{format_name}")
+            if not p.name.startswith(".md-doc-preview-page-")
+        ]
+        if len(artifacts) != 1:
+            raise ValueError("Renderer did not produce a single output artifact")
+        artifact = artifacts[0]
+        if artifact.stat().st_size > 128 * 1024 * 1024:
+            raise ValueError("Output artifact exceeds 128 MiB")
+        self.builds[job_id] = {
+            "path": str(artifact),
+            "filename": artifact.name,
+            "format": format_name,
+            "expires_at": time.time() + 1800,
+        }
+        job.update(
+            state="succeeded",
+            artifact={
+                "id": job_id,
+                "url": f"/api/artifacts/{job_id}",
+                "filename": artifact.name,
+                "format": format_name,
+            },
+            finished=time.time(),
+        )
 
 
 def install_studio(app, workspace, build_root, builds, write_lock):
