@@ -705,6 +705,8 @@ class _DocxBuilder(HTMLParser):
         self._in_pre = False
         self._in_code = False
         self._in_blockquote = False
+        self._bq_colors: dict[str, str] = {}
+        self._bq_stack: list[Any] = []
         self._sup = False
         self._sub = False
         self._strike = False
@@ -1010,6 +1012,9 @@ class _DocxBuilder(HTMLParser):
         theme = self._theme
         bg = theme.get("pre_background_color" if kind == "pre" else "blockquote_background_color")
         border_color = theme.get("pre_border_color" if kind == "pre" else "blockquote_border_color")
+        if kind == "blockquote":
+            bg = self._bq_colors.get("background", bg)
+            border_color = self._bq_colors.get("border-left-color", border_color)
         border_pt = float(theme.get(f"{kind}_border_pt", 3.0))
         pad_left = float(theme.get(f"{kind}_padding_left", 10.0))
         pad_top = float(theme.get(f"{kind}_padding_top", 0.0))
@@ -1068,6 +1073,16 @@ class _DocxBuilder(HTMLParser):
                 pBdr.remove(edge)
                 pBdr.append(edge)
             _insert_ppr_in_order(pPr, pBdr, ["shd", *_PPR_AFTER_SHD])
+
+    def _style_callout_paragraph(self, para: Any, list_depth: int = 0) -> None:
+        """Apply the box once, retaining indentation for lists and continuations."""
+        if any(existing is para for existing in self._bq_paras):
+            return
+        self._apply_box_model(para, "blockquote")
+        if list_depth:
+            inset = para.paragraph_format.left_indent or Pt(0)
+            para.paragraph_format.left_indent = inset + Pt(18 * list_depth)
+        self._bq_paras.append(para)
 
     def _finish_blockquote(self) -> None:
         """Restore the blockquote's outer margins on its first and last paragraph."""
@@ -1403,7 +1418,7 @@ class _DocxBuilder(HTMLParser):
                 # Loose list (<li><p>…</p></li>): keep the bullet/number
                 # paragraph the <li> just created.
                 self._li_fresh = False
-            elif self._li_depth and not self._in_blockquote:
+            elif self._li_depth:
                 # Later paragraphs of the same list item — indented
                 # continuation text under the bullet.
                 self._new_para("Normal")
@@ -1416,8 +1431,9 @@ class _DocxBuilder(HTMLParser):
             if word_align is not None and self._paragraph is not None:
                 self._paragraph.alignment = word_align
             if self._in_blockquote and self._paragraph is not None:
-                self._apply_box_model(self._paragraph, "blockquote")
-                self._bq_paras.append(self._paragraph)
+                self._style_callout_paragraph(
+                    self._paragraph, max(len(self._list_stack), 1) if self._li_depth else 0
+                )
 
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
@@ -1491,6 +1507,8 @@ class _DocxBuilder(HTMLParser):
             depth = max(len(self._list_stack), 1)
             if depth > 1 and self._paragraph is not None:
                 self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
+            if self._in_blockquote and self._paragraph is not None:
+                self._style_callout_paragraph(self._paragraph, depth)
             # Footnote definitions carry id="fn:N" — bookmark them so the
             # in-text reference links can jump here.
             li_id = dict(attrs).get("id")
@@ -1517,8 +1535,20 @@ class _DocxBuilder(HTMLParser):
                 self._in_code = True
 
         elif tag == "blockquote":
+            self._bq_stack.append(
+                (self._in_blockquote, self._bq_colors, self._bq_paras, self._italic)
+            )
             self._in_blockquote = True
             self._bq_paras = []
+            self._bq_colors = {}
+            for declaration in (dict(attrs).get("style") or "").split(";"):
+                key, sep, value = declaration.partition(":")
+                key, value = key.strip().lower(), value.strip()
+                if sep and key in ("background", "background-color", "border-left-color"):
+                    if re.fullmatch(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?", value):
+                        if len(value) == 4:
+                            value = "#" + "".join(c * 2 for c in value[1:])
+                        self._bq_colors["background" if key == "background-color" else key] = value
             # Blockquote content is italic by default (CSS font-style: italic)
             self._italic = True
 
@@ -1674,10 +1704,11 @@ class _DocxBuilder(HTMLParser):
                 self._in_code = False
 
         elif tag == "blockquote":
-            self._in_blockquote = False
-            self._italic = False
             self._paragraph = None
             self._finish_blockquote()
+            self._in_blockquote, self._bq_colors, self._bq_paras, self._italic = (
+                self._bq_stack.pop()
+            )
 
         elif tag == "div":
             if self._alignment_stack:

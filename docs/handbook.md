@@ -489,6 +489,41 @@ Use **bold**, *italic*, and `inline code`. Visit the [authoring guide](#authorin
 
 > A quote or callout keeps supporting information separate from the body.
 
+### Callout boxes
+
+Use a blockquote for a callout. Keep a quoted blank line before a list and
+prefix every line with `>`:
+
+```markdown
+> **Remember**
+>
+> - First item
+> - Second item
+```
+
+To change one box's background and left border in PDF, DOCX or DOTX, use
+`<blockquote markdown="1">` with inline colours. Word supports three- or
+six-digit hex colours for `background` / `background-color` and
+`border-left-color`:
+
+```markdown
+<blockquote markdown="1" style="background-color: #fff3cd; border-left-color: #d99a00">
+
+**Remember**
+
+- First item
+- Second item
+
+</blockquote>
+```
+
+Separate adjacent callouts with an ordinary paragraph: the Markdown parser
+can merge consecutive blockquotes into one box.
+
+The colours apply only to that box. To change the default for all callouts,
+set `blockquote { background: #fff3cd; border-left: 3pt solid #d99a00; }`
+in your shared `_theme.css` (or the format-specific theme).
+
 ### Definition lists and footnotes
 
 ```markdown

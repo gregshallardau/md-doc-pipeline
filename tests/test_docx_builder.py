@@ -19,6 +19,21 @@ def _build_docx(tmp_repo: Path, body: str, config: dict, fmt: str = "docx") -> D
     md = f"---\ntitle: Test\noutputs: [{fmt}]\n---\n\n{body}"
     out = tmp_repo / f"out.{fmt}"
     build(md, {"title": "Test", "cover_page": False, **config}, out, output_format=fmt)
+    if fmt == "dotx":
+        from io import BytesIO
+        import zipfile
+
+        buffer = BytesIO()
+        with zipfile.ZipFile(out) as source, zipfile.ZipFile(buffer, "w") as target:
+            for entry in source.infolist():
+                data = source.read(entry.filename)
+                if entry.filename == "[Content_Types].xml":
+                    data = data.replace(
+                        b"wordprocessingml.template.main+xml", b"wordprocessingml.document.main+xml"
+                    )
+                target.writestr(entry, data)
+        buffer.seek(0)
+        return Document(buffer)
     return Document(str(out))
 
 
@@ -196,3 +211,60 @@ class TestMergeFieldsInTableCells:
         )
         xml = self._dotx_xml(out)
         assert "MERGEFIELD" in xml
+
+
+@pytest.mark.parametrize("marker", ["-", "1."])
+def test_callout_lists_keep_box_and_indentation(marker):
+    from md_doc.builders.docx import _DocxBuilder
+
+    builder = _DocxBuilder(
+        Document(),
+        theme={"blockquote_background_color": "#eeeeee", "blockquote_border_color": "#123456"},
+    )
+    # Tight, loose, nested and continuation paragraphs must all stay in the box.
+    builder.feed(
+        f'<blockquote><p>Intro</p><{"ul" if marker == "-" else "ol"}>'
+        "<li>First</li><li><p>Second</p><p>Continuation</p>"
+        "<ul><li>Nested</li></ul></li>"
+        f'</{"ul" if marker == "-" else "ol"}></blockquote><p>Outside</p>'
+    )
+    paragraphs = {p.text: p for p in builder.doc.paragraphs}
+    for text in ("Intro", "First", "Second", "Continuation", "Nested"):
+        p = paragraphs[text]
+        assert p._p.find(".//" + qn("w:shd")).get(qn("w:fill")) == "EEEEEE"
+        assert len(p._p.findall(".//" + qn("w:pBdr"))) == 1
+    assert paragraphs["First"].style.name == ("List Bullet" if marker == "-" else "List Number")
+    assert (
+        paragraphs["Second"].paragraph_format.left_indent
+        == paragraphs["Continuation"].paragraph_format.left_indent
+    )
+    assert (
+        paragraphs["Nested"].paragraph_format.left_indent
+        > paragraphs["First"].paragraph_format.left_indent
+    )
+    assert paragraphs["Outside"]._p.find(".//" + qn("w:shd")) is None
+
+
+@pytest.mark.parametrize("fmt", ["docx", "dotx"])
+def test_callout_color_override_is_local(tmp_repo, fmt):
+    doc = _build_docx(
+        tmp_repo,
+        """<blockquote markdown="1" style="background-color: #fef3c7; border-left-color: #d90">
+
+- Coloured item
+
+</blockquote>
+
+Outside
+
+> Default quote
+""",
+        {},
+        fmt,
+    )
+    item = next(p for p in doc.paragraphs if p.text == "Coloured item")
+    assert item._p.find(".//" + qn("w:shd")).get(qn("w:fill")) == "FEF3C7"
+    assert item._p.find(".//" + qn("w:left")).get(qn("w:color")) == "DD9900"
+    default = next(p for p in doc.paragraphs if p.text == "Default quote")
+    shading = default._p.find(".//" + qn("w:shd"))
+    assert shading is None or shading.get(qn("w:fill")) != "FEF3C7"
