@@ -1764,6 +1764,11 @@ and footers, and a spacer between adjacent tables. Exact line-for-line paginatio
 guaranteed because WeasyPrint and Word lay text out differently. The
 [Word and PDF parity](#word-and-pdf) page lists the known differences.
 
+In PDF output, H2–H4 headings followed by a table (including a short introductory
+paragraph before it) stay with the start of the table. The table can continue
+across pages, with header rows repeated and individual rows kept together,
+instead of moving the entire heading and table onto a fresh page.
+
 <a id="themes-forms"></a>
 
 ### Forms

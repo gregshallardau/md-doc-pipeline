@@ -556,7 +556,7 @@ def _balanced_html(fragment: str) -> bool:
     )
 
 
-def _keep_heading_with_next(html_body: str) -> str:
+def _keep_heading_with_next(html_body: str, *, split_tables: bool = False) -> str:
     """Wrap each heading + up to two following block elements in a keep-together div.
 
     WeasyPrint can ignore CSS break-after:avoid on headings when the next
@@ -567,6 +567,8 @@ def _keep_heading_with_next(html_body: str) -> str:
     Everything between the heading and the last grouped block stays inside the
     container in document order. A horizontal rule ends a section, so grouping
     stops there rather than binding a heading to the next section's content.
+    With ``split_tables``, table groups use a PDF-specific wrapper that keeps
+    the heading with the table's start while allowing breaks between rows.
     """
     heading_re = re.compile(r"(<h[2-4][^>]*>.*?</h[2-4]>)", re.DOTALL)
     parts = heading_re.split(html_body)
@@ -601,7 +603,10 @@ def _keep_heading_with_next(html_body: str) -> str:
                 grouped = grouped[:cut]
             if grouped:
                 end = grouped[-1].end()
-                result.append(f'<div class="keep-with-next">{heading}{tail[:end]}</div>')
+                wrapper_class = "keep-with-next"
+                if split_tables and any(m.group(0).startswith("<table") for m in grouped):
+                    wrapper_class = "heading-with-table"
+                result.append(f'<div class="{wrapper_class}">{heading}{tail[:end]}</div>')
                 result.append(tail[end:])
             else:
                 result.append(heading)
@@ -915,6 +920,11 @@ _BASE_FIXES_CSS = (
     # across pages. Say it on the lists themselves.
     ".report-body .keep-with-next > ul, .report-body .keep-with-next > ol, "
     ".report-body .keep-with-next > dl { break-inside: avoid; page-break-inside: avoid; }\n"
+    # Keep the heading and intro attached to the table's start, without moving
+    # the whole table to a fresh page. Existing themes often keep tables whole.
+    ".report-body .heading-with-table, .report-body .heading-with-table > table { break-inside: auto; page-break-inside: auto; }\n"
+    ".report-body .heading-with-table > :is(h2, h3, h4, p) { break-after: avoid; page-break-after: avoid; }\n"
+    ".report-body .heading-with-table > table tr { break-inside: avoid; page-break-inside: avoid; }\n"
     ".report-body .md-doc-page-break + h1, .report-body .md-doc-page-break + .keep-with-next h1 { page-break-before: auto; break-before: auto; }\n"
     "</style>"
 )
@@ -1876,7 +1886,7 @@ def build(
             except Exception:
                 theme_body_justify = False
 
-    html_body = _keep_heading_with_next(_group_label_with_textarea(html_body))
+    html_body = _keep_heading_with_next(_group_label_with_textarea(html_body), split_tables=True)
     html_body, section_css = pdf_sections(html_body, page_size_mm)
     html = _build_html(
         title,

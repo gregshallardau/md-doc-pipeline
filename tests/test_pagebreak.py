@@ -8,6 +8,40 @@ import pytest
 
 from md_doc.builders.pdf import _inject_page_breaks
 
+
+@pytest.mark.parametrize("intro", ["", "<p>Introduction</p>"])
+def test_pdf_heading_starts_long_table_on_remaining_page(intro):
+    from weasyprint import HTML
+
+    from md_doc.builders.pdf import _BASE_FIXES_CSS, _keep_heading_with_next
+
+    table = "<table><thead><tr><th>Header</th></tr></thead><tbody>"
+    table += "".join(f"<tr><td>Row {i}</td></tr>" for i in range(9))
+    table += "</tbody></table>"
+    body = _keep_heading_with_next(f"<h2>Heading</h2>{intro}{table}", split_tables=True)
+    document = HTML(
+        string=(
+            "<style>@page { size: 100mm 120mm; margin: 10mm; }"
+            "body { margin: 0; font-size: 10pt; }"
+            "h2, p { margin: 0; }"
+            "table { page-break-inside: avoid; border-collapse: collapse; }"
+            "td, th { height: 10mm; padding: 0; }"
+            ".filler { height: 35mm; }"
+            ".keep-with-next { break-inside: avoid; }</style>"
+            + _BASE_FIXES_CSS
+            + f'<div class="report-body"><div class="filler">Before</div>{body}</div>'
+        )
+    ).render()
+    pages = [
+        " ".join(box.text for box in page._page_box.descendants() if hasattr(box, "text"))
+        for page in document.pages
+    ]
+    assert len(pages) == 2
+    assert "Heading" in pages[0] and "Row 0" in pages[0]
+    assert "Row 8" in pages[1]
+    assert "Header" in pages[1]
+
+
 # ── PDF: markdown preprocessor ────────────────────────────────────────────────
 
 
