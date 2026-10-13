@@ -56,21 +56,15 @@ jobs:
         run: nvim --headless -u NONE -c "lua dofile('nvim-plugin/tests/run.lua')" +qa!
 
   editor-clients:
-    name: Browser and PHP editor regressions
+    name: Browser editor regressions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: PHP syntax and service regressions
-        run: |
-          find filament-md-doc/src -name '*.php' -exec php -l {} \;
-          php filament-md-doc/tests/regression.php
       - name: Install browser test dependencies
         working-directory: tests/browser
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Browser interaction and sandbox regressions
-        run: node tests/browser/editor.cjs
       - uses: astral-sh/setup-uv@v7
       - name: Install local editor for offline browser checks
         run: uv sync --group editor

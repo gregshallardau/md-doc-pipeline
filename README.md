@@ -19,7 +19,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **Fillable PDF forms** — `pdf_forms: true` with a `?[text: name]` shorthand, bordered `?[box]` grids, signatures and Yes/No pairs; the same source gives real Word form fields in `.dotx` ([forms guide](docs/handbook.md#forms))
 - **Diagrams and maths** — Mermaid flowcharts, charts, Gantt, sequence, mind map, ER and state diagrams, plus LaTeX equations, in PDF and Word ([Markdown reference](docs/handbook.md#markdown))
 - **Export and extract** — `md-doc export` builds only the notes marked `export: true` ([export guide](docs/handbook.md#exporting)); `md-doc extract` turns a PDF or DOCX back into Markdown ([extraction guide](docs/handbook.md#extracting))
-- **Editors** — a browser editor with live preview ([md-doc-web-editor](md-doc-web-editor/README.md), [Filament plugin](filament-md-doc/README.md)) and a [Neovim plugin](nvim-plugin/README.md) that resolves includes and variables inline
+- **Editors** — a browser editor with live preview ([md-doc-web-editor](md-doc-web-editor/README.md), [Filament plugin](https://github.com/gregshallardau/filament-md-doc)) and a [Neovim plugin](nvim-plugin/README.md) that resolves includes and variables inline
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
 - **Pluggable sync** — push outputs to Azure File Share, AWS S3, or a local path

@@ -74,7 +74,6 @@ def test_relative_links_in_docs_resolve() -> None:
 
 _TOKENIZERS = [
     ROOT / "md-doc-web-editor" / "md_doc_web_editor" / "static" / "tokenizers.js",
-    ROOT / "filament-md-doc" / "resources" / "js" / "tokenizers.js",
 ]
 
 
