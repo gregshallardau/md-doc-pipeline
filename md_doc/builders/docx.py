@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.enum.section import WD_ORIENT, WD_SECTION_START
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
@@ -58,7 +59,7 @@ from ..docx_theme import (
     set_cell_shading,
     set_para_shading,
 )
-from .pdf import _inject_appendix_breaks, _inject_page_breaks, _keep_heading_with_next
+from .pdf import _inject_page_breaks, _keep_heading_with_next
 from ._assets import (
     _DEFAULT_GEOMETRY,
     _drop_empty_table_headers,
@@ -682,6 +683,7 @@ class _DocxBuilder(HTMLParser):
         super().__init__()
         self.convert_charrefs = True
         self.doc = doc
+        self._default_page_size = (doc.sections[-1].page_width, doc.sections[-1].page_height)
         self._theme: dict[str, Any] = theme or {}
         self._field_type = field_type  # None | "form" | "merge"
         self._body_text_align = body_text_align  # default alignment for Normal paragraphs
@@ -1438,10 +1440,20 @@ class _DocxBuilder(HTMLParser):
         elif tag == "div":
             self._alignment_stack.append(self._parse_text_align(attrs))
             classes = (dict(attrs).get("class") or "").split()
-            # Both the explicit <!-- pagebreak --> marker and the APPENDIX
-            # auto-break marker (shared with the PDF builder) emit a real Word
-            # page break so the two formats break at the same points.
-            if "md-doc-page-break" in classes or "appendix-template-break" in classes:
+            if "md-doc-section-break" in classes:
+                self._page_break_pending = False
+                section = self.doc.add_section(WD_SECTION_START.NEW_PAGE)
+                width, height = self._default_page_size
+                orientation = dict(attrs).get("data-orientation", "default")
+                if orientation == "landscape":
+                    width, height = max(width, height), min(width, height)
+                elif orientation == "portrait":
+                    width, height = min(width, height), max(width, height)
+                section.page_width, section.page_height = width, height
+                section.orientation = WD_ORIENT.LANDSCAPE if width > height else WD_ORIENT.PORTRAIT
+                section.different_first_page_header_footer = False
+                self._paragraph = None
+            if "md-doc-page-break" in classes:
                 # Defer: a break on the *next* paragraph keeps that paragraph's
                 # top margin, which an empty break paragraph would swallow.
                 self._flush_pending_break()
@@ -1770,7 +1782,7 @@ class _DocxBuilder(HTMLParser):
             self._flush_table()
 
     def _text_width_emu(self) -> int:
-        section = self.doc.sections[0]
+        section = self.doc.sections[-1]
         return int(section.page_width - section.left_margin - section.right_margin)
 
     def _insert_math(self, paragraph: Any, src: str) -> None:
@@ -2052,7 +2064,7 @@ class _DocxBuilder(HTMLParser):
             tblPr = OxmlElement("w:tblPr")
             tbl.insert(0, tblPr)
 
-        section = self.doc.sections[0]
+        section = self.doc.sections[-1]
         text_width_emu = section.page_width - section.left_margin - section.right_margin
         text_width_twips = round(text_width_emu / 914400 * 1440)
 
@@ -4395,10 +4407,10 @@ def build(
         # the body as a Heading 1 — exactly what the PDF does.
         body = _strip_leading_h1(body)
 
-    # Inject the same page breaks the PDF builder uses so both formats break at
-    # identical points: APPENDIX section H2s and explicit <!-- pagebreak -->.
-    body = _inject_appendix_breaks(body)
-    body = _inject_page_breaks(body)
+    # Explicit page breaks are shared with the PDF builder.
+    from ..pagination import inject_section_breaks
+
+    body = inject_section_breaks(_inject_page_breaks(body))
     body = collapse_select_markup(body)
     if output_format == "dotx":
         # Same source, fillable Word template: ?[...] → Word form fields.

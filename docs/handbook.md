@@ -653,12 +653,44 @@ in config are resolved through the document, ancestors, repo-root cascade instea
 
 ### Page breaks and sections
 
+Use section breaks to change page orientation in PDF, DOCX and DOTX. Each marker
+starts a new page, and the orientation applies to all subsequent pages until
+another section break. Paper dimensions come from the theme; margins stay the same.
+
+```markdown
+Normal portrait content.
+
+<!-- sectionbreak: landscape -->
+
+## Wide table section
+
+| Name | Details | Notes |
+| --- | --- | --- |
+| Example | Details here | Notes here |
+
+<!-- pagebreak -->
+
+This page is still landscape.
+
+<!-- sectionbreak: portrait -->
+
+This section is portrait again.
+```
+
+`<!-- sectionbreak -->` without an orientation starts a new section using the
+theme's original orientation. `<!-- pagebreak -->` keeps the current orientation.
+Place section markers on their own lines between top-level blocks, outside lists,
+tables and callouts. Markers inside code examples stay literal. These are flowing
+document directives; PPTX uses its own slide boundaries instead.
+
+
 - `<!-- pagebreak -->` on its own line starts a new page in PDF and Word. The PDF builder enforces this even with a custom theme that has no page-break styling.
 - Page-break markers and form shorthand in fenced code blocks or inline code are
   literal examples; they do not insert breaks or fields into the document.
-- With a theme that sets `h1 { page-break-before: always }` every H1 starts a page (never the
-  first one).
-- Every `##` subsection inside a `# APPENDIX` section starts a new page.
+- Headings and APPENDIX subsections do not insert page breaks by default. Use
+  `<!-- pagebreak -->` wherever you want a new page. Older custom themes may still
+  contain `.report-body h1 { page-break-before: always; break-before: page; }`;
+  remove that rule to stop their automatic heading breaks.
 - Headings are kept with the content that follows; tables, code blocks and quotes avoid
   splitting.
 
@@ -1726,8 +1758,8 @@ td { padding: 5pt 9pt; }
 
 #### PDF to Word parity
 
-Both builders insert the same page breaks (`<!-- pagebreak -->`, APPENDIX sections and the
-theme's `h1 { page-break-before: always }`), the same cover geometry, header bars, section bars
+Both builders insert the same page breaks (`<!-- pagebreak -->` and any explicitly configured
+page-break rules in a custom theme), the same cover geometry, header bars, section bars
 and footers, and a spacer between adjacent tables. Exact line-for-line pagination is not
 guaranteed because WeasyPrint and Word lay text out differently. The
 [Word and PDF parity](#word-and-pdf) page lists the known differences.
@@ -1782,7 +1814,7 @@ known to differ.
 ### What is kept in step
 
 - **Page geometry and breaks.** Paper size and margins come from the theme's `@page` rule;
-  explicit `<!-- pagebreak -->`, APPENDIX sections and the theme's H1 page break are applied
+  explicit `<!-- pagebreak -->` and custom theme page-break rules are applied
   identically; headings stay with the content that follows.
 - **Covers, header bars, section bars and footers**, including logos, cover bands, running date
   and live `Page N of M` fields. Form documents hide the running date in both formats.

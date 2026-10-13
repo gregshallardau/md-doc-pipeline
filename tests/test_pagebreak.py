@@ -163,3 +163,130 @@ class TestDocxPagebreak:
         doc = Document(str(out))
         xml = "\n".join(p._p.xml for p in doc.paragraphs)
         assert 'w:type="page"' not in xml
+
+
+def test_section_markers_preserve_code_examples():
+    from md_doc.pagination import inject_section_breaks
+
+    example = "```markdown\n<!-- sectionbreak: landscape -->\n```"
+    result = inject_section_breaks(example + "\n\n<!-- SECTIONBREAK: LANDSCAPE -->")
+    assert example in result
+    assert result.count('data-orientation="landscape"') == 1
+    assert 'data-orientation="default"' in inject_section_breaks("<!-- sectionbreak -->")
+
+
+@pytest.mark.parametrize("fmt", ["docx", "dotx"])
+@pytest.mark.parametrize("cover", [False, True])
+def test_word_sections_switch_orientation_and_table_width(tmp_path, fmt, cover):
+    import zipfile
+    from xml.etree import ElementTree as ET
+    from docx.oxml.ns import qn
+    from md_doc.builders.docx import build
+
+    (tmp_path / ".git").mkdir()
+    source = tmp_path / "doc.md"
+    source.write_text("Placeholder")
+    out = tmp_path / f"out.{fmt}"
+    build(
+        """# First
+
+Portrait content
+
+<!-- sectionbreak: landscape -->
+
+## Wide section
+
+| A | B |
+|---|---|
+| Wide | Table |
+
+<!-- pagebreak -->
+
+Still landscape
+
+<!-- sectionbreak -->
+
+Back to default
+""",
+        {"cover_page": cover},
+        out,
+        doc_path=source,
+        repo_root=tmp_path,
+        output_format=fmt,
+    )
+    with zipfile.ZipFile(out) as archive:
+        root = ET.fromstring(archive.read("word/document.xml"))
+    sections = root.findall(".//" + qn("w:sectPr"))
+    assert len(sections) == 3
+    assert (sections[0].find(qn("w:titlePg")) is not None) == cover
+    for section in sections[1:]:
+        title_page = section.find(qn("w:titlePg"))
+        assert title_page is None or title_page.get(qn("w:val")) == "0"
+    sizes = [s.find(qn("w:pgSz")) for s in sections]
+    assert int(sizes[0].get(qn("w:w"))) < int(sizes[0].get(qn("w:h")))
+    assert int(sizes[1].get(qn("w:w"))) > int(sizes[1].get(qn("w:h")))
+    assert sizes[2].get(qn("w:w")) == sizes[0].get(qn("w:w"))
+    assert sizes[2].get(qn("w:h")) == sizes[0].get(qn("w:h"))
+    margins = sections[1].find(qn("w:pgMar"))
+    available = (
+        int(sizes[1].get(qn("w:w")))
+        - int(margins.get(qn("w:left")))
+        - int(margins.get(qn("w:right")))
+    )
+    table = root.findall(".//" + qn("w:tbl"))[-1]
+    widths = table.findall(".//" + qn("w:gridCol"))
+    assert abs(sum(int(c.get(qn("w:w"))) for c in widths) - available) <= 2
+
+
+def test_pdf_sections_and_default_headings(tmp_path, monkeypatch):
+    import weasyprint
+    from md_doc.builders.pdf import build
+
+    (tmp_path / ".git").mkdir()
+    rendered = []
+
+    def write_pdf(html, target, **kwargs):
+        document = html.render()
+        rendered.append(document)
+        return document.write_pdf(target, **kwargs)
+
+    monkeypatch.setattr(weasyprint.HTML, "write_pdf", write_pdf)
+    build(
+        """# First
+
+Intro
+
+# Second
+
+Body
+
+# APPENDIX
+
+## Subsection
+
+Appendix content
+
+<!-- sectionbreak: landscape -->
+
+## Wide section
+
+Wide content
+
+<!-- pagebreak -->
+
+Still wide
+
+<!-- sectionbreak: portrait -->
+
+Portrait again
+""",
+        {"cover_page": False},
+        tmp_path / "out.pdf",
+        repo_root=tmp_path,
+    )
+    pages = rendered[0].pages
+    assert len(pages) == 4
+    assert pages[0].width < pages[0].height
+    assert pages[1].width > pages[1].height
+    assert pages[2].width > pages[2].height
+    assert pages[3].width < pages[3].height

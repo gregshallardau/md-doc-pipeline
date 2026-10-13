@@ -145,26 +145,6 @@ def _strip_leading_h1(md_content: str) -> str:
     return re.sub(r"^#\s+.+\n?", "", md_content, count=1, flags=re.MULTILINE)
 
 
-def _inject_appendix_breaks(md_content: str) -> str:
-    """Insert page-break markers before each H2 inside an APPENDIX section."""
-    lines = md_content.split("\n")
-    result: list[str] = []
-    in_appendix = False
-
-    for line in lines:
-        if re.match(r"^#\s+APPENDIX\b", line, re.IGNORECASE):
-            in_appendix = True
-        elif re.match(r"^#\s+", line):
-            in_appendix = False
-
-        if in_appendix and re.match(r"^##\s+", line):
-            result.extend(["", '<div class="appendix-template-break"></div>', ""])
-
-        result.append(line)
-
-    return "\n".join(result)
-
-
 _PAGEBREAK_COMMENT_RE = re.compile(r"<!--\s*pagebreak\s*-->", re.IGNORECASE)
 
 
@@ -539,7 +519,7 @@ _BLOCK_RE = re.compile(rf"(<{_BLOCK_TAG}[^>]*>.*?</{_BLOCK_TAG}>)", re.DOTALL)
 # container: a forced break inside break-inside:avoid makes WeasyPrint push
 # the whole container to a fresh page (stranding the heading alone) and can
 # emit an entirely blank page.
-_BREAK_DIV_MARKERS = ("md-doc-page-break", "appendix-template-break")
+_BREAK_DIV_MARKERS = ("md-doc-page-break", "md-doc-section-break")
 
 
 _LABEL_TEXTAREA_RE = re.compile(
@@ -1832,8 +1812,9 @@ def build(
 
     if cover_page:
         body = _strip_leading_h1(body)
-    body = _inject_appendix_breaks(body)
-    body = _inject_page_breaks(body)
+    from ..pagination import inject_section_breaks, pdf_sections
+
+    body = inject_section_breaks(_inject_page_breaks(body))
 
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(collapse_select_markup(body), is_form)
@@ -1896,6 +1877,7 @@ def build(
                 theme_body_justify = False
 
     html_body = _keep_heading_with_next(_group_label_with_textarea(html_body))
+    html_body, section_css = pdf_sections(html_body, page_size_mm)
     html = _build_html(
         title,
         date_str,
@@ -1925,6 +1907,9 @@ def build(
         page_size_mm=page_size_mm,
         theme_body_justify=theme_body_justify,
     )
+
+    if section_css:
+        html = html.replace("</head>", f"<style>{section_css}</style></head>")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wp_kwargs: dict[str, Any] = {}

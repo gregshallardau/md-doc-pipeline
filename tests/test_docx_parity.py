@@ -127,17 +127,12 @@ def _has_page_break(xml: str) -> bool:
     return 'w:type="page"' in xml or "<w:pageBreakBefore" in xml
 
 
-def test_appendix_h2_forces_page_break(tmp_repo):
-    # APPENDIX section H2s break the page in both PDF and docx (shared markers).
-    # The leading "# Doc" title H1 is what _strip_leading_h1 removes, leaving the
-    # in-body "# APPENDIX" heading for the appendix-break pass to find.
-    with_appendix = _part(
-        _build(tmp_repo, "# Doc\n\n## Intro\n\ntext\n\n# APPENDIX\n\n## A1\n\none\n", {}),
+def test_headings_and_appendix_do_not_force_page_breaks(tmp_repo):
+    xml = _part(
+        _build(tmp_repo, "# Doc\n\ntext\n\n# Second\n\nbody\n\n# APPENDIX\n\n## A1\n\none\n", {}),
         "word/document.xml",
     )
-    assert _has_page_break(with_appendix)
-    without = _part(_build(tmp_repo, "# Doc\n\n## Intro\n\ntext\n", {}), "word/document.xml")
-    assert not _has_page_break(without)
+    assert not _has_page_break(xml)
 
 
 def test_explicit_pagebreak_marker(tmp_repo):
