@@ -171,3 +171,53 @@ python md-doc-web-editor/tests/smoke_installed.py
 
 Run the smoke check with the installed environment's Python. The built wheel includes Monaco, marked, PDF.js, fonts, CMaps, WebAssembly decoders, icons, and vendor licenses; no frontend build or runtime Node installation is needed.
 {% endraw %}
+
+### Save recovery and concurrent editors
+
+See the [saving and recovery review](SAVE_SAFETY_REVIEW.md) for findings, fixes
+and remaining limitations.
+
+Existing files require the revision returned by `GET /api/file` on every
+`PUT /api/file`. A missing, null or stale revision returns **409** and leaves the
+file unchanged. New files can be created with a null revision only while the
+path is absent. File API responses bypass browser caches. Save completion marks
+only the submitted text as saved; text typed during a save stays unsaved, and
+Save & close keeps that tab open. External-file responses that began before a
+save completed are ignored and retried. Review dialogs refuse to replace a draft
+that changed after the comparison opened.
+
+Before each accepted save, the editor preserves both the current disk content
+and the submitted content under `.editor-history/<filename>/<sha256>.txt` in the
+source file's parent directory (including inherited template/theme directories).
+These are exact UTF-8 recovery copies, including original line endings, and
+survive server restarts and preview cleanup. If a recovery copy cannot be
+written, the source is not replaced. To recover, copy the chosen `.txt` content
+to a **new file**, compare it with the current document, then restore deliberately.
+History is hidden from the file tree, preview snapshots and editor Git status.
+External Git tools can still add it: add `**/.editor-history/` to your project's
+Git ignore rules. Copies are deduplicated by content and are not automatically
+pruned; their disk usage grows with saved versions. They are created by this
+version onward and cannot recover earlier losses. They only capture external
+edits present at an editor save, not every VS Code keystroke.
+
+The browser also keeps an independent last-draft recovery journal for each page
+session, in addition to automatic draft restoration. Saving, discarding,
+choosing the disk version, or another tab updating automatic drafts does not
+clear that journal. In browser developer tools, open **Application → Local
+Storage** (Firefox: **Storage → Local Storage**) for the editor's address and
+look for `md-doc-studio:<workspace-path>:recovery:<session-id>`. Each file entry
+contains `content`, its saved baseline, revision and update timestamp. Copy the
+value to a separate recovery file. These journals are for manual recovery and
+are not automatically replayed as drafts. Storage remains specific to browser
+profile and origin (including port); private browsing, clearing data and quota
+limits can remove or prevent recovery. Journals retain the latest unsaved text
+per file per page session, not a history of every keystroke. They are not
+pruned automatically; back them up before deleting old recovery entries.
+
+Concurrent VS Code writes cannot participate in the editor's server lock. A
+revision check detects changes already on disk, but a write made by another
+program during the small check-and-replace interval can still race. Recovery
+copies reduce the consequences; they do not provide a cross-application lock.
+Preview/export snapshots are temporary rendering inputs, not backups: jobs,
+expiry and shutdown can delete them. A displayed or downloaded output can still
+help reconstruct content when no source copy remains.

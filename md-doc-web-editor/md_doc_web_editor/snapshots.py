@@ -156,5 +156,24 @@ def atomic_write(path: Path, content: str) -> None:
         if path.exists():
             shutil.copymode(path, temporary)
         os.replace(temporary, path)
+        if os.name == "posix":
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def preserve_revision(path: Path, content: bytes) -> None:
+    """Keep content-addressed recovery copies beside the edited source directory.
+
+    Hidden history is excluded from builds, previews and Git actions. It is not
+    temporary build storage and is never removed by the editor's cleanup jobs.
+    """
+    folder = path.parent / ".editor-history" / path.name
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = folder / (revision(content) + ".txt")
+    if not target.exists():
+        atomic_write(target, content.decode("utf-8"))

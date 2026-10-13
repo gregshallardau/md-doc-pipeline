@@ -220,6 +220,7 @@ def test_revision_safe_save_and_origin_protection(project):
             == 403
         )
         token = client.get("/api/capabilities").json()["session"]
+        request["revision"] = result.json()["detail"]["revision"]
         assert (
             client.put(
                 "/api/file",

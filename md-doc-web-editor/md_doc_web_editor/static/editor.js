@@ -120,6 +120,11 @@
     openSequence: 0,
   };
   let monacoReady;
+  // Separate journals prevent another editor tab from erasing recovery text.
+  // Keep the last edited text even after Save, Discard or Use disk version.
+  const recoveryJournalName = "recovery:" +
+    (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const recoveryJournal = {};
   const current = () => state.buffers.get(state.active);
   const dirty = (buffer) => buffer.content !== buffer.saved;
   function key(name) {
@@ -166,6 +171,7 @@
   async function api(url, options = {}) {
     if (url !== "/api/workspaces") url = workspaceUrl(url);
     const response = await fetch(url, {
+      cache: "no-store",
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -283,13 +289,16 @@
     });
     const drafts = { ...state.recoveryDrafts };
     for (const [path, buffer] of state.buffers) {
-      if (dirty(buffer))
+      if (dirty(buffer)) {
         drafts[path] = {
           content: buffer.content,
           saved: buffer.saved,
           revision: buffer.revision,
         };
+        recoveryJournal[path] = { ...drafts[path], updatedAt: Date.now() };
+      }
     }
+    if (Object.keys(recoveryJournal).length) store(recoveryJournalName, recoveryJournal);
     store("drafts", drafts);
     updateSaveState();
   }
@@ -1113,6 +1122,10 @@
   }
   async function closeFile(path) {
     const buffer = state.buffers.get(path);
+    if (buffer.saving) {
+      toast("Wait for the save to finish before closing this file.", true);
+      return;
+    }
     if (dirty(buffer)) {
       const choice = await confirmDialog(
         "Close unsaved document?",
@@ -1124,7 +1137,7 @@
         ],
       );
       if (!choice || choice === "cancel") return;
-      if (choice === "save" && !(await save(path))) return;
+      if (choice === "save" && (!(await save(path)) || dirty(buffer))) return;
     }
     if (
       projection()?.segments.some((part) => part.path === path) ||
@@ -1170,6 +1183,7 @@
     path ??= state.active;
     const buffer = state.buffers.get(path);
     if (!buffer || buffer.saving) return false;
+    if (!dirty(buffer)) return true;
     const content = buffer.content;
     buffer.saving = true;
     updateSaveState();
@@ -1183,7 +1197,7 @@
       toast("Saved " + path.split("/").pop());
       persist();
       renderTree();
-      return true;
+      return !dirty(buffer);
     } catch (error) {
       if (error.status === 409) compareBuffer(buffer, error.detail);
       else toast(error.message, true);
@@ -1194,6 +1208,7 @@
     }
   }
   function compareBuffer(buffer, disk) {
+    const reviewedContent = buffer.content;
     const body = el("div");
     body.append(
       el(
@@ -1219,6 +1234,10 @@
         {
           label: "Use disk version",
           run: (d) => {
+            if (buffer.saving || buffer.content !== reviewedContent) {
+              toast("Your draft changed during review. Keep editing and compare again.", true);
+              return;
+            }
             buffer.saved = disk.content;
             buffer.revision = disk.revision;
             if (buffer.model) buffer.model.setValue(disk.content);
@@ -1238,6 +1257,10 @@
           label: "Save my draft",
           primary: true,
           run: async (d) => {
+            if (buffer.saving || buffer.content !== reviewedContent) {
+              toast("Your draft changed during review. Keep editing and compare again.", true);
+              return;
+            }
             buffer.revision = disk.revision;
             if (await save(buffer.path)) d.close();
           },
@@ -2688,7 +2711,9 @@
     dialog("File actions", body);
   }
   async function fileAction(action, path) {
-    if (state.buffers.has(path) && dirty(state.buffers.get(path))) {
+    const unavailable = () => state.buffers.has(path) &&
+      (dirty(state.buffers.get(path)) || state.buffers.get(path).saving);
+    if (unavailable()) {
       toast(
         "Save or close this file before moving, duplicating or deleting it.",
         true,
@@ -2705,6 +2730,10 @@
         ],
       );
       if (!choice) return;
+      if (unavailable()) {
+        toast("The file changed while the dialog was open. Save or close it first.", true);
+        return;
+      }
       const result = await api("/api/files/action", {
         method: "POST",
         body: JSON.stringify({ action, path }),
@@ -2737,6 +2766,10 @@
           primary: true,
           run: async (d) => {
             const destination = $("file-destination").value.trim();
+            if (unavailable()) {
+              toast("The file changed while the dialog was open. Save or close it first.", true);
+              return;
+            }
             await api("/api/files/action", {
               method: "POST",
               body: JSON.stringify({ action, path, destination }),
@@ -3400,14 +3433,25 @@
       const data = await api("/api/changes");
       $("connection-dot").classList.remove("offline");
       $("connection-status").textContent = "Connected";
-      if (state.changeSignature && data.signature !== state.changeSignature) {
+      if (state.pendingFileRefresh || data.signature !== state.changeSignature) {
+        state.pendingFileRefresh = false;
         await loadTree();
         for (const [path, buffer] of state.buffers) {
           try {
+            const observedRevision = buffer.revision;
+            if (buffer.saving) {
+              state.pendingFileRefresh = true;
+              continue;
+            }
             const disk = await api(
               "/api/file?path=" + encodeURIComponent(path),
             );
-            if (disk.revision !== buffer.revision && !buffer.saving) {
+            if (state.buffers.get(path) !== buffer || buffer.saving ||
+                buffer.revision !== observedRevision) {
+              state.pendingFileRefresh = true;
+              continue;
+            }
+            if (disk.revision !== buffer.revision) {
               if (!dirty(buffer) || disk.content === buffer.content) {
                 const viewState = state.active === path
                   ? state.editor?.saveViewState() : null;
@@ -3430,6 +3474,7 @@
               }
             }
           } catch (error) {
+            state.pendingFileRefresh = true;
             if (error.status === 404)
               toast("File removed on disk: " + path, true);
           }

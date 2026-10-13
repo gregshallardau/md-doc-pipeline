@@ -62,6 +62,8 @@ def install_git(app, workspace, write_lock):
             full = root / name
             if not full.is_relative_to(workspace):
                 continue
+            if ".editor-history" in full.relative_to(workspace).parts:
+                continue
             files.append(
                 {
                     "path": full.relative_to(workspace).as_posix(),
@@ -111,6 +113,8 @@ def install_git(app, workspace, write_lock):
                     full = safe_path(workspace, req.path)
                 except ValueError as exc:
                     raise HTTPException(400, str(exc)) from exc
+                if ".editor-history" in full.relative_to(workspace).parts:
+                    raise HTTPException(400, "Recovery history cannot be staged in the editor")
                 if req.action == "stage":
                     run("add", "--", str(full))
                 else:

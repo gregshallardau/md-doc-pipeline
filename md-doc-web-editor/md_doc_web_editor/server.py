@@ -169,8 +169,10 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         response.headers["X-DNS-Prefetch-Control"] = "off"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        if request.url.path == "/" or (
-            request.url.path.startswith("/static/") and "/vendor/" not in request.url.path
+        if (
+            request.url.path.startswith("/api/")
+            or request.url.path == "/"
+            or (request.url.path.startswith("/static/") and "/vendor/" not in request.url.path)
         ):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -311,7 +313,7 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
     @app.put("/api/file")
     def write_file(req: WriteRequest) -> JSONResponse:
-        from .snapshots import atomic_write, revision
+        from .snapshots import atomic_write, preserve_revision, revision
 
         full = _safe_path(req.path)
         if not full.parent.exists():
@@ -323,16 +325,21 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         if len(req.content.encode()) > 20 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File exceeds 20 MiB")
         with write_lock:
-            current = revision(full.read_bytes()) if full.exists() else None
-            if req.revision is not None and current != req.revision:
+            original = full.read_bytes() if full.exists() else None
+            current = revision(original) if original is not None else None
+            if current != req.revision:
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "message": "File changed on disk",
                         "revision": current,
-                        "content": full.read_text() if full.exists() else "",
+                        "content": original.decode("utf-8") if original is not None else "",
                     },
                 )
+            # Durable recovery copies must succeed before replacing the source.
+            if original is not None:
+                preserve_revision(full, original)
+            preserve_revision(full, req.content.encode("utf-8"))
             atomic_write(full, req.content)
         return JSONResponse(
             {"ok": True, "path": req.path, "revision": revision(req.content.encode())}

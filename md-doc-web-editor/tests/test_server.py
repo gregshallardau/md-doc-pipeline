@@ -84,9 +84,14 @@ class TestFileRead:
 
 class TestFileWrite:
     def test_write_creates_or_updates_file(self, client, workspace):
+        disk = client.get("/api/file?path=products/nova/doc.md").json()
         r = client.put(
             "/api/file",
-            json={"path": "products/nova/doc.md", "content": "new content"},
+            json={
+                "path": "products/nova/doc.md",
+                "content": "new content",
+                "revision": disk["revision"],
+            },
         )
         assert r.status_code == 200
         assert (workspace / "products" / "nova" / "doc.md").read_text() == "new content"
