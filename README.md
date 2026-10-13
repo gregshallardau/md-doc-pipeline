@@ -1,3 +1,10 @@
+---
+title: md-doc-pipeline
+outputs: [pdf]
+cover_page: false
+---
+
+{% raw %}
 # md-doc-pipeline
 
 A Markdown → PDF / DOCX / DOTX / PPTX document pipeline with cascading config, Jinja2 template composition, merge field support, and pluggable cloud sync.
@@ -416,6 +423,16 @@ Read it directly or paste the entire file into an agent with your draft.
 Workspace setup is covered in the handbook. Theme maintenance has its own
 [theme upgrade guide](docs/theme_upgrade.md).
 
+The documentation is also buildable through the pipeline:
+
+```bash
+uv run md-doc lint docs/ --render
+uv run md-doc build docs/ --force -o /tmp/md-doc-documentation
+```
+
+The handbook protects its literal Jinja examples with a raw block. Page-break
+and form shorthand inside fenced blocks or inline code stays literal in the output.
+
 ---
 
 ## Multi-level example
@@ -479,3 +496,4 @@ uv run ruff check .
 uv run black --check .
 uv run mypy md_doc/
 ```
+{% endraw %}

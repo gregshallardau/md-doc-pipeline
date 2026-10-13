@@ -1,3 +1,9 @@
+---
+title: md-doc handbook
+document_type: Reference handbook
+---
+
+{% raw %}
 # md-doc handbook
 
 One guide for people and agents: authoring documents, forms, templates and slide decks,
@@ -326,7 +332,6 @@ company: Client company name
 
 These are distinct and must not be mixed:
 
-{% raw %}
 <a id="authoring--variable---build-time-values"></a>
 
 #### `{{ variable }}` — Build-time values
@@ -369,7 +374,6 @@ Insert shared content blocks from `templates/` directories:
 ```markdown
 {% include "templates/legal-footer.md" %}
 ```
-{% endraw %}
 
 Template search order: document directory → `templates/` in ancestor dirs → repo root `templates/`.
 
@@ -389,6 +393,14 @@ $$
 \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
 $$
 ```
+
+**Rendered example:**
+
+The result is $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$.
+
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
 
 PDF equations are embedded SVGs; Word equations are native, editable Office
 Math objects, including equations in table cells. Code blocks, inline code,
@@ -441,6 +453,68 @@ HTML you write is passed through to PDF. Word understands the common inline tags
 `em`, `code`, `del`, `sup`, `sub`, `a`, `br`, `img`), lists, tables, `pre`, `blockquote`, `hr`
 and `div style="text-align: …"`.
 
+### Headings and inline formatting
+
+```markdown
+#### Example heading
+
+Use **bold**, *italic*, and `inline code`. Visit the [authoring guide](#authoring).
+```
+
+**Rendered example:**
+
+#### Example heading
+
+Use **bold**, *italic*, and `inline code`. Visit the [authoring guide](#authoring).
+
+### Lists and quotes
+
+```markdown
+- First item
+- Second item
+
+1. Prepare the document.
+2. Build the output.
+
+> A quote or callout keeps supporting information separate from the body.
+```
+
+**Rendered example:**
+
+- First item
+- Second item
+
+1. Prepare the document.
+2. Build the output.
+
+> A quote or callout keeps supporting information separate from the body.
+
+### Definition lists and footnotes
+
+```markdown
+Source
+: The Markdown document you edit.
+
+Output
+: The PDF or Word document the pipeline builds.
+
+A statement with a supporting note.[^core-example]
+
+[^core-example]: This is the example footnote.
+```
+
+**Rendered example:**
+
+Source
+: The Markdown document you edit.
+
+Output
+: The PDF or Word document the pipeline builds.
+
+A statement with a supporting note.[^core-example]
+
+[^core-example]: This is the example footnote.
+
 <a id="markdown-tables"></a>
 
 ### Tables
@@ -451,36 +525,78 @@ and `div style="text-align: …"`.
 | Short | A long description that wraps across the available width. |
 ```
 
-- **Column widths.** Put `<!-- col-widths: 30, 70 -->` on the line before a table, or set
-  `table_col_widths: [30, 70]` for every table. The counts must match the column count or the
-  widths are ignored. PDF, DOCX and DOTX all honour them; without them columns are sized to
-  their content, as in PDF.
-- **Wrapping wide content.** PDF table cells wrap long URLs and unbroken text so they
-  do not force the table beyond the text width. Use column widths above to stop one
-  column taking most of the available space. For an approximate character width in
-  a PDF theme, use `ch` units (the width of the font's zero character):
+**Rendered example:**
 
-  ```css
-  .report-body table { width: 100%; table-layout: fixed; }
-  .report-body th:first-child, .report-body td:first-child { width: 25ch; }
-  ```
+| Item | Description |
+|:-----|:------------|
+| Short | A long description that wraps across the available width. |
 
-  This wraps at the available width, preferably between words; it is not an exact
-  25-character limit with proportional fonts. The CSS example affects the first
-  column of every PDF table. Use `col-widths` for per-table control across PDF and Word.
-- **Headerless tables.** Make every header cell empty and the header row is dropped in every
-  format. Useful for signature blocks:
+**Column widths.** Put `<!-- col-widths: 30, 70 -->` on the line before a table, or set
+`table_col_widths: [30, 70]` for every table. The counts must match the column count or the
+widths are ignored. PDF, DOCX and DOTX all honour them; without them columns are sized to
+their content, as in PDF.
 
-  ```markdown
-  | | |
-  | --- | --- |
-  | Greg Shallard | [[signed_date]] |
-  ```
-- **Images and equations in cells** work in PDF and Word.
-- **Page splitting.** A table is kept on one page when it fits; a header row repeats when a long
-  table does split. Adjacent tables stay separate in Word.
-- Zebra rows, header colours and padding come from the theme (see the
-  [theming guide](#themes)).
+**Wrapping wide content.** PDF table cells wrap long URLs and unbroken text so they
+do not force the table beyond the text width. Use column widths above to stop one
+column taking most of the available space. For an approximate character width in
+a PDF theme, use `ch` units (the width of the font's zero character):
+
+```css
+.report-body table { width: 100%; table-layout: fixed; }
+.report-body th:first-child, .report-body td:first-child { width: 25ch; }
+```
+
+This wraps at the available width, preferably between words; it is not an exact
+25-character limit with proportional fonts. The CSS example affects the first
+column of every PDF table. Use `col-widths` for per-table control across PDF and Word.
+
+**Headerless tables.** Make every header cell empty and the header row is dropped in every
+format. Useful for signature blocks:
+
+```markdown
+| | |
+| --- | --- |
+| Greg Shallard | [[signed_date]] |
+```
+
+**Images and equations in cells** work in PDF and Word.
+
+**Page splitting.** A table is kept on one page when it fits; a header row repeats when a long
+table does split. Adjacent tables stay separate in Word.
+Zebra rows, header colours and padding come from the theme (see the
+[theming guide](#themes)).
+
+**Headerless table example:**
+
+```markdown
+| | |
+| --- | --- |
+| Prepared by | Date |
+| Document team | 13 October 2026 |
+```
+
+**Rendered example:**
+
+| | |
+| --- | --- |
+| Prepared by | Date |
+| Document team | 13 October 2026 |
+
+**Column-width example:**
+
+```markdown
+<!-- col-widths: 25, 75 -->
+| Item | Description |
+| --- | --- |
+| Narrow column | This longer description wraps within the wider column. |
+```
+
+**Rendered example:**
+
+<!-- col-widths: 25, 75 -->
+| Item | Description |
+| --- | --- |
+| Narrow column | This longer description wraps within the wider column. |
 
 <a id="markdown-images"></a>
 
@@ -490,16 +606,42 @@ and `div style="text-align: …"`.
 the text width. Use `<!-- pagebreak -->` to move one to a new page. (Logo and cover images set
 in config are resolved through the document, ancestors, repo-root cascade instead.)
 
+```markdown
+![Example organisation logo](../examples/feature-showcase/logo.png)
+```
+
+**Rendered example:**
+
+![Example organisation logo](../examples/feature-showcase/logo.png)
+
 <a id="markdown-page-breaks-and-sections"></a>
 
 ### Page breaks and sections
 
 - `<!-- pagebreak -->` on its own line starts a new page in PDF and Word. The PDF builder enforces this even with a custom theme that has no page-break styling.
+- Page-break markers and form shorthand in fenced code blocks or inline code are
+  literal examples; they do not insert breaks or fields into the document.
 - With a theme that sets `h1 { page-break-before: always }` every H1 starts a page (never the
   first one).
 - Every `##` subsection inside a `# APPENDIX` section starts a new page.
 - Headings are kept with the content that follows; tables, code blocks and quotes avoid
   splitting.
+
+```markdown
+This text appears before the page break.
+
+<!-- pagebreak -->
+
+This text starts on the next page.
+```
+
+**Rendered example:**
+
+This text appears before the page break.
+
+<!-- pagebreak -->
+
+This text starts on the next page.
 
 <a id="markdown-alignment-and-layout"></a>
 
@@ -508,6 +650,22 @@ in config are resolved through the document, ancestors, repo-root cascade instea
 - `body_text_align: justify` (config) justifies Word body text.
 - Wrap a section in `<div style="text-align: left">…</div>` to override alignment for it; every
   paragraph and heading inside inherits it. PDF uses the CSS directly.
+
+```html
+<div markdown="1" style="text-align: center">
+
+This paragraph is centred.
+
+</div>
+```
+
+**Rendered example:**
+
+<div markdown="1" style="text-align: center">
+
+This paragraph is centred.
+
+</div>
 
 <a id="markdown-diagrams-mermaid"></a>
 
@@ -538,6 +696,15 @@ flowchart LR
     B -- "no" --> D["Request info"]
 ```
 ````
+
+**Rendered example:**
+
+```mermaid
+flowchart LR
+    A["Submit"] --> B{"Approved?"}
+    B -- "yes" --> C["Process"]
+    B -- "no" --> D["Request info"]
+```
 
 Keep labels short. Examples of every type are in
 `examples/feature-showcase/diagram-gallery.md`.
@@ -3378,3 +3545,4 @@ when forms are requested. If available, a LibreOffice conversion can help inspec
 output. Report the folder structure, settings and their locations, defaults used, checks
 actually performed, and exact build commands. A company library can have its own Git
 repository; initialise or commit only when requested, and do not push without instruction.
+{% endraw %}

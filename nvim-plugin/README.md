@@ -1,3 +1,10 @@
+---
+title: md-doc Neovim plugin
+outputs: [pdf]
+cover_page: false
+---
+
+{% raw %}
 # md-doc.nvim
 
 Neovim plugin for [md-doc-pipeline](https://github.com/gregshallardau/md-doc-pipeline).
@@ -289,3 +296,4 @@ Build current file saves the current buffer first. Build workspace saves all
 modified file buffers inside the workspace, including config and template
 files, before launching the CLI. A save failure cancels the build and reports
 an error. Files outside the workspace are left alone.
+{% endraw %}

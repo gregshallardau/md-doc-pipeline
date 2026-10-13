@@ -31,6 +31,27 @@ class TestInjectPageBreaks:
         md = "Just plain content with no marker"
         assert _inject_page_breaks(md) == md
 
+    @pytest.mark.parametrize(
+        "example",
+        [
+            "`<!-- pagebreak -->`",
+            "```markdown\n<!-- pagebreak -->\n```",
+            "~~~~markdown\n```\n<!-- pagebreak -->\n```\n~~~~",
+        ],
+    )
+    def test_code_examples_stay_literal(self, example):
+        from md_doc.builders.pdf import _expand_form_fields
+
+        source = example + "\n\n<!-- pagebreak -->\n\nAfter"
+        result = _inject_page_breaks(source)
+        assert example in result
+        assert result.count('<div class="md-doc-page-break"></div>') == 1
+        form_example = example.replace("<!-- pagebreak -->", "?[text: sample]")
+        result = _expand_form_fields(form_example + "\n\n?[text: actual]", False)
+        assert form_example in result
+        assert 'name="actual"' in result
+        assert 'name="sample"' not in result
+
     def test_other_html_comments_untouched(self):
         md = "<!-- not a pagebreak -->\nbody"
         result = _inject_page_breaks(md)

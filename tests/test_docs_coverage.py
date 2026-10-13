@@ -15,6 +15,28 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 
 
+def test_repository_docs_render_and_keep_examples_literal() -> None:
+    from md_doc.builders.pdf import _expand_form_fields, _inject_page_breaks
+    from md_doc.linter import lint_file
+    from md_doc.renderer import render
+
+    paths = sorted(DOCS.glob("*.md")) + [
+        ROOT / "README.md",
+        ROOT / "md-doc-web-editor/README.md",
+        ROOT / "nvim-plugin/README.md",
+    ]
+    for path in paths:
+        assert lint_file(path, repo_root=ROOT) == []
+        rendered = render(path, repo_root=ROOT, strict=True)
+        assert rendered.strip()
+        if path.name == "handbook.md":
+            assert "{{ variable }}" in rendered
+            assert '{% include "templates/legal-footer.md" %}' in rendered
+            processed = _expand_form_fields(_inject_page_breaks(rendered), False)
+            assert "?[text: full_name, required]" in processed
+            assert "`<!-- pagebreak -->`" in processed
+
+
 def _walk(cmd: click.Command, path: list[str]):
     yield path, cmd
     if isinstance(cmd, click.Group):

@@ -1,3 +1,10 @@
+---
+title: md-doc browser editor
+outputs: [pdf]
+cover_page: false
+---
+
+{% raw %}
 # md-doc Document Studio
 
 A local browser workspace for the [md-doc pipeline](https://github.com/gregshallardau/md-doc-pipeline). Edit Markdown, inherited metadata and themes, review the actual generated PDF, and export PDF, DOCX, DOTX or PowerPoint. Monaco provides the source editor; PDF.js displays the pipeline's immutable output. All browser assets are bundled locally.
@@ -150,3 +157,4 @@ python md-doc-web-editor/tests/smoke_installed.py
 ```
 
 Run the smoke check with the installed environment's Python. The built wheel includes Monaco, marked, PDF.js, fonts, CMaps, WebAssembly decoders, icons, and vendor licenses; no frontend build or runtime Node installation is needed.
+{% endraw %}

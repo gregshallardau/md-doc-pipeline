@@ -176,9 +176,13 @@ def _inject_page_breaks(md_content: str) -> str:
     Word page break. Surrounded by blank lines so the markdown parser treats
     it as a block-level element.
     """
-    return _PAGEBREAK_COMMENT_RE.sub(
-        '\n\n<div class="md-doc-page-break"></div>\n\n',
+    from ..literal import transform_outside_code
+
+    return transform_outside_code(
         md_content,
+        lambda body: _PAGEBREAK_COMMENT_RE.sub(
+            '\n\n<div class="md-doc-page-break"></div>\n\n', body
+        ),
     )
 
 
@@ -486,6 +490,12 @@ def _fold_checkbox_label(m: re.Match[str]) -> str:
 
 
 def _expand_form_fields(md_content: str, is_form: bool) -> str:
+    from ..literal import transform_outside_code
+
+    return transform_outside_code(md_content, lambda body: _expand_form_fields_body(body, is_form))
+
+
+def _expand_form_fields_body(md_content: str, is_form: bool) -> str:
     """Expand ?[...] form field markers into HTML.
 
     When is_form is True, also wraps the entire content in <form markdown="1">

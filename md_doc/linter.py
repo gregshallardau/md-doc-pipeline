@@ -484,13 +484,19 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     # ------------------------------------------------------------------
     # 3c. ?[...] form-field shorthand
     # ------------------------------------------------------------------
-    _check_form_fields(body, config, doc_path, issues)
+    from .literal import transform_outside_code
+
+    def check_directives(prose: str) -> str:
+        _check_form_fields(prose, config, doc_path, issues)
+        _check_col_width_comments(prose, doc_path, issues)
+        return prose
+
+    transform_outside_code(body, check_directives)
 
     # ------------------------------------------------------------------
     # 3d. Adjacent tables without a blank line (silently merge into one)
     # ------------------------------------------------------------------
     _check_adjacent_tables(body, doc_path, issues)
-    _check_col_width_comments(body, doc_path, issues)
 
     # ------------------------------------------------------------------
     # 4. {% include %} resolution

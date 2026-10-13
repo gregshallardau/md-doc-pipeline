@@ -1,3 +1,8 @@
+---
+title: Upgrade an existing theme
+document_type: Maintenance guide
+---
+
 # Upgrade an existing theme
 
 Use this procedure only when theme maintenance is requested. Preserve existing brand values

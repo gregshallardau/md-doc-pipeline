@@ -1,2 +1,8 @@
 author: md-doc-pipeline
 outputs: [pdf]
+cover_page: true
+cover_label: Documentation
+cover_footer_text: md-doc-pipeline · Documentation
+product: md-doc-pipeline
+footer_left: md-doc-pipeline
+footer_center: Documentation
