@@ -1,5 +1,6 @@
 /* Locally bundled PDF.js. Document JavaScript and external links are disabled. */
 import * as pdfjs from "./vendor/pdfjs-6.4.299/legacy/build/pdf.min.mjs";
+import {indexPdfText, sourceAnchors, locateSourceLine} from "./scroll-sync.js";
 globalThis.pdfjsLib = pdfjs;
 const components = await import("./vendor/pdfjs-6.4.299/web/pdf_viewer.mjs");
 pdfjs.GlobalWorkerOptions.workerSrc =
@@ -10,6 +11,7 @@ export class DocumentViewer {
   constructor(onError) {
     this.onError = onError;
     this.sequence = 0;
+    this.sourceSyncSequence = 0;
     this.eventBus = new components.EventBus();
     this.linkService = new components.PDFLinkService({
       eventBus: this.eventBus,
@@ -51,7 +53,11 @@ export class DocumentViewer {
         .forEach((b) =>
           b.classList.toggle("active", Number(b.dataset.page) === pageNumber),
         );
+      this.scheduleFit();
     });
+    // Page views initially inherit the first page's geometry. Refit once PDF.js
+    // has loaded the actual dimensions of the remaining pages as well.
+    this.eventBus.on("pagesloaded", () => this.scheduleFit());
     this.eventBus.on("updatefindmatchescount", ({ matchesCount }) => {
       $("pdf-find-count").textContent =
         `${matchesCount.current} / ${matchesCount.total}`;
@@ -85,6 +91,9 @@ export class DocumentViewer {
     new ResizeObserver(() => this.resize()).observe($("pdf-container"));
   }
   async load(artifact, sameDocument = false) {
+    this.sourceSyncSequence = (this.sourceSyncSequence || 0) + 1;
+    this.textIndex = null;
+    this.sourceMap = null;
     this.clearPreviewPages();
     const sequence = ++this.sequence;
     this.loading?.destroy().catch(() => {});
@@ -182,6 +191,7 @@ export class DocumentViewer {
     }
   }
   invalidate() {
+    this.sourceSyncSequence = (this.sourceSyncSequence || 0) + 1;
     this.clearPreviewPages();
     ++this.sequence;
     this.loading?.destroy().catch(() => {});
@@ -194,11 +204,43 @@ export class DocumentViewer {
         Math.min(page, this.document.numPages),
       );
   }
+  async scrollToSource(source, line) {
+    if (!this.document) return;
+    const document = this.document;
+    const sequence = ++this.sourceSyncSequence;
+    this.textIndex ||= indexPdfText(document).catch(error => {
+      if (this.document === document) this.textIndex = null;
+      throw error;
+    });
+    const index = await this.textIndex;
+    if (sequence !== this.sourceSyncSequence || document !== this.document) return;
+    if (this.sourceMap?.source !== source)
+      this.sourceMap = {source, anchors: sourceAnchors(source, index)};
+    const target = locateSourceLine(this.sourceMap.anchors, line);
+    if (!target) return;
+    const viewport = index.pages[target.page - 1];
+    const [x, y] = viewport.convertToPdfPoint(0, target.top * viewport.height);
+    this.viewer.scrollPageIntoView({pageNumber: target.page,
+      destArray: [null, {name: "XYZ"}, x, y, null], allowNegativeOffset: false});
+  }
+  cancelSourceScroll() {
+    this.sourceSyncSequence = (this.sourceSyncSequence || 0) + 1;
+  }
   setPageView() {
     this.viewer.spreadMode = $("pdf-page-view").value === "spread"
       ? components.SpreadMode.ODD
       : components.SpreadMode.NONE;
     this.resize();
+  }
+  scheduleFit() {
+    if (!this.document || !["page-width", "page-fit"].includes($("pdf-zoom").value))
+      return;
+    cancelAnimationFrame(this.fitFrame);
+    // Let PDF.js finish updating its scroll location before changing the scale.
+    this.fitFrame = requestAnimationFrame(() => {
+      this.fitFrame = null;
+      this.resize();
+    });
   }
   resize() {
     if (this.document) {

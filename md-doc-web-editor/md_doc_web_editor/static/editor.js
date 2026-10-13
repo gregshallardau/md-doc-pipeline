@@ -99,6 +99,7 @@
     job: null,
     timer: null,
     auto: true,
+    linkedScroll: true,
     previewDelay: 1500,
     inlineTemplate: null,
     nav: "files",
@@ -423,6 +424,9 @@
             state.editor.onDidChangeModelContent((event) => {
               if (!state.switching) changed(state.editor.getValue(), event);
             });
+            state.editor.onDidScrollChange((event) => {
+              if (event.scrollTopChanged) scheduleSourceScroll();
+            });
             state.editor.onMouseDown((event) => {
               if (event.event.leftButton && event.target.position)
                 editIncludeAtLine(event.target.position.lineNumber).catch(
@@ -482,6 +486,7 @@
     input.setAttribute("aria-label", "Document source");
     input.spellcheck = false;
     input.oninput = () => changed(input.value);
+    input.onscroll = () => scheduleSourceScroll();
     $("md-doc-monaco").replaceChildren(input);
     state.fallback = input;
   }
@@ -1301,6 +1306,31 @@
       location.origin,
     );
   }
+  function scheduleSourceScroll() {
+    cancelAnimationFrame(state.sourceScrollFrame);
+    state.sourceScrollFrame = requestAnimationFrame(() => {
+      state.sourceScrollFrame = null;
+      if (!state.linkedScroll || state.switching || state.mode !== "source" ||
+          state.active !== state.pinned || state.active !== state.artifactPath ||
+          !state.view || !state.artifact) return;
+      let line, source;
+      if (state.editor) {
+        line = state.editor.getVisibleRanges()[0]?.startLineNumber;
+        source = state.editor.getValue();
+      } else if (state.fallback) {
+        const style = getComputedStyle(state.fallback);
+        const height = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+        line = Math.floor(state.fallback.scrollTop / height) + 1;
+        source = state.fallback.value;
+      }
+      if (!line || source === undefined) return;
+      state.view.scrollToSource(source, line).catch(() => {});
+      const target = state.previewWindow;
+      if (target && !target.closed)
+        target.postMessage({type: "md-doc-source-scroll", source, line,
+          url: state.artifact.url}, location.origin);
+    });
+  }
   window.addEventListener("message", (event) => {
     if (
       event.origin !== location.origin ||
@@ -1528,6 +1558,7 @@
       state.error = null;
       $("preview-recovery-link")?.remove();
       setRenderState("Current", "");
+      scheduleSourceScroll();
       $("preview-time").textContent =
         "Updated " +
         new Date().toLocaleTimeString([], {
@@ -3495,6 +3526,16 @@
   async function init() {
     hydrate();
     monacoReady = initMonaco();
+    $("linked-scroll").onchange = () => {
+      state.linkedScroll = $("linked-scroll").checked;
+      store("linkedScroll", state.linkedScroll);
+      if (state.linkedScroll) scheduleSourceScroll();
+      else {
+        state.view?.cancelSourceScroll();
+        if (state.previewWindow && !state.previewWindow.closed)
+          state.previewWindow.postMessage({type: "md-doc-source-scroll-cancel"}, location.origin);
+      }
+    };
     splitters();
     document.addEventListener("click", (event) => {
       const action = event.target.closest("[data-action]");
@@ -3668,6 +3709,8 @@
       $("workbench").classList.toggle("nav-hidden", !!layout.navHidden);
       state.appearance = readStorage("appearance", "system");
       state.auto = readStorage("auto", true);
+      state.linkedScroll = readStorage("linkedScroll", true);
+      $("linked-scroll").checked = state.linkedScroll;
       state.previewDelay = readStorage("previewDelay", 1500);
       $("auto-preview").checked = state.auto;
       applyAppearance();

@@ -5,6 +5,7 @@ let viewer,
   latest,
   loadedUrl,
   loadedPath,
+  pendingSource,
   sequence = 0;
 const send = (type) => window.opener?.postMessage({ type }, location.origin);
 function fail(error) {
@@ -53,6 +54,12 @@ function download() {
   link.download = latest.artifact.filename;
   link.click();
 }
+async function applySourceScroll() {
+  if (!viewer || pendingSource?.url !== loadedUrl) return;
+  const target = pendingSource;
+  pendingSource = null;
+  await viewer.scrollToSource(target.source, target.line);
+}
 async function update(data) {
   const token = ++sequence;
   if (!initialize) {
@@ -86,14 +93,25 @@ async function update(data) {
     viewer.previewRevision = data.previewRevision;
   }
   await viewer.showPreviewPages(data.previewPages, data.previewRevision);
+  await applySourceScroll();
 }
 window.addEventListener("message", (event) => {
   if (
     event.origin !== location.origin ||
-    event.source !== window.opener ||
-    event.data?.type !== "md-doc-preview"
+    event.source !== window.opener
   )
     return;
+  if (event.data?.type === "md-doc-source-scroll-cancel") {
+    pendingSource = null;
+    viewer?.cancelSourceScroll();
+    return;
+  }
+  if (event.data?.type === "md-doc-source-scroll") {
+    pendingSource = event.data;
+    applySourceScroll().catch(() => {});
+    return;
+  }
+  if (event.data?.type !== "md-doc-preview") return;
   latest = event.data;
   update(latest).catch(fail);
 });

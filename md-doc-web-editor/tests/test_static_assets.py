@@ -19,6 +19,7 @@ def test_javascript_module_types_override_system_registry(tmp_path, monkeypatch)
     with TestClient(create_app(tmp_path)) as client:
         for path in (
             "viewer.js",
+            "scroll-sync.js",
             "vendor/pdfjs-6.4.299/legacy/build/pdf.min.mjs",
             "vendor/pdfjs-6.4.299/web/pdf_viewer.mjs",
             "vendor/pdfjs-6.4.299/legacy/build/pdf.worker.min.mjs",
