@@ -32,6 +32,16 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **Pluggable sync** — push outputs to Azure File Share, AWS S3, or a local path
 - **CI-ready** — reusable GitHub Actions workflow template
 
+### Screenshots
+
+PDFs built from the [`examples/feature-showcase`](examples/feature-showcase/) project.
+
+| Branded cover page | Typography, tables and maths |
+| --- | --- |
+| ![Branded cover page with logo, title and footer](docs/images/cover-page.png) | ![Page with headings, a quote, lists, a styled table and an equation](docs/images/typography-tables.png) |
+
+![Built-in Mermaid rendering: pie, donut, sequence and mind map diagrams](docs/images/diagrams.png)
+
 ---
 
 ## Installation
