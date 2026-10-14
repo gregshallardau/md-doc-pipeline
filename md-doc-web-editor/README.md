@@ -9,7 +9,7 @@ cover_page: false
 
 A local browser workspace for the [md-doc pipeline](https://github.com/gregshallardau/md-doc-pipeline). Edit Markdown, inherited metadata and themes, review the actual generated PDF, and export PDF, DOCX, DOTX or PowerPoint. Monaco provides the source editor; PDF.js displays the pipeline's immutable output. All browser assets are bundled locally.
 
-![md-doc studio: Markdown source beside the live PDF preview](../docs/images/editor.png)
+![md-doc studio: Markdown source beside the live PDF preview](../docs/images/editor-tables.png)
 
 ## Launch
 

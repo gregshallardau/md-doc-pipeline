@@ -34,10 +34,21 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 
 ### Screenshots
 
-PDFs built from the [`examples/feature-showcase`](examples/feature-showcase/) project.
+Markdown source on the left, the generated PDF on the right, in the [browser editor](md-doc-web-editor/README.md). Documents are from [`examples/feature-showcase`](examples/feature-showcase/).
 
-| Branded cover page | Typography, tables and maths |
-| --- | --- |
+**Branded cover page and repeating header bar, driven by frontmatter**
+
+![Editor showing cover-page frontmatter beside the rendered branded cover](docs/images/editor-cover.png)
+
+**Typography, tables and maths**
+
+![Editor showing Markdown beside a PDF with a quote, lists, a styled table and an equation](docs/images/editor-tables.png)
+
+**Fillable PDF forms from `?[...]` shorthand**
+
+![Editor showing form shorthand beside the rendered fillable form](docs/images/editor-forms.png)
+
+--- | --- |
 | ![Branded cover page with logo, title and footer](docs/images/cover-page.png) | ![Page with headings, a quote, lists, a styled table and an equation](docs/images/typography-tables.png) |
 
 ![Built-in Mermaid rendering: pie, donut, sequence and mind map diagrams](docs/images/diagrams.png)
@@ -87,8 +98,6 @@ uv sync --group dev
 ```
 
 ### Browser editor
-
-![md-doc studio: Markdown source beside the live PDF preview](docs/images/editor.png)
 
 From the repository root, install the editor in the same `.venv`:
 
