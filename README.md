@@ -88,6 +88,8 @@ uv sync --group dev
 
 ### Browser editor
 
+![md-doc studio: Markdown source beside the live PDF preview](docs/images/editor.png)
+
 From the repository root, install the editor in the same `.venv`:
 
 ```bash
