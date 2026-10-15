@@ -27,6 +27,9 @@ workspace/
 .DS_Store
 *.swp
 
+# Browser editor save history / recovery snapshots (written beside each document)
+.editor-history/
+
 /_pdf-theme.css
 
 # Incremental dependency state and browser test dependencies
