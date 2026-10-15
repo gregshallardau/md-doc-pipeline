@@ -37,6 +37,7 @@ import weasyprint  # noqa: E402
 from ..config import coerce_bool  # noqa: E402
 from ._cover import footer_band_geometry  # noqa: E402
 from ..forms import collapse_select_markup  # noqa: E402
+from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 
 
@@ -166,53 +167,18 @@ def _inject_page_breaks(md_content: str) -> str:
     )
 
 
-_BLANK_SPACER = '<div class="md-doc-blank" style="height: 1em"></div>'
-_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_BLANK_SPACER = '\n\n<div class="md-doc-blank" style="height: 1em"></div>\n\n'
 
 
-def _inject_blank_lines(md_content: str, enabled: bool = True) -> str:
-    """Honour extra blank lines as vertical space (``preserve_blank_lines``).
+def _inject_blank_lines(md_content: str) -> str:
+    """Turn the renderer's blank-line markers into spacer divs.
 
-    Markdown treats any run of blank lines as one paragraph break. Each blank
-    line *beyond the first* becomes one line-height spacer div, recognised by
-    the PDF (inline height) and the DOCX HTML walker (an empty paragraph).
-    Fenced code is left verbatim; ``{% include %}`` fragments are joined
-    tightly, so ordinary single blank lines never add space.
+    ``renderer.mark_blank_lines`` marks each blank line the author typed beyond
+    the first (before Jinja runs, so ``trim_blocks`` newline trimming around
+    ``{% %}`` tags cannot fake or hide any). The div is recognised by the PDF
+    (inline height) and the DOCX HTML walker (an empty paragraph).
     """
-    if not enabled:
-        return md_content
-    out: list[str] = []
-    blanks = 0
-    fence: str | None = None
-
-    def flush() -> None:
-        nonlocal blanks
-        if blanks > 1 and out:  # leading blanks stay plain (no top spacer)
-            for _ in range(blanks - 1):
-                out.extend(["", _BLANK_SPACER])
-            out.append("")
-        else:
-            out.extend([""] * blanks)
-        blanks = 0
-
-    for line in md_content.split("\n"):
-        m = _FENCE_RE.match(line)
-        if fence is not None:
-            out.append(line)
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
-                fence = None
-        elif m:
-            flush()
-            fence = m.group(1)
-            out.append(line)
-        elif not line.strip():
-            blanks += 1
-        else:
-            flush()
-            out.append(line)
-    flush_tail = blanks  # trailing blanks: keep as-is (no following content)
-    out.extend([""] * flush_tail)
-    return "\n".join(out)
+    return BLANK_MARKER_RE.sub(_BLANK_SPACER, md_content)
 
 
 _FORM_FIELD_RE = re.compile(r"\?\[(.+?)\]")
@@ -1873,11 +1839,7 @@ def build(
         body = _strip_leading_h1(body)
     from ..pagination import inject_section_breaks, pdf_sections
 
-    body = inject_section_breaks(
-        _inject_page_breaks(
-            _inject_blank_lines(body, config.get("preserve_blank_lines", True) is not False)
-        )
-    )
+    body = inject_section_breaks(_inject_page_breaks(_inject_blank_lines(body)))
 
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(collapse_select_markup(body), is_form)

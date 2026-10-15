@@ -4415,11 +4415,7 @@ def build(
     # Explicit page breaks are shared with the PDF builder.
     from ..pagination import inject_section_breaks
 
-    body = inject_section_breaks(
-        _inject_page_breaks(
-            _inject_blank_lines(body, config.get("preserve_blank_lines", True) is not False)
-        )
-    )
+    body = inject_section_breaks(_inject_page_breaks(_inject_blank_lines(body)))
     body = collapse_select_markup(body)
     if output_format == "dotx":
         # Same source, fillable Word template: ?[...] → Word form fields.

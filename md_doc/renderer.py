@@ -25,7 +25,52 @@ from jinja2 import (
 )
 from jinja2.sandbox import SandboxedEnvironment
 
-from .config import load_config
+from .config import coerce_bool, load_config
+
+BLANK_MARKER = "<!-- md-doc-blank -->"
+BLANK_MARKER_RE = re.compile(r"[ \t]*" + re.escape(BLANK_MARKER) + r"[ \t]*")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def mark_blank_lines(text: str) -> str:
+    """Mark each blank line typed beyond the first (``preserve_blank_lines``).
+
+    Run on the *source* before Jinja, so ``trim_blocks`` swallowing the newline
+    after a ``{% %}`` tag can neither invent nor hide a blank line. Markdown
+    sees an HTML comment (ignored); the PDF/Word builders turn the markers into
+    spacers. Fenced code and leading blank lines are left alone.
+    """
+    out: list[str] = []
+    blanks = 0
+    fence: str | None = None
+
+    def flush() -> None:
+        nonlocal blanks
+        if blanks > 1 and out:
+            out.append("")
+            for _ in range(blanks - 1):
+                out.extend([BLANK_MARKER, ""])
+        else:
+            out.extend([""] * blanks)
+        blanks = 0
+
+    for line in text.split("\n"):
+        m = _FENCE_RE.match(line)
+        if fence is not None:
+            out.append(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+        elif m:
+            flush()
+            fence = m.group(1)
+            out.append(line)
+        elif not line.strip():
+            blanks += 1
+        else:
+            flush()
+            out.append(line)
+    out.extend([""] * blanks)  # trailing blanks: nothing follows to space from
+    return "\n".join(out)
 
 
 class _MarkdownLoader(BaseLoader):
@@ -45,8 +90,10 @@ class _MarkdownLoader(BaseLoader):
         search_dirs: list[Path],
         allowed_roots: list[Path] | None = None,
         source_transform: Callable[[str, Path], str] | None = None,
+        mark_blanks: bool = False,
     ) -> None:
         self._source_transform = source_transform
+        self._mark_blanks = mark_blanks
         roots = [p.resolve() for p in (allowed_roots or search_dirs)]
         self._roots = roots
         self._dirs = [
@@ -62,6 +109,8 @@ class _MarkdownLoader(BaseLoader):
                 source = candidate.read_text(encoding="utf-8")
                 if self._source_transform:
                     source = self._source_transform(source, candidate)
+                if self._mark_blanks:
+                    source = mark_blank_lines(source)
                 source = source.rstrip() + "\n"
                 mtime = candidate.stat().st_mtime
                 return source, str(candidate), lambda: candidate.stat().st_mtime == mtime
@@ -183,8 +232,12 @@ def render(
     if extra_search_dirs:
         search_dirs = search_dirs + [Path(d) for d in extra_search_dirs]
 
+    mark_blanks = coerce_bool(config.get("preserve_blank_lines"), True)
     loader = _MarkdownLoader(
-        search_dirs, [repo_root] + list(extra_search_dirs or []), source_transform
+        search_dirs,
+        [repo_root] + list(extra_search_dirs or []),
+        source_transform,
+        mark_blanks=mark_blanks,
     )
 
     undefined_cls = StrictUndefined if strict else Undefined
@@ -209,6 +262,8 @@ def render(
     if extra_context:
         context.update(extra_context)
 
+    if mark_blanks:
+        body = mark_blank_lines(body)
     tmpl = env.from_string(body)
     rendered_body = _separate_merged_tables(tmpl.render(**context))
 
