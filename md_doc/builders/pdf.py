@@ -1846,7 +1846,9 @@ def build(
 
     from ..math import markdown_html, render_math
 
-    html_body, _ = render_math(markdown_html(body, _MD_EXTENSIONS))
+    html_body, _ = render_math(
+        markdown_html(body, _MD_EXTENSIONS, coerce_bool(config.get("preserve_line_breaks")))
+    )
     html_body = _drop_empty_table_headers(html_body)
     # Mark before keep-with-next wrappers are inserted; direct-child selectors
     # otherwise miss a leading heading after an included letterhead.

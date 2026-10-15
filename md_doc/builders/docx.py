@@ -4430,7 +4430,12 @@ def build(
     _FORM_DIMS.set(_compute_form_dims(theme))
     html, math_equations = render_math(
         _word_html_forms(
-            _flex_rows_to_tables(markdown_html(body, _MD_EXTENSIONS), theme.get("flex_rows")),
+            _flex_rows_to_tables(
+                markdown_html(
+                    body, _MD_EXTENSIONS, coerce_bool(config.get("preserve_line_breaks"))
+                ),
+                theme.get("flex_rows"),
+            ),
             field_type,
         ),
         word=True,

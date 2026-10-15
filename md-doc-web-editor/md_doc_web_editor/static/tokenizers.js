@@ -48,7 +48,7 @@
         // Export / vault
         'export', 'export_format', 'export_path', 'export_filename', 'draft', 'tags',
         // Layout, tables and slides
-        'table_col_widths', 'preserve_blank_lines', 'css_vars', 'header_logo_height', 'page_header_bar_offset',
+        'table_col_widths', 'preserve_blank_lines', 'preserve_line_breaks', 'css_vars', 'header_logo_height', 'page_header_bar_offset',
         'pptx_template', 'slide_size', 'slide_split',
         // Export destination
         'export_folder',

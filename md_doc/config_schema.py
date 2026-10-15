@@ -28,6 +28,7 @@ BOOL_KEYS: frozenset[str] = frozenset(
         "pdf_forms",
         "include_md_in_share",
         "preserve_blank_lines",
+        "preserve_line_breaks",
         "cover_page",
         "cover_divider",
         "cover_footer",
@@ -80,6 +81,7 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "body_text_align",
         "table_col_widths",
         "preserve_blank_lines",
+        "preserve_line_breaks",
         "css_vars",
         # slides (pptx)
         "pptx_template",

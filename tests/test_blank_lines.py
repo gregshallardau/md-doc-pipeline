@@ -89,3 +89,31 @@ def test_docx_emits_empty_paragraphs(tmp_path):
     texts = [p.text for p in Document(str(tmp_path / "d.docx")).paragraphs]
     one, two = texts.index("One."), texts.index("Two.")
     assert texts[one + 1 : two] == ["", ""]
+
+
+def _build_docx(tmp_path: Path, extra: str = "") -> list[str]:
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "d.md").write_text(
+        f"---\ntitle: T\noutputs: [docx]\n{extra}---\n\nLine one\nLine two\n\n- a\n  b\n",
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(main, ["build", str(tmp_path / "d.md"), "--force"])
+    assert result.exit_code == 0, result.output
+    return [p.text for p in Document(str(tmp_path / "d.docx")).paragraphs]
+
+
+def test_single_newlines_join_by_default(tmp_path):
+    texts = _build_docx(tmp_path)
+    assert "Line one Line two" in texts and "a b" in texts
+
+
+def test_preserve_line_breaks_keeps_newlines(tmp_path):
+    texts = _build_docx(tmp_path, "preserve_line_breaks: true\n")
+    assert "Line one\nLine two" in texts and "a\nb" in texts
+
+
+def test_preserve_line_breaks_in_pdf_html():
+    from md_doc.math import markdown_html
+
+    assert "<br" not in markdown_html("a\nb", [])
+    assert "<br" in markdown_html("a\nb", [], line_breaks=True)
