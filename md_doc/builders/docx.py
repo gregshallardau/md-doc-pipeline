@@ -59,7 +59,7 @@ from ..docx_theme import (
     set_cell_shading,
     set_para_shading,
 )
-from .pdf import _inject_page_breaks, _keep_heading_with_next
+from .pdf import _inject_blank_lines, _inject_page_breaks, _keep_heading_with_next
 from ._assets import (
     _DEFAULT_GEOMETRY,
     _drop_empty_table_headers,
@@ -1452,6 +1452,11 @@ class _DocxBuilder(HTMLParser):
                 section.page_width, section.page_height = width, height
                 section.orientation = WD_ORIENT.LANDSCAPE if width > height else WD_ORIENT.PORTRAIT
                 section.different_first_page_header_footer = False
+                self._paragraph = None
+            if "md-doc-blank" in classes:
+                # Extra blank line in the source: one empty paragraph.
+                self._flush_pending_break()
+                self.doc.add_paragraph()
                 self._paragraph = None
             if "md-doc-page-break" in classes:
                 # Defer: a break on the *next* paragraph keeps that paragraph's
@@ -4410,7 +4415,11 @@ def build(
     # Explicit page breaks are shared with the PDF builder.
     from ..pagination import inject_section_breaks
 
-    body = inject_section_breaks(_inject_page_breaks(body))
+    body = inject_section_breaks(
+        _inject_page_breaks(
+            _inject_blank_lines(body, config.get("preserve_blank_lines", True) is not False)
+        )
+    )
     body = collapse_select_markup(body)
     if output_format == "dotx":
         # Same source, fillable Word template: ?[...] → Word form fields.

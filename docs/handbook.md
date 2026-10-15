@@ -714,6 +714,9 @@ This text starts on the next page.
 
 ### Alignment and layout
 
+- Extra blank lines add vertical space: each blank line beyond the first becomes one empty line in PDF
+  and Word (code blocks are untouched). Set `preserve_blank_lines: false` to collapse them like
+  plain Markdown.
 - `body_text_align: justify` (config) justifies Word body text.
 - Wrap a section in `<div style="text-align: left">…</div>` to override alignment for it; every
   paragraph and heading inside inherits it. PDF uses the CSS directly.
@@ -2724,6 +2727,7 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `pdf_theme` | string | cascade | Theme file overriding the normal search for all formats. |
 | `dotx_field_type` | enum | `form` | `form` (fillable Word fields) or `merge` (MERGEFIELDs). |
 | `body_text_align` | enum | theme | Word body alignment: `justify`, `left`, `center`, `right`. |
+| `preserve_blank_lines` | boolean | `true` | Each blank line beyond the first adds one line of vertical space (PDF/Word); `false` collapses them like plain Markdown. Code blocks are untouched. |
 | `table_col_widths` | list | auto | Relative column widths for every table, e.g. `[30, 70]`; per table use `<!-- col-widths: 30, 70 -->`. |
 | `css_vars` | mapping | — | PDF only: per-document CSS custom properties; image paths resolved by the asset cascade. |
 | `pptx_template` | string | built-in | `.pptx`/`.potx` base for slide output. |

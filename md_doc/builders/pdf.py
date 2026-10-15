@@ -166,6 +166,55 @@ def _inject_page_breaks(md_content: str) -> str:
     )
 
 
+_BLANK_SPACER = '<div class="md-doc-blank" style="height: 1em"></div>'
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _inject_blank_lines(md_content: str, enabled: bool = True) -> str:
+    """Honour extra blank lines as vertical space (``preserve_blank_lines``).
+
+    Markdown treats any run of blank lines as one paragraph break. Each blank
+    line *beyond the first* becomes one line-height spacer div, recognised by
+    the PDF (inline height) and the DOCX HTML walker (an empty paragraph).
+    Fenced code is left verbatim; ``{% include %}`` fragments are joined
+    tightly, so ordinary single blank lines never add space.
+    """
+    if not enabled:
+        return md_content
+    out: list[str] = []
+    blanks = 0
+    fence: str | None = None
+
+    def flush() -> None:
+        nonlocal blanks
+        if blanks > 1 and out:  # leading blanks stay plain (no top spacer)
+            for _ in range(blanks - 1):
+                out.extend(["", _BLANK_SPACER])
+            out.append("")
+        else:
+            out.extend([""] * blanks)
+        blanks = 0
+
+    for line in md_content.split("\n"):
+        m = _FENCE_RE.match(line)
+        if fence is not None:
+            out.append(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+        elif m:
+            flush()
+            fence = m.group(1)
+            out.append(line)
+        elif not line.strip():
+            blanks += 1
+        else:
+            flush()
+            out.append(line)
+    flush_tail = blanks  # trailing blanks: keep as-is (no following content)
+    out.extend([""] * flush_tail)
+    return "\n".join(out)
+
+
 _FORM_FIELD_RE = re.compile(r"\?\[(.+?)\]")
 _ROW_OPEN_RE = re.compile(r"^\?\[row\]\s*$", re.MULTILINE)
 _ROW_CLOSE_RE = re.compile(r"^\?\[/row\]\s*$", re.MULTILINE)
@@ -1824,7 +1873,11 @@ def build(
         body = _strip_leading_h1(body)
     from ..pagination import inject_section_breaks, pdf_sections
 
-    body = inject_section_breaks(_inject_page_breaks(body))
+    body = inject_section_breaks(
+        _inject_page_breaks(
+            _inject_blank_lines(body, config.get("preserve_blank_lines", True) is not False)
+        )
+    )
 
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(collapse_select_markup(body), is_form)
