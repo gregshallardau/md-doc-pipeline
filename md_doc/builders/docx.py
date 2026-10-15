@@ -4485,7 +4485,7 @@ def build(
     # Same defaults as the PDF builder so the cover carries identical metadata
     # (the PDF always shows an author and a date).
     author: str = config.get("author", "Document Producer")
-    date_str: str = config.get("date") or datetime.date.today().strftime("%-d %B %Y")
+    date_str: str = config.get("date") or f"{(today := datetime.date.today()).day} {today:%B %Y}"
 
     if cover_page:
         # The first H1 becomes the cover title. Without a cover the H1 stays in
