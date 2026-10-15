@@ -571,6 +571,12 @@ A statement with a supporting note.[^core-example]
 widths are ignored. PDF, DOCX and DOTX all honour them; without them columns are sized to
 their content, as in PDF.
 
+**Grouped striping.** Put `<!-- table-striping: group -->` on the line before a table to
+alternate the row background whenever the first-column value changes. Consecutive rows
+with the same first-column value share a shade; a blank first cell continues the previous
+group. Other tables keep the theme's normal every-other-row striping. This works in PDF,
+DOCX and DOTX.
+
 **Wrapping wide content.** PDF table cells wrap long URLs and unbroken text so they
 do not force the table beyond the text width. Use column widths above to stop one
 column taking most of the available space. For an approximate character width in

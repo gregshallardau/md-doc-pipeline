@@ -1850,6 +1850,24 @@ def build(
         markdown_html(body, _MD_EXTENSIONS, coerce_bool(config.get("preserve_line_breaks")))
     )
     html_body = _drop_empty_table_headers(html_body)
+    if "table-striping:" in html_body:
+        from ..table_striping import mark_group_stripes
+
+        html_body = mark_group_stripes(html_body)
+        stripe_bg = "#edf1f5"
+        if css_text:
+            stripe_rule = re.search(
+                r"tr\s*:\s*nth-child\(even\)\s+td\s*\{[^}]*background(?:-color)?\s*:\s*([^;}]+)",
+                css_text,
+                re.I,
+            )
+            if stripe_rule:
+                stripe_bg = stripe_rule.group(1).strip()
+        html_body = (
+            f'<style>.md-doc-group-alt td {{ background: {stripe_bg} !important; }} '
+            ".md-doc-group-base td { background: transparent !important; }</style>"
+            + html_body
+        )
     # Mark before keep-with-next wrappers are inserted; direct-child selectors
     # otherwise miss a leading heading after an included letterhead.
     html_body = re.sub(r"<h1\b", '<h1 data-md-doc-first-heading="true"', html_body, count=1)

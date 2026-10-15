@@ -422,6 +422,68 @@ def install_studio(app, workspace, build_root, builds, write_lock):
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/lint")
+    def lint_workspace(req: SnapshotRequest):
+        """Lint the visible workspace snapshot, including unsaved text buffers."""
+        if len(req.buffers) > 100:
+            raise HTTPException(413, "At most 100 unsaved buffers can be included")
+        try:
+            with tempfile.TemporaryDirectory(prefix="lint-", dir=build_root) as directory:
+                snapshot_workspace, _ = make_snapshot(
+                    workspace, Path(directory) / "project", req.buffers
+                )
+                from md_doc.linter import lint_directory
+
+                source_root = _find_repo_root(workspace)
+                depth = len(workspace.relative_to(source_root).parts)
+                snapshot_root = snapshot_workspace.parents[depth - 1] if depth else snapshot_workspace
+                results = lint_directory(
+                    snapshot_workspace,
+                    repo_root=snapshot_root,
+                )
+                issues = []
+                for issue_path, found in sorted(results.items()):
+                    relative = issue_path.relative_to(snapshot_workspace).as_posix()
+                    for item in found:
+                        issues.append({
+                            "path": relative,
+                            "severity": item.severity,
+                            "message": item.message,
+                            "line": getattr(item, "line", None),
+                        })
+                import re
+
+                image_ref = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+                for document in snapshot_workspace.rglob("*.md"):
+                    if any(part.startswith(".") for part in document.relative_to(snapshot_workspace).parts):
+                        continue
+                    for line_number, line in enumerate(document.read_text(errors="replace").splitlines(), 1):
+                        for match in image_ref.finditer(line):
+                            target = match.group(1).strip().split()[0].strip("<>")
+                            if "://" in target or target.startswith(("data:", "#", "/")):
+                                continue
+                            resolved = (document.parent / target.split("#", 1)[0]).resolve()
+                            if not resolved.is_relative_to(snapshot_workspace) or not resolved.is_file():
+                                issues.append({
+                                    "path": document.relative_to(snapshot_workspace).as_posix(),
+                                    "severity": "error",
+                                    "message": f"Line {line_number}: image file not found: {target}",
+                                    "line": line_number,
+                                })
+                return {"issues": issues, "revision": req.revision, "checked": len(issues)}
+        except (ValueError, OSError, yaml.YAMLError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/assets")
+    def list_assets():
+        return {
+            "assets": [
+                {"path": p.relative_to(workspace).as_posix(), "name": p.name}
+                for p in project_files(workspace)
+                if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+            ]
+        }
+
     @app.get("/api/capabilities")
     def capabilities():
         return {

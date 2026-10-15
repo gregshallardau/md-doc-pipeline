@@ -112,6 +112,8 @@
     connected: true,
     error: null,
     log: "",
+    lintIssues: [],
+    lintRevision: null,
     changeSignature: null,
     commands: [],
     commandIndex: 0,
@@ -1566,8 +1568,8 @@
           minute: "2-digit",
         });
       $("diagnostic-count").replaceChildren(
-        icon("check"),
-        document.createTextNode("No issues"),
+        icon(state.lintIssues.length ? "alert" : "check"),
+        document.createTextNode(state.lintIssues.length ? `${state.lintIssues.length} lint issue(s)` : "No issues"),
       );
       renderDiagnostics();
     } catch (error) {
@@ -1609,6 +1611,49 @@
         el("pre", null, state.log),
       );
       $("diagnostics-content").append(details);
+    }
+    if (state.lintIssues.length) {
+      const group = el("details", "lint-results");
+      group.open = true;
+      group.append(el("summary", "diagnostic-info", `Workspace checks · ${state.lintIssues.length} issue(s)`));
+      for (const issue of state.lintIssues) {
+        const row = el("button", "diagnostic-info", `${issue.path}: ${issue.severity} — ${issue.message}`);
+        row.title = "Open file";
+        row.onclick = async () => {
+          await openFile(issue.path);
+          if (issue.line && state.editor) {
+            state.editor.setPosition({ lineNumber: issue.line, column: 1 });
+            state.editor.revealLineInCenter(issue.line);
+            state.editor.focus();
+          }
+        };
+        group.append(row);
+      }
+      $("diagnostics-content").append(group);
+    } else if (state.lintRevision !== null) {
+      $("diagnostics-content").append(el("div", "diagnostic-info", "Workspace lint passed with no issues."));
+    }
+  }
+  async function checkWorkspace() {
+    state.lintRevision = null;
+    state.lintIssues = [];
+    $("diagnostics-panel").hidden = false;
+    $("diagnostics-content").replaceChildren(el("div", "diagnostic-info", "Checking workspace…"));
+    try {
+      const result = await api("/api/lint", { method: "POST", body: JSON.stringify({ path: state.active || "", buffers: buffers(), revision: state.revision }) });
+      state.lintIssues = result.issues;
+      state.lintRevision = result.revision;
+      renderDiagnostics();
+      $("diagnostic-count").replaceChildren(
+        icon(result.issues.length ? "alert" : "check"),
+        document.createTextNode(result.issues.length ? `${result.issues.length} lint issue(s)` : "No issues"),
+      );
+    } catch (error) {
+      $("diagnostics-content").replaceChildren(el("div", "diagnostic-error", error.message));
+      $("diagnostic-count").replaceChildren(
+        icon("alert"),
+        document.createTextNode("Workspace check failed"),
+      );
     }
   }
   function showDocumentOutline(data) {
@@ -2690,12 +2735,8 @@
     if (path) {
       body.append(el("p", null, path));
       for (const [action, label, description, iconName] of [
-        [
-          "rename",
-          "Rename or move",
-          "Local asset references should be reviewed after a move",
-          "edit",
-        ],
+        ["rename", "Rename", "Change the name in this folder", "edit"],
+        ["move", "Move to…", "Choose a destination folder", "folder"],
         ["duplicate", "Duplicate", "Make a separate copy of this file", "copy"],
         [
           "trash",
@@ -2742,6 +2783,7 @@
     dialog("File actions", body);
   }
   async function fileAction(action, path) {
+    const move = action === "move";
     const unavailable = () => state.buffers.has(path) &&
       (dirty(state.buffers.get(path)) || state.buffers.get(path).saving);
     if (unavailable()) {
@@ -2787,25 +2829,43 @@
       });
       return;
     }
+    const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    const basename = path.split("/").pop();
+    const folders = [""];
+    const walk = (nodes) => nodes.forEach((node) => {
+      if (node.type === "dir") { folders.push(node.path); walk(node.children || []); }
+    });
+    walk(state.tree);
+    const fileOperation = move ? "rename" : action;
     dialog(
-      action === "rename" ? "Rename or move file" : "Duplicate file",
-      `<p>Relative references are preserved as written. Check the preview after moving a document.</p><label for="file-destination">Destination path</label><input class="input" id="file-destination" value="${escape(path)}">`,
+      fileOperation === "rename" ? (move ? "Move file" : "Rename file") : "Duplicate file",
+      fileOperation === "rename"
+        ? move
+          ? `<p>Choose a destination folder. Relative references may need updating after a move.</p><label for="file-folder">Destination folder</label><select class="input" id="file-folder">${folders.map((folder) => `<option value="${escape(folder)}" ${folder === parent ? "selected" : ""}>${escape(folder || "Workspace root")}</option>`).join("")}</select><label for="file-name">File name</label><input class="input" id="file-name" value="${escape(basename)}">`
+          : `<label for="file-name">New file name</label><input class="input" id="file-name" value="${escape(basename)}">`
+        : `<label for="file-destination">Copy name</label><input class="input" id="file-destination" value="${escape(path)}">`,
       [
         { label: "Cancel", run: (d) => d.close() },
         {
-          label: action === "rename" ? "Move file" : "Duplicate",
+          label: fileOperation === "rename" ? (move ? "Move file" : "Rename") : "Duplicate",
           primary: true,
           run: async (d) => {
-            const destination = $("file-destination").value.trim();
+            let destination;
+            if (fileOperation === "rename") {
+              const name = $("file-name").value.trim();
+              if (!name || name.includes("/") || name === "." || name === "..") throw new Error("Enter a file name without folder separators");
+              const folder = move ? $("file-folder").value : parent;
+              destination = [folder, name].filter(Boolean).join("/");
+            } else destination = $("file-destination").value.trim();
             if (unavailable()) {
               toast("The file changed while the dialog was open. Save or close it first.", true);
               return;
             }
             await api("/api/files/action", {
               method: "POST",
-              body: JSON.stringify({ action, path, destination }),
+              body: JSON.stringify({ action: fileOperation, path, destination }),
             });
-            if (action === "rename" && state.buffers.has(path))
+            if (fileOperation === "rename" && state.buffers.has(path))
               await closeFile(path);
             d.close();
             await loadTree();
@@ -2911,13 +2971,39 @@
     const parent = current().path.includes("/")
       ? current().path.slice(0, current().path.lastIndexOf("/") + 1)
       : "";
+    api("/api/assets").then(({ assets }) => {
+      const choices = assets.filter((asset) => {
+        const from = parent.split("/").filter(Boolean), to = asset.path.split("/");
+        let shared = 0;
+        while (shared < from.length && from[shared] === to[shared]) shared++;
+        asset.relative = [...from.slice(shared).map(() => ".."), ...to.slice(shared)].join("/");
+        return true;
+      });
+      dialog("Insert an image", `<p>Choose an image already in this workspace or upload a new one.</p><label for="asset-search">Filter images</label><input class="input" id="asset-search" placeholder="Search image paths…"><label for="asset-choice">Workspace images</label><select class="input" id="asset-choice" size="7">${choices.map((asset) => `<option value="${escape(asset.path)}">${escape(asset.relative)}</option>`).join("")}</select><label for="asset-alt">Description</label><input class="input" id="asset-alt" placeholder="Describe this image">`, [
+        { label: "Cancel", run: (d) => d.close() },
+        { label: "Upload new…", run: (d) => { d.close(); uploadImage(parent); } },
+        { label: "Insert selected", primary: true, run: (d) => {
+          const asset = choices.find((item) => item.path === $("asset-choice").value);
+          if (!asset) throw new Error("Choose an image from the list");
+          insert("image", `![${$("asset-alt").value.replace(/[\[\]]/g, "")}](${encodeURI(asset.relative).replace(/\(/g, "%28").replace(/\)/g, "%29")})`);
+          d.close(); schedulePreview();
+        } },
+      ]);
+      $("asset-search").oninput = () => {
+        const q = $("asset-search").value.toLowerCase();
+        for (const option of $("asset-choice").options) option.hidden = !option.textContent.toLowerCase().includes(q);
+      };
+      if (!choices.length) $("asset-choice").replaceChildren(new Option("No images in this workspace", ""));
+    }).catch((error) => toast(error.message, true));
+  }
+  function uploadImage(parent) {
     dialog(
-      "Insert a local image",
+      "Upload an image",
       `<p>The image is copied into the project and referenced by a relative path.</p><label for="image-file">Image</label><input class="input" id="image-file" type="file" accept=".png,.jpg,.jpeg,.gif,.webp"><label for="image-path">Asset destination</label><input class="input" id="image-path" value="${escape(parent)}assets/image.png"><label for="image-alt">Description</label><input class="input" id="image-alt" placeholder="Describe this image">`,
       [
         { label: "Cancel", run: (d) => d.close() },
         {
-          label: "Insert image",
+          label: "Upload and insert",
           primary: true,
           run: async (d) => {
             const file = $("image-file").files[0];
@@ -3001,6 +3087,7 @@
   }
   const actions = {
     "quick-open": () => commandPalette(),
+    lint: () => checkWorkspace(),
     appearance: () => {
       state.appearance =
         document.documentElement.dataset.theme === "dark" ? "light" : "dark";

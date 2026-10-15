@@ -1256,6 +1256,25 @@ kbd {
   color: var(--muted);
   font-size: 12px;
 }
+.diagnostics-panel .lint-results {
+  padding: 0 16px 12px;
+}
+.diagnostics-panel .lint-results > summary {
+  padding: 8px 0;
+  cursor: pointer;
+}
+.diagnostics-panel .lint-results > button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.diagnostics-panel .lint-results > button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
 .command-dialog,
 .form-dialog {
   border: 1px solid var(--border);

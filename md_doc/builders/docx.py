@@ -696,6 +696,8 @@ class _DocxBuilder(HTMLParser):
         self._layout_css = layout_css  # PDF theme CSS used for table auto-layout
         # pdf_forms documents draw ordinary tables as plain black grids.
         self._form_document = form_document
+        self._next_table_group_striping = False
+        self._active_table_group_striping = False
 
         apply_theme_to_doc(self.doc, self._theme)
 
@@ -1614,6 +1616,8 @@ class _DocxBuilder(HTMLParser):
             except ValueError:
                 self._table_gap = 0.0
             self._table_pdf_html = dict(attrs).get("data-pdf")
+            self._active_table_group_striping = self._next_table_group_striping
+            self._next_table_group_striping = False
             self._in_table = True
             self._table_style = _parse_inline_style(dict(attrs).get("style"))
             self._table_rows = []
@@ -1877,6 +1881,8 @@ class _DocxBuilder(HTMLParser):
                     self._next_table_col_widths = widths
             except ValueError:
                 pass
+        elif stripped.lower() == "table-striping: group":
+            self._next_table_group_striping = True
 
     # ------------------------------------------------------------------
     # Table rendering
@@ -2195,6 +2201,22 @@ class _DocxBuilder(HTMLParser):
             if pdf_heights is not None and len(pdf_heights) != n_rows:
                 pdf_heights = None
         header_rows = 1 if all(cell[0] for cell in rows[0]) else 0
+        group_stripes: list[bool] = []
+        group_index = -1
+        previous_group: str | None = None
+        for row_index, cells in enumerate(rows):
+            if row_index < header_rows:
+                group_stripes.append(False)
+                continue
+            key = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", cells[0][1])).strip() if cells else ""
+            if key:
+                if key != previous_group:
+                    group_index += 1
+                    previous_group = key
+            elif previous_group is None:
+                group_index += 1
+                previous_group = ""
+            group_stripes.append(group_index % 2 == 1)
 
         for r_idx, row_cells in enumerate(rows):
             is_last_row = r_idx == n_rows - 1
@@ -2362,7 +2384,11 @@ class _DocxBuilder(HTMLParser):
                     # <thead> and the body in a <tbody>, and CSS tr:nth-child(even)
                     # counts within the tbody: the first body row is unshaded, the
                     # second shaded (verified against the rendered PDF).
-                    if row_alt_bg and (r_idx - header_rows) % 2 == 1:
+                    if row_alt_bg and (
+                        group_stripes[r_idx]
+                        if self._active_table_group_striping
+                        else (r_idx - header_rows) % 2 == 1
+                    ):
                         set_cell_shading(cell, row_alt_bg)
                     # Bottom border
                     if not form_kind:
