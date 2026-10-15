@@ -2210,9 +2210,10 @@ class _DocxBuilder(HTMLParser):
                 continue
             key = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", cells[0][1])).strip() if cells else ""
             if key:
-                if key != previous_group:
-                    group_index += 1
-                    previous_group = key
+                # A repeated label starts a new group too; blank cells alone
+                # indicate continuation of the previous group.
+                group_index += 1
+                previous_group = key
             elif previous_group is None:
                 group_index += 1
                 previous_group = ""

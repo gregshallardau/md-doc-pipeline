@@ -572,10 +572,10 @@ widths are ignored. PDF, DOCX and DOTX all honour them; without them columns are
 their content, as in PDF.
 
 **Grouped striping.** Put `<!-- table-striping: group -->` on the line before a table to
-alternate the row background whenever the first-column value changes. Consecutive rows
-with the same first-column value share a shade; a blank first cell continues the previous
-group. Other tables keep the theme's normal every-other-row striping. This works in PDF,
-DOCX and DOTX.
+alternate the row background by group. Each nonblank first cell starts a new group, even
+when its text repeats the previous label; blank first cells continue the group above.
+Other tables keep the theme's normal every-other-row striping. This works in PDF, DOCX and
+DOTX. The `table-striping` and `col-widths` comments can appear together in either order.
 
 **Wrapping wide content.** PDF table cells wrap long URLs and unbroken text so they
 do not force the table beyond the text width. Use column widths above to stop one

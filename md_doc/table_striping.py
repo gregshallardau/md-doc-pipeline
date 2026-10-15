@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from html import unescape
 
-_DIRECTIVE = re.compile(r"<!--\s*table-striping:\s*group\s*-->\s*(<table\b[^>]*>.*?</table\s*>)", re.I | re.S)
+_DIRECTIVE = re.compile(
+    r"<!--\s*table-striping:\s*group\s*-->"
+    r"(?:\s*<!--\s*col-widths:[^>]*-->)*\s*"
+    r"(<table\b[^>]*>.*?</table\s*>)",
+    re.I | re.S,
+)
 _ROW = re.compile(r"<tr\b([^>]*)>(.*?)</tr\s*>", re.I | re.S)
 _CELL = re.compile(r"<(?:td|th)\b[^>]*>(.*?)</(?:td|th)\s*>", re.I | re.S)
 
@@ -29,9 +34,10 @@ def mark_group_stripes(html: str) -> str:
                 # Blank first cells continue the current group. This supports
                 # tables that label a group once and leave its following rows empty.
                 if key:
-                    if key != previous:
-                        group_index += 1
-                        previous = key
+                    # Every explicit first-column label starts a group. Repeated
+                    # labels are still separate groups unless the later row is blank.
+                    group_index += 1
+                    previous = key
                 elif previous is None:
                     group_index += 1
                     previous = ""
