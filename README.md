@@ -63,7 +63,7 @@ Markdown source on the left, the generated PDF on the right, in the [browser edi
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager
 - PDF generation requires WeasyPrint system libraries — see the [WeasyPrint docs](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation) for platform setup.
 
-**Verified on Windows 11 (16 Oct 2026).** Install from a checkout, `md-doc doctor`, and PDF and Word (`.docx`) builds, including Mermaid diagrams in Word via the `[mermaid]` extra, all work on Windows 11. The browser editor was not tested. On Windows, WeasyPrint needs GTK/Pango (for example MSYS2: `pacman -S mingw-w64-x86_64-pango`) with its `bin` folder in `WEASYPRINT_DLL_DIRECTORIES`. The `[mermaid]` extra also needs Cairo on `PATH`, and `PYTHONUTF8=1` avoids `cp1252` encoding errors.
+**Verified on Windows 11 (16 Oct 2026).** Install from a checkout, `md-doc doctor`, and PDF and Word (`.docx`) builds, including Mermaid diagrams in Word via the `[mermaid]` extra, all work on Windows 11. The browser editor (`md-doc-edit`) also works on Windows 11: opening, editing and saving files were confirmed on 17 Oct 2026. On Windows, WeasyPrint needs GTK/Pango (for example MSYS2: `pacman -S mingw-w64-x86_64-pango`) with its `bin` folder in `WEASYPRINT_DLL_DIRECTORIES`. The `[mermaid]` extra also needs Cairo on `PATH`, and `PYTHONUTF8=1` avoids `cp1252` encoding errors.
 
 **Option A: install a release (no clone).** Each [GitHub release](https://github.com/gregshallardau/md-doc-pipeline/releases) carries a wheel. md-doc is not published to PyPI.
 
