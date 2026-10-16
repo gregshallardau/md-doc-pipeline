@@ -953,7 +953,11 @@ _BASE_FIXES_CSS = (
     ".report-body table + table { margin-top: 10pt; }\n"
     ".report-body table :is(th, td) { overflow-wrap: break-word; box-sizing: border-box; }\n"
     ".report-body table .md-wrap { overflow-wrap: anywhere; }\n"
-    ".report-body .md-doc-page-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }\n"
+    # A theme may break *after* the marker instead (`break-after: page`); with the
+    # forced break before it too, the zero-height marker would sit alone on an
+    # otherwise blank page. One break, before the marker, whatever the theme says.
+    ".report-body .md-doc-page-break { page-break-before: always; break-before: page; "
+    "page-break-after: auto; break-after: auto; height: 0; margin: 0; padding: 0; }\n"
     # WeasyPrint does not reliably carry break-inside:avoid from a keep-together
     # wrapper down to a list inside it, and then splits a heading's short list
     # across pages. Say it on the lists themselves.
