@@ -549,6 +549,13 @@ def _render_cell_html(
             if "critic-" in (dict(attrs).get("class") or ""):
                 # Cells show review marks as formatting (Word tracked changes
                 # cannot be built from a flattened cell).
+                if tag == "span" and "critic-bar" in (dict(attrs).get("class") or ""):
+                    builder = getattr(write_text, "__self__", None)
+                    cell = paragraph._p.getparent()
+                    if builder is not None and hasattr(builder, "_bar_cells"):
+                        if cell is not None and cell not in builder._bar_cells:
+                            builder._bar_cells.append(cell)
+                    return
                 self._review = {"ins": "ins", "del": "del", "mark": "hl"}.get(tag)
                 return
             if tag == "span" and "docx-cap" in (dict(attrs).get("class") or ""):
@@ -767,6 +774,7 @@ class _DocxBuilder(HTMLParser):
         self._hl = False
         self._hl_runs: list[Any] = []
         self._bar_paragraphs: list[Any] = []
+        self._bar_cells: list[Any] = []  # w:tc elements holding a change-bar marker
         self._rev_id = 0
         self._list_stack: list[str] = []
         self._list_num_ids: list[int | None] = []
@@ -1353,11 +1361,14 @@ class _DocxBuilder(HTMLParser):
             self._bar_paragraphs.append(paragraph)
 
     def apply_change_bars(self) -> None:
-        """Word's "simple markup" change bar: a red border beside each changed paragraph.
+        """Word's "simple markup" change bar: a red bar in the right-hand margin.
 
+        Paragraph indents differ (lists, callouts) but the right edge is the same for
+        all of them, so a right border keeps every bar in one vertical strip, as the PDF
+        does (a shaded callout's shading stretches to meet its bar). A changed table row
+        gets a red right edge on its last cell, which stays at the table's edge.
         Run after the whole document is built, because paragraph styling (callouts)
-        replaces any border set earlier. A callout paragraph already carries its own
-        left rule, so its bar goes on the right-hand edge instead.
+        replaces any border set earlier.
         """
         targets = [p._p for p in self._bar_paragraphs]
 
@@ -1385,21 +1396,41 @@ class _DocxBuilder(HTMLParser):
         for element in targets:
             pPr = element.get_or_add_pPr()
             border = pPr.find(qn("w:pBdr"))
-            edge = "left"
             if border is None:
                 border = OxmlElement("w:pBdr")
                 _insert_ppr_in_order(pPr, border, ["shd", *_PPR_AFTER_SHD])
-            elif border.find(qn("w:left")) is not None:
-                edge = "right"
-            if border.find(qn(f"w:{edge}")) is not None:
+            if border.find(qn("w:right")) is not None:
                 continue
-            bar = OxmlElement(f"w:{edge}")
+            bar = OxmlElement("w:right")
             bar.set(qn("w:val"), "single")
-            bar.set(qn("w:sz"), "12")
-            bar.set(qn("w:space"), "8")
+            bar.set(qn("w:sz"), "18")
+            bar.set(qn("w:space"), "14")
             bar.set(qn("w:color"), "CF222E")
             border.append(bar)
+
+        for cell in self._bar_cells:
+            row = cell.getparent()
+            last = [c for c in row if c.tag == qn("w:tc")][-1]
+            tcPr = last.get_or_add_tcPr()
+            borders = tcPr.find(qn("w:tcBorders"))
+            if borders is None:
+                borders = OxmlElement("w:tcBorders")
+                later = [qn(f"w:{t}") for t in ("shd", "noWrap", "tcMar", "vAlign", "hideMark")]
+                anchor = next((c for c in tcPr if c.tag in later), None)
+                if anchor is not None:
+                    anchor.addprevious(borders)
+                else:
+                    tcPr.append(borders)
+            for old in borders.findall(qn("w:right")):
+                borders.remove(old)
+            bar = OxmlElement("w:right")
+            bar.set(qn("w:val"), "single")
+            bar.set(qn("w:sz"), "18")
+            bar.set(qn("w:space"), "0")
+            bar.set(qn("w:color"), "CF222E")
+            borders.append(bar)
         self._bar_paragraphs = []
+        self._bar_cells = []
 
     def _add_review_comment(self, text: str) -> None:
         """A Word comment anchored to the highlight just written (else the last run)."""

@@ -43,6 +43,7 @@ from ..table_layout import soften_long_tokens  # noqa: E402
 from ..critic import prepare as prepare_review_markup  # noqa: E402
 from ..pdf_features import (  # noqa: E402
     chain_finishers,
+    change_bars_finisher,
     color_profile_css,
     expand_directives,
     font_face_css,
@@ -2105,6 +2106,8 @@ def build(
         field_meta = _collect_form_field_meta(html_body)
         if field_meta:
             finishers.append(_make_forms_finisher(field_meta))
+    if "critic-changed" in html:  # review_markup: simple — change bars in the margin
+        finishers.append(change_bars_finisher(zoom or 1.0))
     finishers.append(layout_check_finisher(strict=coerce_bool(config.get("pdf_layout_check"))))
     wp_kwargs["finisher"] = chain_finishers(*finishers)
     _write_pdf(

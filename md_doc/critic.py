@@ -288,16 +288,19 @@ def problems(markdown: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
-_BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "blockquote"}
+_BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "blockquote"}
 _TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>")
 
 
 def mark_changed_blocks(html: str) -> str:
     """Give each block that holds a change-bar marker the class ``critic-changed``.
 
-    The marker is an empty ``<span class="critic-bar">`` written by ``simple`` mode;
-    CSS cannot style a parent from a child, so the PDF builder tags the block (the
-    whole callout, for a change inside a blockquote).
+    The marker is an empty ``<span class="critic-bar">`` written by ``simple`` mode.
+    The block is the paragraph, list item, heading or table *row*, or the whole
+    callout for a change inside a blockquote. The PDF builder then draws the bar in
+    the page margin from the laid-out position of each tagged block
+    (``pdf_features.change_bars_finisher``), so bars line up down the page whatever
+    the nesting.
     """
     if 'class="critic-bar"' not in html:
         return html
@@ -335,11 +338,6 @@ CSS = """\
 ins.critic-ins { color: #1a7f37; background: #e6ffec; text-decoration: underline; }
 del.critic-del { color: #cf222e; background: #ffebe9; text-decoration: line-through; }
 mark.critic-hl { background: #fff3a3; color: inherit; }
-.critic-changed { position: relative; }
-.critic-changed::before { content: ""; position: absolute; left: -5mm; top: 0; bottom: 0;
-  border-left: 1.5pt solid #cf222e; }
-td.critic-changed, th.critic-changed { border-left: 1.5pt solid #cf222e; }
-td.critic-changed::before, th.critic-changed::before { display: none; }
 .critic-comment { float: footnote; footnote-display: block; font-size: 8pt; line-height: 1.35;
   font-style: italic; color: #5d6d7e; }
 .critic-comment::before { content: attr(data-comment); }

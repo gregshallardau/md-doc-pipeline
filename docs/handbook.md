@@ -837,13 +837,19 @@ In `show` mode:
   dropped.
 - **Slides** treat `show` and `simple` as `accept`.
 
-In `simple` mode the text reads as the finished document. In the **PDF** a red bar sits in the
-margin beside every heading, paragraph, list item or table cell that changed (a deleted line
-leaves no bar, since nothing remains to mark), and highlights and comments appear as in `show`.
-In **Word** each changed paragraph gets a red left border, highlights are kept, and comments are
-real Word comments; no tracked changes are created. A change inside a callout flags the whole
-box: the PDF bar sits outside the box, and in Word the red bar goes on the box's right-hand edge
-so it does not compete with the callout's own left rule.
+In `simple` mode the text reads as the finished document, and a red change bar marks every
+changed block in the **right-hand page margin**, in one vertical strip down the page, so the
+bars line up whatever sits beside them (a paragraph, a list item, a heading, a whole callout, or
+a table row). A deleted line leaves no bar, since nothing remains to mark. Highlights and
+comments appear as in `show`.
+
+- **PDF** — each bar is drawn from the laid-out position of the changed block, a fixed distance
+  beyond the text edge; a block split across pages gets a bar on each page. A change inside a
+  callout flags the whole box.
+- **Word** — the bar is a red right-hand border on each changed paragraph, with a gap that puts it
+  in the margin; a shaded callout's shading stretches to meet it. A changed table row gets a red
+  right edge on its last cell, which stays at the table's edge. Highlights are kept and comments
+  are real Word comments; no tracked changes are created.
 
 #### One build, several versions
 
@@ -2110,8 +2116,9 @@ run does not label samples pass or fail; it is a review aid.
 - **Renderer artifacts.** LibreOffice keeps heading space-before at automatic page breaks (Word
   and the PDF drop it); this shows up only when checking with LibreOffice.
 - **Review marks.** `review_markup: show` gives real tracked changes and comments in Word but
-  coloured text and comment footnotes in the PDF; `simple` gives a margin bar in the PDF but a
-  paragraph border in Word (Word draws its own change bars only for real tracked changes);
+  coloured text and comment footnotes in the PDF; `simple` draws a margin bar in the PDF and a
+  right-hand paragraph border in Word (Word draws its own change bars only for real tracked
+  changes), with table rows marked at the table edge in Word;
   slides never show them.
 - **PDF-only features.** Bookmarks, PDF/A/UA/X variants, embedded files, numbered headings,
   page-bottom footnotes, `<!-- columns -->` and `<!-- grid -->` blocks, duplex pages, chapter

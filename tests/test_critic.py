@@ -352,7 +352,7 @@ def test_pdf_simple_draws_change_bars_and_keeps_comments(tmp_path, monkeypatch):
         doc_path=tmp_path / "d.md",
     )
     html = captured["html"]
-    assert 'class="critic-changed"' in html and ".critic-changed::before" in html
+    assert 'class="critic-changed"' in html and '<tr class="critic-changed">' in html
     assert 'data-comment="Check this"' in html
     assert "<ins" not in html.split("<body>")[1] and weasyprint is not None
 
@@ -363,7 +363,7 @@ def test_word_simple_has_change_bars_comments_and_no_revisions(tmp_path):
     out = build_docx(tmp_path, "simple")
     xml = xml_of(out)
     assert "<w:ins " not in xml and "<w:del " not in xml
-    assert 'w:left w:val="single"' in xml and 'w:highlight w:val="yellow"' in xml
+    assert 'w:right w:val="single"' in xml and 'w:highlight w:val="yellow"' in xml
     assert [c.text for c in Document(str(out)).comments] == ["Check this"]
 
 
@@ -396,7 +396,7 @@ def test_review_exports_writes_one_file_per_variant(tmp_path):
     ]
     assert "<w:ins " in xml_of(tmp_path / "report-markup.docx")
     assert "<w:ins " not in xml_of(tmp_path / "report-clean.docx")
-    assert "<w:left " in xml_of(tmp_path / "report-simple.docx")
+    assert "<w:right " in xml_of(tmp_path / "report-simple.docx")
 
 
 def test_review_flag_replaces_review_exports(tmp_path):
@@ -427,7 +427,7 @@ def test_changes_inside_a_callout_mark_the_whole_box():
     assert html.count("critic-changed") == 1 and "<li>" in html
 
 
-def test_word_callout_paragraphs_get_the_bar_on_the_other_side(tmp_path):
+def test_word_bars_share_one_margin_strip_even_in_callouts(tmp_path):
     from md_doc.builders import docx
 
     (tmp_path / ".git").mkdir(exist_ok=True)
@@ -436,13 +436,68 @@ def test_word_callout_paragraphs_get_the_bar_on_the_other_side(tmp_path):
     )
     out = tmp_path / "c.docx"
     docx.build(
-        "# T\n\n> **Note**\n>\n> Callout with {++new text++}.\n\nPlain {++new++} line.\n",
+        "# T\n\n> **Note**\n>\n> Callout with {++new text++}.\n\nPlain {++new++} line.\n\n"
+        "- {++item++}\n\n| A |\n|---|\n| {++x++} |\n",
         {"title": "T", "review_markup": "simple"},
         out,
         repo_root=tmp_path,
         doc_path=tmp_path / "d.md",
     )
     xml = xml_of(out)
-    # Both callout paragraphs (the whole box) get the right-hand bar; the plain one the left.
-    assert xml.count('<w:right w:val="single" w:sz="12" w:space="8" w:color="CF222E"/>') == 2
-    assert xml.count('<w:left w:val="single" w:sz="12" w:space="8" w:color="CF222E"/>') == 1
+    bar = '<w:right w:val="single" w:sz="18" w:space="14" w:color="CF222E"/>'
+    assert xml.count(bar) == 4  # both callout paragraphs, the plain paragraph, the list item
+    assert '<w:right w:val="single" w:sz="18" w:space="0" w:color="CF222E"/>' in xml  # table row
+    assert '<w:left w:val="single" w:sz="12"' not in xml
+
+
+def test_pdf_bars_are_drawn_in_one_margin_strip(tmp_path, monkeypatch):
+    weasyprint = pytest.importorskip("weasyprint")
+    from md_doc.builders import pdf
+
+    seen = {}
+    real_write = pdf._write_pdf
+
+    def write(html, base, out, options):
+        seen["options"] = options
+        real_write(html, base, out, {**options, "uncompressed_pdf": True})
+
+    monkeypatch.setattr(pdf, "_write_pdf", write)
+    real_render = weasyprint.HTML.render
+    monkeypatch.setattr(
+        weasyprint.HTML,
+        "render",
+        lambda self, *a, **k: seen.setdefault("document", real_render(self, *a, **k)),
+    )
+    (tmp_path / ".git").mkdir()
+    out = tmp_path / "o.pdf"
+    pdf.build(
+        "# T\n\nPlain {++new++} line.\n\n- keep\n- {++item++}\n\n"
+        "> **Note** {++box++}\n\n| A | B |\n|---|---|\n| 1 | {++x++} |\n",
+        {"review_markup": "simple"},
+        out,
+        repo_root=tmp_path,
+        doc_path=tmp_path / "d.md",
+    )
+    data = out.read_bytes().decode("latin-1")
+    rects = re.findall(r"([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) re f", data)
+    bars = [r for r in rects if abs(float(r[2]) - 2.5 * 0.75) < 0.01]
+    assert len(bars) == 4  # paragraph, list item, callout (whole box), table row
+    assert len({r[0] for r in bars}) == 1  # one x: a single strip
+    page = seen["document"].pages[0]._page_box
+    content_right_pt = (page.content_box_x() + page.width) * 0.75
+    assert float(bars[0][0]) > content_right_pt  # beyond the text edge, in the margin
+    assert float(bars[0][0]) < seen["document"].pages[0].width * 0.75
+
+
+def test_pdf_bars_follow_blocks_across_pages(tmp_path):
+    weasyprint = pytest.importorskip("weasyprint")
+    from md_doc import pdf_features
+
+    html = "<style>@page{size:100mm 60mm;margin:10mm}p{margin:0 0 4mm}</style>" + "".join(
+        f'<p class="critic-changed">line {i}</p>' if i in (1, 8) else f"<p>line {i}</p>"
+        for i in range(12)
+    )
+    document = weasyprint.HTML(string=html).render()
+    per_page = [pdf_features._changed_spans(p) for p in document.pages]
+    assert len(document.pages) > 1 and sum(len(s) for s in per_page) == 2
+    assert per_page[0] and per_page[-1]
