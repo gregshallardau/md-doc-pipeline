@@ -79,6 +79,10 @@ def _make_url_fetcher() -> Any:
 
 
 # Markdown extensions to enable
+from ..bullets import bullet_css  # noqa: E402
+from ..toc import page_number_css  # noqa: E402
+from ..components import COMPONENT_CSS  # noqa: E402
+
 _MD_EXTENSIONS = [
     "tables",
     "fenced_code",
@@ -689,6 +693,10 @@ def _build_cover(
     bg = cover_cfg.get("cover_background", "white")
     meta_label = cover_cfg.get("cover_meta_label", "Prepared by")
     meta_author = cover_cfg.get("cover_meta_author", author)
+    subtitle = str(cover_cfg.get("cover_subtitle") or "").strip()
+    version = str(cover_cfg.get("cover_version") or "").strip()
+    show_meta = cover_cfg.get("cover_meta", True)
+    show_date = cover_cfg.get("cover_date", True)
     footer_text = cover_cfg.get("cover_footer_text") or f"{author}  ·  Confidential"
     show_footer = cover_cfg.get("cover_footer", True)
     show_footer_line = cover_cfg.get("cover_footer_line", True)
@@ -742,16 +750,30 @@ def _build_cover(
         else ""
     )
 
+    subtitle_html = f'<p class="cover-subtitle">{_escape_html(subtitle)}</p>' if subtitle else ""
+    version_html = f'<p class="cover-version">{_escape_html(version)}</p>' if version else ""
+    meta_lines = []
+    if meta_author:
+        meta_lines.append(
+            f"<strong>{_escape_html(meta_label)}</strong> {_escape_html(meta_author)}"
+        )
+    if show_date:
+        meta_lines.append(f"<strong>Date</strong> {_escape_html(date_str)}")
+    meta_html = (
+        '<p class="cover-meta">\n        ' + "<br>\n        ".join(meta_lines) + "\n      </p>"
+        if show_meta and meta_lines
+        else ""
+    )
+
     content_block = f"""\
     <div class="cover-content">
       {logo_html}
       <p class="cover-label">{_escape_html(label)}</p>
       <h1 class="cover-title">{_escape_html(title)}</h1>
+      {subtitle_html}
       {divider_html}
-      <p class="cover-meta">
-        <strong>{_escape_html(meta_label)}</strong> {_escape_html(meta_author)}<br>
-        <strong>Date</strong> {_escape_html(date_str)}
-      </p>
+      {version_html}
+      {meta_html}
     </div>"""
 
     if text_on_bar and show_bar and bar_pos in ("top", "both"):
@@ -1128,8 +1150,18 @@ def _build_html(
                 "/* ============================================\n   BASE"
             )
         ]
+        # cover-subtitle / cover-version sit before the theme link so a theme
+        # can restyle them.
+        cover_extra_rules = (
+            ".cover-subtitle { font-size: 12pt; font-weight: 700; line-height: 1.4;"
+            " color: #5d6d7e; margin: 0 0 8mm 0; }\n"
+            ".cover-version { font-size: 9.5pt; font-style: italic; line-height: 1.4;"
+            " color: #5d6d7e; margin: 0 0 4mm 0; }\n"
+            ".cover-text-on-bar .cover-subtitle, .cover-text-on-bar .cover-version { color: white; }\n"
+        )
         cover_base_style = (
-            f"<style>html, body {{ margin: 0; padding: 0; }}{cover_page_rules}{cover_rules}</style>"
+            f"<style>html, body {{ margin: 0; padding: 0; }}{cover_page_rules}{cover_rules}"
+            f"{cover_extra_rules}</style>"
         )
         cover_html = f"  <!-- COVER PAGE -->\n{_build_cover(title, author, date_str, cover_cfg or {}, cover_logo_uri, bar_logo_uri=cover_bar_logo_uri, primary_color=primary_color)}"
         # Behaviour classes the cover HTML emits (cover_text_align,
@@ -1158,6 +1190,7 @@ def _build_html(
   <meta charset="utf-8">
   <title>{_escape_html(title)}</title>
   {cover_base_style}
+  <style>{COMPONENT_CSS}{bullet_css(cover_cfg)}{page_number_css(cover_cfg)}</style>
   <link rel="stylesheet" href="{css_uri}">
   {_BASE_FIXES_CSS}
   {header_style}
@@ -1762,7 +1795,11 @@ def build(
     css_text: str | None = None
     if css_path and css_path.exists():
         try:
-            css_text = css_path.read_text(encoding="utf-8")
+            # Follow @import so --mddoc-* defaults, Mermaid colours and @page
+            # geometry in a shared _theme.css reach themes that import it.
+            from ..docx_theme import _load_css_with_imports
+
+            css_text = _load_css_with_imports(css_path)
         except OSError:
             css_text = None
     config = apply_theme_config_defaults(config, css_text)
@@ -1843,11 +1880,20 @@ def build(
 
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(collapse_select_markup(body), is_form)
+    from ..components import expand_components
+
+    body = expand_components(body, "pdf")
 
     from ..math import markdown_html, render_math
+    from ..toc import toc_extension_config
 
     html_body, _ = render_math(
-        markdown_html(body, _MD_EXTENSIONS, coerce_bool(config.get("preserve_line_breaks")))
+        markdown_html(
+            body,
+            _MD_EXTENSIONS,
+            coerce_bool(config.get("preserve_line_breaks")),
+            toc_extension_config(config),
+        )
     )
     html_body = _drop_empty_table_headers(html_body)
     if "table-striping:" in html_body:
@@ -1864,9 +1910,8 @@ def build(
             if stripe_rule:
                 stripe_bg = stripe_rule.group(1).strip()
         html_body = (
-            f'<style>.md-doc-group-alt td {{ background: {stripe_bg} !important; }} '
-            ".md-doc-group-base td { background: transparent !important; }</style>"
-            + html_body
+            f"<style>.md-doc-group-alt td {{ background: {stripe_bg} !important; }} "
+            ".md-doc-group-base td { background: transparent !important; }</style>" + html_body
         )
     # Mark before keep-with-next wrappers are inserted; direct-child selectors
     # otherwise miss a leading heading after an included letterhead.

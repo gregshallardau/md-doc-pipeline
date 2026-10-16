@@ -272,6 +272,8 @@ _MDDOC_PROP_TO_KEY = {
     "cover-footer-color": "cover_footer_color",
     "section-bar-color": "section_bar_color",
     "section-bar-text-color": "section_bar_text_color",
+    "bullet-style": "bullet_style",
+    "bullet-color": "bullet_color",
 }
 
 _MDDOC_PROP_RE = re.compile(r"--mddoc-([a-z0-9-]+)\s*:\s*([^;}]+)", re.IGNORECASE)

@@ -433,3 +433,25 @@ class TestHeaderBarFollowsThemeMargins:
             "@page { size: A4; margin: 25mm; }\nbody { font-size: 10pt; }\n",
         )
         assert ".report-body th, .report-body td" not in html
+
+
+def test_cover_subtitle_version_and_hidden_meta() -> None:
+    from md_doc.builders.pdf import _build_cover
+
+    html = _build_cover(
+        "Title",
+        "Author",
+        "1 January 2026",
+        {
+            "cover_subtitle": "Sub <b>title</b>",
+            "cover_version": "Version 2.0",
+            "cover_date": False,
+        },
+        None,
+    )
+    assert 'class="cover-subtitle">Sub &lt;b&gt;title&lt;/b&gt;' in html
+    assert 'class="cover-version">Version 2.0' in html
+    assert "<strong>Date</strong>" not in html and "Prepared by" in html
+
+    bare = _build_cover("Title", "Author", "d", {"cover_meta": False}, None)
+    assert "cover-meta" not in bare

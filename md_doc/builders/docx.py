@@ -652,6 +652,26 @@ def _render_cell_html(
 # ---------------------------------------------------------------------------
 
 
+def _render_component_svgs(html: str, images: list[tuple[bytes, int, int]]) -> str:
+    """Rasterise ``mddocsvg:`` component figures, appending them to *images*.
+
+    Each reference becomes a ``mermaid://N`` image, so the existing picture
+    embedding path handles it.
+    """
+    from ..components import decode_svg_ref
+    from ._assets import _svg_to_png
+
+    def _replace(m: re.Match) -> str:
+        svg = decode_svg_ref(m.group(1))
+        png = _svg_to_png(svg) if svg else None
+        if png is None:
+            return m.group(0)
+        images.append(png)
+        return f'src="mermaid://{len(images) - 1}"'
+
+    return re.sub(r'src="(mddocsvg:[A-Za-z0-9_=-]+)"', _replace, html)
+
+
 class _DocxBuilder(HTMLParser):
     """
     Walk an HTML fragment and populate a python-docx Document.
@@ -2692,6 +2712,10 @@ def _add_docx_cover_page(
     )
     meta_label = str(config.get("cover_meta_label", "Prepared by"))
     meta_author = str(config.get("cover_meta_author", author))
+    cover_subtitle = str(config.get("cover_subtitle") or "").strip()
+    cover_version = str(config.get("cover_version") or "").strip()
+    show_meta = bool(config.get("cover_meta", True))
+    show_date = bool(config.get("cover_date", True))
 
     # Match the PDF cover: bar + title + divider use $primary (color_h1); the
     # label uses the accent (color_h2); meta value is muted grey with a
@@ -2883,6 +2907,18 @@ def _add_docx_cover_page(
     r, g, b = _hex_to_rgb(title_color)
     trun.font.color.rgb = RGBColor(r, g, b)
 
+    # 5b. Optional subtitle — bold muted line under the title (PDF: .cover-subtitle).
+    if cover_subtitle:
+        sp = _cover_para(0, Mm(8).pt)
+        sp.paragraph_format.line_spacing = Pt(12 * 1.4)
+        srun = sp.add_run(cover_subtitle)
+        srun.bold = True
+        srun.font.size = Pt(12)
+        if font_body:
+            _apply_font_name(srun.font, font_body)
+        sr, sg, sb = _hex_to_rgb("ffffff" if text_on_bar else meta_value_color)
+        srun.font.color.rgb = RGBColor(sr, sg, sb)
+
     # 6. Short divider rule — 40mm, 3pt, $primary (PDF: .cover-divider).
     #    A bottom-bordered empty paragraph, indented from the far side so the
     #    rule is 40mm wide rather than full-width.
@@ -2927,9 +2963,21 @@ def _add_docx_cover_page(
         vr, vg, vb = _hex_to_rgb(meta_value_color)
         val.font.color.rgb = RGBColor(vr, vg, vb)
 
-    if meta_author:
+    # Optional version line (PDF: .cover-version) — italic muted text.
+    if cover_version:
+        vp = _cover_para(0, Mm(4).pt)
+        vp.paragraph_format.line_spacing = Pt(9.5 * 1.4)
+        vrun = vp.add_run(cover_version)
+        vrun.italic = True
+        vrun.font.size = Pt(9.5)
+        if font_body:
+            _apply_font_name(vrun.font, font_body)
+        vr2, vg2, vb2 = _hex_to_rgb("ffffff" if text_on_bar else meta_value_color)
+        vrun.font.color.rgb = RGBColor(vr2, vg2, vb2)
+
+    if show_meta and meta_author:
         _meta_line(meta_label, meta_author)
-    if date_str:
+    if show_meta and show_date and date_str:
         _meta_line("Date", date_str)
 
     # 8. A page-anchored drawing avoids office clipping/repositioning of
@@ -4444,6 +4492,9 @@ def build(
 
     body = inject_section_breaks(_inject_page_breaks(_inject_blank_lines(body)))
     body = collapse_select_markup(body)
+    from ..components import expand_components
+
+    body = expand_components(body, "docx")
     if output_format == "dotx":
         # Same source, fillable Word template: ?[...] → Word form fields.
         body = _convert_form_fields_for_dotx(body)
@@ -4451,6 +4502,7 @@ def build(
         body = _strip_form_fields_for_docx(body)
 
     from ..math import markdown_html, render_math
+    from ..toc import toc_extension_config
 
     theme = _resolve_docx_theme(doc_path, repo_root, config)
     _merge_pdf_form_css(theme, config, repo_root, doc_path)
@@ -4459,7 +4511,10 @@ def build(
         _word_html_forms(
             _flex_rows_to_tables(
                 markdown_html(
-                    body, _MD_EXTENSIONS, coerce_bool(config.get("preserve_line_breaks"))
+                    body,
+                    _MD_EXTENSIONS,
+                    coerce_bool(config.get("preserve_line_breaks")),
+                    toc_extension_config(config),
                 ),
                 theme.get("flex_rows"),
             ),
@@ -4468,6 +4523,9 @@ def build(
         word=True,
     )
     html = _drop_empty_table_headers(html)
+    from ..toc import html_toc_to_marker
+
+    html = html_toc_to_marker(html)
 
     # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF
     # uses so diagram colours match across formats. Falls back to leaving the
@@ -4487,8 +4545,12 @@ def build(
     except Exception:
         mermaid_theme = None
     html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)
+    html = _render_component_svgs(html, mermaid_images)
 
     doc = Document()
+    from ..bullets import apply_word_bullet
+
+    apply_word_bullet(doc, config)
     # Match the PDF's paper size + margins (parsed from the theme's @page) so
     # both formats share the same text width and break at the same points.
     geometry = _page_geometry(css_text)
@@ -4588,6 +4650,9 @@ def build(
     # formats break pages at the same places.
     html = _keep_heading_with_next(_merge_joined_field_boxes(html))
     builder.feed(html)
+    from ..toc import insert_word_toc_fields
+
+    insert_word_toc_fields(doc, config)
     _size_choice_lines(doc)
     _collapse_paragraph_margins(doc, builder._fixed_margins)
 

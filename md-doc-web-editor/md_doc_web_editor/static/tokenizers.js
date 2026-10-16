@@ -30,7 +30,7 @@
         'cover_bar_top_height', 'cover_bar_bottom_height', 'cover_text_on_bar',
         'cover_stripe', 'cover_stripe_height', 'cover_stripe_width',
         'cover_footer', 'cover_footer_text', 'cover_footer_line',
-        'cover_footer_color', 'cover_meta_label', 'cover_meta_author',
+        'cover_footer_color', 'cover_meta_label', 'cover_meta_author', 'cover_meta', 'cover_date', 'cover_subtitle', 'cover_version', 'bullet_style', 'bullet_color', 'toc_title', 'toc_depth', 'toc_page_numbers',
         // Page header bar
         'page_header_bar', 'page_header_bar_color', 'page_header_bar_text_color',
         'page_header_bar_height', 'page_header_bar_padding',

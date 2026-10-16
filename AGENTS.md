@@ -301,6 +301,10 @@ cover_background: white       # cover page background colour (default: "white"; 
 cover_divider: true           # show horizontal rule under title (default: true)
 cover_meta_label: "Prepared by"  # label before the author name (default: "Prepared by")
 cover_meta_author: "Custom Name" # override author on cover only (default: author value)
+cover_subtitle: "Sub-line under the title"
+cover_version: "Version 2.0"       # version line below the divider
+cover_date: false                  # hide the Date line
+cover_meta: false                  # hide the whole Prepared by / Date block
 cover_footer: true            # show footer on cover page (default: true)
 cover_footer_text: "Author · Confidential"  # footer text (default: "{author} · Confidential")
 cover_footer_line: true       # show border-top line on footer (default: true)

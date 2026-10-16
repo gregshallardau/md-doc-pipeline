@@ -14,11 +14,19 @@ _EXTENSION = "pymdownx.arithmatex"
 _MATH_RE = re.compile(r'<(?P<tag>span|div) class="arithmatex">(?P<body>.*?)</(?P=tag)>', re.DOTALL)
 
 
-def markdown_html(body: str, extensions: list[str], line_breaks: bool = False) -> str:
+def markdown_html(
+    body: str,
+    extensions: list[str],
+    line_breaks: bool = False,
+    toc_options: dict[str, Any] | None = None,
+) -> str:
     """Convert Markdown to HTML; ``line_breaks`` keeps single newlines (``<br>``)."""
+    configs: dict[str, Any] = {_EXTENSION: {"generic": True}}
+    if toc_options:
+        configs["toc"] = toc_options
     return markdown.Markdown(
         extensions=[*extensions, *(["nl2br"] if line_breaks else []), _EXTENSION],
-        extension_configs={_EXTENSION: {"generic": True}},
+        extension_configs=configs,
     ).convert(body)
 
 

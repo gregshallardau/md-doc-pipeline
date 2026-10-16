@@ -524,6 +524,74 @@ The colours apply only to that box. To change the default for all callouts,
 set `blockquote { background: #fff3cd; border-left: 3pt solid #d99a00; }`
 in your shared `_theme.css` (or the format-specific theme).
 
+### Bullets
+
+```yaml
+bullet_style: leaf        # leaf, dot, square or diamond
+bullet_color: "#5ab379"
+```
+
+Replaces the default disc in unordered lists with a small SVG shape in PDF and
+a picture bullet in Word. Set both from a theme with
+`--mddoc-bullet-style` and `--mddoc-bullet-color`.
+
+### Table of contents
+
+`[TOC]` lists the headings. Optional keys: `toc_title` adds a heading
+(class `.toctitle`), `toc_depth` limits the levels shown, and
+`toc_page_numbers: false` turns off the PDF dot leaders and page numbers.
+In Word the list becomes a real contents field; Word fills it in when the
+document is opened (accept the "update fields" prompt).
+
+### Requirement callouts (must / should / may)
+
+For standards and guidance documents, mark a requirement with a fenced block.
+The block is shaded and ruled in red (`must`), orange (`should`) or green
+(`may`), carries a MUST / SHOULD / MAY label, and works in PDF, DOCX and DOTX:
+
+```markdown
+::: must
+Providers must identify and manage risks to participants.
+:::
+
+::: should
+Providers should consider diverse participant needs when planning.
+:::
+
+::: may
+Providers may use additional guidance where appropriate.
+:::
+```
+
+The text and background pairs meet WCAG AA contrast. A theme can restyle the
+boxes through the `.callout`, `.callout-label` and `.callout-must` /
+`.callout-should` / `.callout-may` classes (PDF).
+
+### Concentric rings figure
+
+`::: rings` draws a concentric-ring diagram (a layered framework or model) as
+crisp SVG in PDF and an embedded image in Word. Describe it in YAML:
+
+```markdown
+::: rings
+title: The framework
+caption: Figure 1 Components of the framework
+rings:
+  - {label: Context, fill: "#e5e7eb", text: "#1f2937"}
+  - {label: Management, fill: "#1f4e79", text: "#ffffff"}
+  - {label: Planning, fill: "#9dbbd8", text: "#1f2937"}
+  - {label: Environment, fill: "#dbe7f3", text: "#1f2937"}
+centre: {label: People, fill: "#1f2937", text: "#ffffff"}
+satellites: [Roles, Equipment, Inclusion]
+:::
+```
+
+`rings` run from the outside in; each has a `label`, a `fill` and a `text`
+colour (choose pairs with at least 4.5:1 contrast). `centre` is the middle
+circle, `satellites` (up to three) are short labels placed around it, and
+`title`, `caption`, `interior` and `font` are optional. With no options the
+component draws a neutral four-ring placeholder.
+
 ### Definition lists and footnotes
 
 ```markdown
@@ -1675,6 +1743,8 @@ content (texts, logo files) stay in YAML.
   --mddoc-cover-footer-color: "#ffffff";    /* cover_footer_color */
   --mddoc-section-bar-color: #2563eb;       /* section_bar_color */
   --mddoc-section-bar-text-color: #ffffff;  /* section_bar_text_color */
+  --mddoc-bullet-style: leaf;               /* bullet_style */
+  --mddoc-bullet-color: #5ab379;            /* bullet_color */
 }
 ```
 
@@ -1957,6 +2027,21 @@ cover_label: Concept
 > **What it does:** Renders small uppercase text above the title on the cover page. Appears in the theme's accent colour (or white when `cover_text_on_bar` is active). Use it to categorise the document — `"Report"`, `"Proposal"`, `"Draft"`, `"Concept"`, `"Strategy"`.
 >
 > **Default:** `"Report"`
+
+<a id="configuration-cover-subtitle"></a>
+
+#### Cover subtitle, version and meta lines
+
+```yaml
+cover_subtitle: Key requirements for preparing and delivering activities.
+cover_version: Version 2.0 Updated • September 2026
+cover_date: false
+cover_meta: false
+```
+
+> **What it does:** `cover_subtitle` adds a line under the title (class `.cover-subtitle`); `cover_version` adds a line below the divider (class `.cover-version`). Both are optional, styled by the theme, and appear in PDF and Word. `cover_date: false` removes the "Date" line and `cover_meta: false` removes the whole "Prepared by / Date" block.
+>
+> **Defaults:** no subtitle, no version, `cover_date: true`, `cover_meta: true`
 
 <a id="configuration-text-alignment"></a>
 
@@ -2750,6 +2835,10 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `cover_divider` | boolean | `true` | Rule under the cover title. |
 | `cover_meta_label` | string | `Prepared by` | Label before the author on the cover. |
 | `cover_meta_author` | string | `author` | Author shown on the cover only. |
+| `cover_meta` | boolean | `true` | Show the "Prepared by / Date" block on the cover. |
+| `cover_date` | boolean | `true` | Show the "Date" line on the cover. |
+| `cover_subtitle` | string | — | Subtitle line under the cover title. |
+| `cover_version` | string | — | Version line on the cover. |
 | `cover_footer` | boolean | `true` | Show the cover footer. |
 | `cover_footer_text` | string | `{author} · Confidential` | Cover footer text; `\n` for line breaks. |
 | `cover_footer_line` | boolean | `true` | Rule above the cover footer. |
@@ -2786,6 +2875,11 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `section_bar_color` | string | `#2563eb` | Bar colour. |
 | `section_bar_text_on_bar` | boolean | `true` | Text on the bar (`true`) or a rule above the heading (`false`). |
 | `section_bar_text_color` | string | `#ffffff` | Text colour when on the bar. |
+| `bullet_style` | `leaf` / `dot` / `square` / `diamond` | — | Custom bullet for unordered lists (PDF and Word). |
+| `bullet_color` | string | `#2563eb` | Colour of the custom bullet (six-digit hex). |
+| `toc_title` | string | — | Heading shown above a `[TOC]` list. |
+| `toc_depth` | integer | all levels | Deepest heading level listed in the contents (1-6). |
+| `toc_page_numbers` | boolean | `true` | PDF contents lines end in dot leaders and page numbers. |
 | `section_bar_headings` | string | `h1,h2` | Which headings get bars. |
 | `sync_target` | enum | — | `azure`, `s3` or `local`. |
 | `sync_config` | mapping | — | Backend settings; `${NAME}` is replaced from the environment. |

@@ -268,3 +268,51 @@ Outside
     default = next(p for p in doc.paragraphs if p.text == "Default quote")
     shading = default._p.find(".//" + qn("w:shd"))
     assert shading is None or shading.get(qn("w:fill")) != "FEF3C7"
+
+
+class TestComponentsInWord:
+    def test_callouts_are_shaded_with_coloured_rule(self, tmp_repo):
+        doc = _build_docx(tmp_repo, "::: must\nAct now.\n:::\n\n::: may\nOr not.\n:::\n", {})
+        xml = doc.element.xml.upper()
+        assert 'W:FILL="FDECEB"' in xml and 'W:COLOR="C0392B"' in xml
+        assert 'W:FILL="E7F4EC"' in xml and "MUST" in xml
+
+    def test_rings_figure_is_embedded_as_picture(self, tmp_repo):
+        doc = _build_docx(tmp_repo, "::: rings\ncaption: Figure 1.2 Test\n:::\n", {})
+        assert doc.inline_shapes
+        assert any("Figure 1.2 Test" in p.text for p in doc.paragraphs)
+
+    def test_toc_becomes_word_field_with_title(self, tmp_repo):
+        doc = _build_docx(
+            tmp_repo,
+            "[TOC]\n\n## One\n\ntext\n",
+            {"toc_title": "Contents", "toc_depth": 2},
+        )
+        xml = doc.element.xml
+        assert "TOC \\o" in xml and '"1-2"' in xml
+        assert any(p.text == "Contents" for p in doc.paragraphs)
+        assert doc.settings.element.find(qn("w:updateFields")) is not None
+
+    def test_bullet_style_sets_picture_bullet(self, tmp_repo):
+        doc = _build_docx(
+            tmp_repo, "- a\n- b\n", {"bullet_style": "leaf", "bullet_color": "#5ab379"}
+        )
+        numbering = doc.part.numbering_part.element
+        assert numbering.find(qn("w:numPicBullet")) is not None
+        assert numbering.xpath("//w:lvlPicBulletId")
+
+
+def test_cover_subtitle_and_version_in_word(tmp_repo):
+    doc = _build_docx(
+        tmp_repo,
+        "# Heading\n\ntext\n",
+        {
+            "cover_page": True,
+            "cover_subtitle": "A subtitle",
+            "cover_version": "Version 2.0",
+            "cover_date": False,
+        },
+    )
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "A subtitle" in text and "Version 2.0" in text
+    assert "Date" not in text
