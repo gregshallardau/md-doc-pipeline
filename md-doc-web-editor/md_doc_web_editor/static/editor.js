@@ -273,7 +273,9 @@
       node.addEventListener(
         "close",
         () => {
-          if (!settled) resolve(null);
+          // A close() from the dialog that opened this one can be delivered late,
+          // while this dialog is open. Only a real close counts as cancelling.
+          if (!settled && !node.open) resolve(null);
         },
         { once: true },
       );
@@ -2816,15 +2818,19 @@
       toast("Moved to trash", false, {
         label: "Undo",
         run: async () => {
-          await api("/api/files/action", {
-            method: "POST",
-            body: JSON.stringify({
-              action: "restore",
-              path,
-              destination: result.restore,
-            }),
-          });
-          await loadTree();
+          try {
+            await api("/api/files/action", {
+              method: "POST",
+              body: JSON.stringify({
+                action: "restore",
+                path,
+                destination: result.restore,
+              }),
+            });
+            await loadTree();
+          } catch (error) {
+            toast(error.message, true);
+          }
         },
       });
       return;
