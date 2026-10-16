@@ -43,8 +43,10 @@ def mark_group_stripes(html: str) -> str:
                     previous = ""
             cls = "md-doc-group-alt" if not header and group_index % 2 else "md-doc-group-base"
             attrs = row.group(1)
-            attrs = re.sub(r'\sclass="([^"]*)"', lambda m: f' class="{m.group(1)} {cls}"', attrs, count=1)
-            if not re.search(r'\sclass=', attrs):
+            attrs = re.sub(
+                r'\sclass="([^"]*)"', lambda m: f' class="{m.group(1)} {cls}"', attrs, count=1
+            )
+            if not re.search(r"\sclass=", attrs):
                 attrs += f' class="{cls}"'
             out.append(f"<tr{attrs}>{row.group(2)}</tr>")
         return _ROW.sub(lambda _: out.pop(0), match.group(0)) if out else match.group(0)

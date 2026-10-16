@@ -103,3 +103,80 @@ def insert_word_toc_fields(doc: Any, config: dict[str, Any] | None) -> bool:
             update.set(qn("w:val"), "true")
             settings.append(update)
     return found
+
+
+_FIG_RE = re.compile(r"^Figure\s+[A-Za-z]?\.?\d[\d.]*\s*[:.]")
+_TAB_RE = re.compile(r"^Table\s+[A-Za-z]?\.?\d[\d.]*\s*[:.]")
+
+
+def insert_word_caption_lists(doc: Any) -> bool:
+    """Style Figure/Table captions and turn ``list-of`` markers into TOC fields."""
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    from .components import WORD_LIST_MARKER
+
+    markers = {kind: WORD_LIST_MARKER.format(kind) for kind in ("FIGURE", "TABLE")}
+    paragraphs = list(doc.paragraphs)
+    wanted = {p.text.strip() for p in paragraphs} & set(markers.values())
+    found = False
+    names = {"FIGURE": "Figure Caption", "TABLE": "Table Caption"}
+
+    def ensure_style(name: str, centred: bool) -> None:
+        if name in [s.name for s in doc.styles]:
+            return
+        style = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+        style.font.italic = True
+        style.font.size = Pt(8.5)
+        if centred:
+            style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        style.paragraph_format.space_after = Pt(6)
+
+    ensure_style("Figure Caption", True)
+    ensure_style("Table Caption", False)
+    for p in paragraphs:
+        text = p.text.strip()
+        if _FIG_RE.match(text):
+            p.style = doc.styles["Figure Caption"]
+        elif _TAB_RE.match(text):
+            p.style = doc.styles["Table Caption"]
+            p.paragraph_format.keep_with_next = True
+    for p in paragraphs:
+        text = p.text.strip()
+        for kind, marker in markers.items():
+            if text != marker:
+                continue
+            found = True
+            for run in list(p.runs):
+                run._r.getparent().remove(run._r)
+            run = p.add_run()
+            for part, value in (
+                ("begin", None),
+                ("instr", f' TOC \\h \\z \\t "{names[kind]},1" '),
+                ("separate", None),
+                ("text", "Right-click and choose Update Field to build this list."),
+                ("end", None),
+            ):
+                if part == "instr":
+                    el = OxmlElement("w:instrText")
+                    el.set(qn("xml:space"), "preserve")
+                    el.text = value
+                elif part == "text":
+                    el = OxmlElement("w:t")
+                    el.text = value
+                else:
+                    el = OxmlElement("w:fldChar")
+                    el.set(qn("w:fldCharType"), part)
+                run._r.append(el)
+    if found:
+        settings = doc.settings.element
+        if settings.find(qn("w:updateFields")) is None:
+            update = OxmlElement("w:updateFields")
+            update.set(qn("w:val"), "true")
+            settings.append(update)
+    del wanted
+    return found

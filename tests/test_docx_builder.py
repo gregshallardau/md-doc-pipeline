@@ -316,3 +316,25 @@ def test_cover_subtitle_and_version_in_word(tmp_repo):
     text = "\n".join(p.text for p in doc.paragraphs)
     assert "A subtitle" in text and "Version 2.0" in text
     assert "Date" not in text
+
+
+class TestCaptionListsInWord:
+    def test_lists_become_fields_and_captions_are_styled(self, tmp_repo):
+        doc = _build_docx(
+            tmp_repo,
+            "::: list-of\nfigures\n:::\n\n::: list-of\ntables\n:::\n\n"
+            "::: tiers\ncaption: 'Figure 1.1: Structure'\n:::\n\nTable 2.1: Things\n\n| A |\n|---|\n| 1 |\n",
+            {},
+        )
+        xml = doc.element.xml
+        assert 'TOC \\h \\z \\t "Figure Caption,1"' in xml
+        assert 'TOC \\h \\z \\t "Table Caption,1"' in xml
+        styles = {p.text: p.style.name for p in doc.paragraphs}
+        assert styles["Figure 1.1: Structure"] == "Figure Caption"
+        assert styles["Table 2.1: Things"] == "Table Caption"
+        assert "@@" not in xml
+
+    @pytest.mark.parametrize("name", ["tiers", "cards", "matrix", "process", "flow"])
+    def test_each_diagram_is_embedded_as_a_picture(self, tmp_repo, name):
+        doc = _build_docx(tmp_repo, f"::: {name}\n:::\n", {})
+        assert len(doc.inline_shapes) == 1

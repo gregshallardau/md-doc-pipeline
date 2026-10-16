@@ -592,6 +592,79 @@ circle, `satellites` (up to three) are short labels placed around it, and
 `title`, `caption`, `interior` and `font` are optional. With no options the
 component draws a neutral four-ring placeholder.
 
+### Diagram components
+
+Each diagram is a fenced `::: name` block with YAML options, drawn as SVG in
+PDF and embedded as an image in Word. Every option is optional, every colour
+can be overridden, and the default colour pairs meet WCAG AA contrast. Add
+`caption: "Figure 1.1: Title"` to any of them (see
+[Captions and lists](#captions-and-lists)).
+
+**`::: tiers`** — numbered tiers, each indented further than the last:
+
+```markdown
+::: tiers
+tiers:
+  - {title: The Standard, subtitle: The common foundation, description: Overarching requirements.}
+  - {title: Core guide, subtitle: Practice for every activity, description: Practical guidance.}
+:::
+```
+
+Each tier takes `title`, `subtitle`, `description`, and optional `fill`, `badge` and `accent` colours.
+
+**`::: cards`** — up to four cards in a row, with arrows down to a banner:
+
+```markdown
+::: cards
+title: Capability framework
+cards:
+  - {title: 1 - Context, subtitle: What the environment offers, items: [Supported, Self-reliant]}
+  - {title: 2 - Domains, subtitle: Skills required, items: [Nine domains]}
+banner: {title: Profile required, subtitle: Verified by the provider}
+:::
+```
+
+**`::: matrix`** — a heat-map grid (for example a risk matrix). With no options it draws a 5 by 5 likelihood and consequence matrix. Otherwise give `columns`, `rows`, a `grid` of rating names, `levels` (rating to `fill` and `text`), and optionally `x_label`, `y_label` and `legend: false`.
+
+**`::: process`** — a vertical process of `steps` with a `left` and `right` side panel, an optional `right_box` inside the right panel, and a dashed boundary with a `footer` label.
+
+**`::: flow`** — a flowchart with nodes placed on a grid and arrows routed at right angles. Use it where Mermaid's automatic layout is not enough, such as decisions, loops and parallel branches:
+
+```markdown
+::: flow
+nodes:
+  - {id: a, label: Start, shape: pill, at: [0, 0]}
+  - {id: b, label: Acceptable?, shape: diamond, at: [0, 1]}
+  - {id: c, label: Go ahead, at: [0, 2]}
+  - {id: d, label: Reduce the risk, at: [1, 1]}
+edges:
+  - [a, b]
+  - [b, c, "Yes"]
+  - {from: b, to: d, label: "No", exit: right}
+  - {from: d, to: b, via: right}
+:::
+```
+
+Nodes take `id`, `label`, `at: [column, row]` (fractions are allowed), and optionally `shape` (`box`, `pill` or `diamond`), `span` (columns wide), `fill` and `text`. An edge is `[from, to, label]` or a mapping with `exit` and `enter` sides (`top`, `bottom`, `left`, `right`) and `via: left | right` to route round the outside.
+
+### Captions and lists
+
+A diagram's `caption:` and any line written as `Table 8.1: Support levels` on its own are captions. They are numbered by you, linked, and styled as captions. Two blocks list them:
+
+```markdown
+::: list-of
+figures
+:::
+
+::: list-of
+tables
+:::
+```
+
+In PDF each entry has dot leaders and a page number. In Word the captions get
+`Figure Caption` and `Table Caption` styles and each list becomes a contents
+field that Word fills in when the document is opened.
+
 ### Definition lists and footnotes
 
 ```markdown

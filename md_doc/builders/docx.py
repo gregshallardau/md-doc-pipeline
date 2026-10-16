@@ -4650,9 +4650,10 @@ def build(
     # formats break pages at the same places.
     html = _keep_heading_with_next(_merge_joined_field_boxes(html))
     builder.feed(html)
-    from ..toc import insert_word_toc_fields
+    from ..toc import insert_word_caption_lists, insert_word_toc_fields
 
     insert_word_toc_fields(doc, config)
+    insert_word_caption_lists(doc)
     _size_choice_lines(doc)
     _collapse_paragraph_margins(doc, builder._fixed_margins)
 

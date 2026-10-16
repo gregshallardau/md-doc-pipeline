@@ -60,6 +60,11 @@ COMPONENT_CSS = """\
 figure.mddoc-figure { margin: 10pt 0 14pt 0; text-align: center; page-break-inside: avoid; break-inside: avoid; }
 figure.mddoc-figure svg { width: 100%; max-width: 135mm; height: auto; }
 p.figure-caption { font-size: 8.5pt; font-style: italic; text-align: center; margin: 2pt 0 12pt 0; }
+p.table-caption { font-size: 8.5pt; font-style: italic; margin: 10pt 0 3pt 0; page-break-after: avoid; break-after: avoid; }
+.list-of ul { list-style: none; padding-left: 0; margin: 0 0 8pt 0; }
+.list-of li { margin: 0 0 3pt 0; }
+.list-of a { text-decoration: none; display: block; color: inherit; }
+.list-of a::after { content: leader('.') target-counter(attr(href url), page); }
 """
 
 
@@ -94,6 +99,9 @@ _RINGS_DEFAULTS: dict[str, Any] = {
     "satellite_text": "#1f2937",
     "font": "Arial, Helvetica, sans-serif",
 }
+
+
+FIGURES: dict[str, Any] = {}  # filled below, after the generators are defined
 
 
 def _wrap(text: str, width: int) -> list[str]:
@@ -184,12 +192,21 @@ def framework_rings_svg(options: dict[str, Any] | None = None) -> str:
     )
 
 
+_CAPTION_RE = re.compile(r"^(Figure|Table)\s+([A-Za-z]?\.?\d[\d.]*)\s*[:.]\s*(.+?)\s*$")
+
+
+def caption_id(kind: str, label: str) -> str:
+    return f"cap-{kind.lower()}-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+
+
+def _caption_p(caption: str, kind_class: str) -> str:
+    match = _CAPTION_RE.match(caption)
+    anchor = f' id="{caption_id(match.group(1), match.group(2))}"' if match else ""
+    return f'<p class="{kind_class}"{anchor} style="text-align:center">{html.escape(caption)}</p>'
+
+
 def _figure_html(svg: str, caption: str, fmt: str) -> str:
-    cap = (
-        f'<p class="figure-caption" style="text-align:center">{html.escape(caption)}</p>'
-        if caption
-        else ""
-    )
+    cap = _caption_p(caption, "figure-caption") if caption else ""
     if fmt == "docx":
         token = base64.urlsafe_b64encode(svg.encode("utf-8")).decode("ascii")
         return f'<p style="text-align:center"><img src="mddocsvg:{token}" width="100%"></p>\n{cap}'
@@ -214,19 +231,80 @@ def _parse_options(body: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+from .diagrams import cards_svg, flow_svg, matrix_svg, process_svg, tiers_svg  # noqa: E402
+
+FIGURES.update(
+    {
+        "rings": framework_rings_svg,
+        "tiers": tiers_svg,
+        "cards": cards_svg,
+        "matrix": matrix_svg,
+        "process": process_svg,
+        "flow": flow_svg,
+    }
+)
+
 # ---------------------------------------------------------------------------
 # Expansion
 # ---------------------------------------------------------------------------
 
 
+LIST_OF = {"figures": "Figure", "tables": "Table"}
+WORD_LIST_MARKER = "@@MDDOC_LIST_{}@@"
+
+
+def _collect_captions(text: str) -> dict[str, list[tuple[str, str, str]]]:
+    """Captions in document order: kind -> [(id, label, caption text)]."""
+    found: dict[str, list[tuple[str, str, str]]] = {"Figure": [], "Table": []}
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        opened = _FENCE_OPEN_RE.match(lines[i])
+        if opened and opened.group(1).lower() in FIGURES:
+            end = next(
+                (j for j in range(i + 1, len(lines)) if _FENCE_CLOSE_RE.match(lines[j])), len(lines)
+            )
+            caption = str(_parse_options("\n".join(lines[i + 1 : end])).get("caption", ""))
+            m = _CAPTION_RE.match(caption)
+            if m:
+                found["Figure"].append((caption_id("Figure", m.group(2)), m.group(2), caption))
+            i = end + 1
+            continue
+        m = _CAPTION_RE.match(lines[i].strip())
+        if m and m.group(1) == "Table" and not lines[i].startswith(("|", "    ")):
+            found["Table"].append((caption_id("Table", m.group(2)), m.group(2), lines[i].strip()))
+        i += 1
+    return found
+
+
+def _list_of_html(kind: str, captions: dict[str, list[tuple[str, str, str]]], fmt: str) -> str:
+    if fmt == "docx":
+        return f"<p>{WORD_LIST_MARKER.format(kind.upper())}</p>"
+    items = "".join(
+        f'<li><a href="#{cid}">{html.escape(text)}</a></li>' for cid, _label, text in captions[kind]
+    )
+    return f'<div class="list-of"><ul>{items}</ul></div>' if items else ""
+
+
 def _expand(text: str, fmt: str) -> str:
+    captions = _collect_captions(text)
     lines = text.split("\n")
     out: list[str] = []
     i = 0
     while i < len(lines):
         opened = _FENCE_OPEN_RE.match(lines[i])
         if not opened:
-            out.append(lines[i])
+            m = _CAPTION_RE.match(lines[i].strip())
+            if m and m.group(1) == "Table" and not lines[i].startswith(("|", "    ")):
+                out.append("")
+                out.append(
+                    _caption_p(lines[i].strip(), "table-caption").replace(
+                        ' style="text-align:center"', ""
+                    )
+                )
+                out.append("")
+            else:
+                out.append(lines[i])
             i += 1
             continue
         name = opened.group(1).lower()
@@ -240,9 +318,17 @@ def _expand(text: str, fmt: str) -> str:
         consumed = end - i + 1
         if name in CALLOUTS:
             block = _callout_html(name, body)
-        elif name == "rings":
+        elif name == "list-of":
+            kind = LIST_OF.get(body.strip().lower())
+            if kind is None:
+                logger.warning("'::: list-of' needs 'figures' or 'tables'; got %r", body.strip())
+                out.extend(lines[i : min(end + 1, len(lines))])
+                i = end + 1
+                continue
+            block = _list_of_html(kind, captions, fmt)
+        elif name in FIGURES:
             opts = _parse_options(body)
-            block = _figure_html(framework_rings_svg(opts), str(opts.get("caption", "")), fmt)
+            block = _figure_html(FIGURES[name](opts), str(opts.get("caption", "")), fmt)
         else:
             logger.warning("Unknown component '::: %s'; leaving it as written", name)
             out.extend(lines[i : min(end + 1, len(lines))])
