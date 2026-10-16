@@ -8,10 +8,16 @@ key (or ``md-doc build --review``) decides what a build does with them:
 ``reject``  revert every change
 ``show``    keep them visible: coloured insertions/deletions and comment footnotes in
             PDF, real Word tracked changes and Word comments in ``.docx``
+``simple``  the final text with changes applied, a change bar beside each changed
+            line (PDF margin bar, Word paragraph border), and the highlights and
+            comments kept (Word's "Simple Markup")
 
 Highlights and comments carry no text change, so ``accept`` and ``reject`` keep a
 highlight's text and drop its comment. Formats with no review rendering (slides)
-treat ``show`` as ``accept``.
+treat ``show`` and ``simple`` as ``accept``.
+
+``review_exports`` builds several of these at once, one file per variant
+(``clean``, ``original``, ``simple``, ``markup``).
 
 The pass runs on the Markdown body after Jinja and before Markdown conversion, with
 fenced and inline code left alone. In ``show`` mode the marks become inline HTML
@@ -29,7 +35,18 @@ from typing import Any
 from .literal import transform_outside_code
 
 #: Values of the ``review_markup`` key.
-MODES: tuple[str, ...] = ("accept", "reject", "show")
+MODES: tuple[str, ...] = ("accept", "reject", "show", "simple")
+
+#: ``review_exports`` variants: name → (``review_markup`` mode, file-name suffix).
+VARIANTS: dict[str, tuple[str, str]] = {
+    "clean": ("accept", "-clean"),
+    "original": ("reject", "-original"),
+    "simple": ("simple", "-simple"),
+    "markup": ("show", "-markup"),
+    "full": ("show", "-markup"),
+}
+
+_BAR = '<span class="critic-bar"></span>'
 DEFAULT_MODE = "accept"
 
 _CRITIC_RE = re.compile(
@@ -84,7 +101,7 @@ def has_markup(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _wrap_lines(text: str, tag: str, cls: str) -> str:
+def _wrap_lines(text: str, tag: str, cls: str, *, bar_only: bool = False) -> str:
     """Wrap *text* in ``<tag class=cls>``, line by line.
 
     A mark can span lines, list items, headings or table rows, so the wrapper goes
@@ -96,7 +113,11 @@ def _wrap_lines(text: str, tag: str, cls: str) -> str:
         match = re.match(r"(\s*)(.*?)(\s*)\Z", core, re.DOTALL)
         assert match is not None
         lead, body, trail = match.groups()
-        return f'{lead}<{tag} class="{cls}">{body}</{tag}>{trail}' if body else core
+        if not body:
+            return core
+        if bar_only:  # change bar: a marker before the text, the text itself unwrapped
+            return f"{lead}{_BAR}{body}{trail}"
+        return f'{lead}<{tag} class="{cls}">{body}</{tag}>{trail}'
 
     out: list[str] = []
     for line in text.splitlines(keepends=True):
@@ -151,28 +172,48 @@ def _resolve(match: re.Match[str], accept: bool) -> str:
     return ""  # comments never reach clean output
 
 
+def _resolve_simple(match: re.Match[str]) -> str:
+    """Changes applied, with a change-bar marker; highlights and comments kept."""
+    if match.group("add") is not None:
+        return _wrap_lines(match.group("add"), "span", "", bar_only=True)
+    if match.group("del") is not None:
+        return _BAR
+    if match.group("old") is not None:
+        new = match.group("new")
+        return _wrap_lines(new, "span", "", bar_only=True) if new.strip() else _BAR
+    if match.group("hl") is not None:
+        return _wrap_lines(match.group("hl"), "mark", "critic-hl")
+    return _comment_html(match.group("comment") or "")
+
+
+_PREFIX_ONLY_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|>|#{1,6})?[ \t]*$")
 _EMPTY_BLOCK_LINE_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|>|#{1,6})[ \t]*(?:\n|\Z)", re.MULTILINE)
 
 
-def _resolve_all(prose: str, accept: bool) -> str:
+def _resolve_all(prose: str, mode: str) -> str:
     """Accept or reject every mark, tidying the lines a removal leaves behind.
 
     A mark that disappears while alone on its line(s) takes the line with it (and
     one of two surrounding blank lines); a list item, quote or heading left with
     only its marker is dropped too.
     """
+    simple = mode == "simple"
     out: list[str] = []
     position = 0
     removed = False
     for match in _CRITIC_RE.finditer(prose):
         out.append(prose[position : match.start()])
-        replacement = _resolve(match, accept)
+        replacement = _resolve_simple(match) if simple else _resolve(match, mode == "accept")
         position = match.end()
         before = "".join(out)
         line_start = before.rfind("\n") + 1
         line_end = prose.find("\n", position)
         line_end = len(prose) if line_end == -1 else line_end
         owns_lines = not before[line_start:].strip() and not prose[position:line_end].strip()
+        if simple and match.group("del") is not None:
+            # A deleted line (or list item) leaves nothing to put a change bar beside.
+            if _PREFIX_ONLY_RE.match(before[line_start:]) and not prose[position:line_end].strip():
+                replacement, owns_lines = "", True
         if replacement == "":
             removed = True
             if owns_lines:
@@ -202,7 +243,7 @@ def apply(markdown: str, mode: str, *, fmt: str = "pdf") -> str:
     """
     if mode not in MODES:
         mode = DEFAULT_MODE
-    if mode == "show" and fmt == "pptx":
+    if mode in ("show", "simple") and fmt == "pptx":
         mode = "accept"
     if "{" not in markdown or not has_markup(markdown):
         return markdown
@@ -210,7 +251,7 @@ def apply(markdown: str, mode: str, *, fmt: str = "pdf") -> str:
     def transform(prose: str) -> str:
         if mode == "show":
             return _CRITIC_RE.sub(_show, prose)
-        return _resolve_all(prose, accept=mode == "accept")
+        return _resolve_all(prose, mode)
 
     front = _FRONTMATTER_RE.match(markdown)
     head, body = (markdown[: front.end()], markdown[front.end() :]) if front else ("", markdown)
@@ -247,11 +288,54 @@ def problems(markdown: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
+_BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th"}
+_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>")
+
+
+def mark_changed_blocks(html: str) -> str:
+    """Give each block that holds a change-bar marker the class ``critic-changed``.
+
+    The marker is an empty ``<span class="critic-bar">`` written by ``simple`` mode;
+    CSS cannot style a parent from a child, so the PDF builder tags the block.
+    """
+    if 'class="critic-bar"' not in html:
+        return html
+    stack: list[tuple[str, int, int]] = []  # (tag, start, end) of open block tags
+    marked: set[int] = set()
+    for match in _TAG_RE.finditer(html):
+        closing, tag, attrs = match.group(1), match.group(2).lower(), match.group(3)
+        if tag in _BLOCK_TAGS:
+            if closing:
+                while stack and stack[-1][0] != tag:
+                    stack.pop()
+                if stack:
+                    stack.pop()
+            else:
+                stack.append((tag, match.start(), match.end()))
+        elif tag == "span" and not closing and 'class="critic-bar"' in attrs and stack:
+            marked.add(stack[-1][1])
+    out = html
+    for start in sorted(marked, reverse=True):
+        end = out.index(">", start)
+        opening = out[start : end + 1]
+        if "class=" in opening:
+            opening = re.sub(r'class="', 'class="critic-changed ', opening, count=1)
+        else:
+            opening = opening[:-1] + ' class="critic-changed">'
+        out = out[:start] + opening + out[end + 1 :]
+    return out
+
+
 #: Stylesheet for ``show`` mode in PDF; added only when the document has marks.
 CSS = """\
 ins.critic-ins { color: #1a7f37; background: #e6ffec; text-decoration: underline; }
 del.critic-del { color: #cf222e; background: #ffebe9; text-decoration: line-through; }
 mark.critic-hl { background: #fff3a3; color: inherit; }
+.critic-changed { position: relative; }
+.critic-changed::before { content: ""; position: absolute; left: -5mm; top: 0; bottom: 0;
+  border-left: 1.5pt solid #cf222e; }
+td.critic-changed, th.critic-changed { border-left: 1.5pt solid #cf222e; }
+td.critic-changed::before, th.critic-changed::before { display: none; }
 .critic-comment { float: footnote; footnote-display: block; font-size: 8pt; line-height: 1.35;
   font-style: italic; color: #5d6d7e; }
 .critic-comment::before { content: attr(data-comment); }

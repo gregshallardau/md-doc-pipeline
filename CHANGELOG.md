@@ -14,6 +14,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   slides always accept. `md-doc extract` turns Word tracked changes and comments back into the
   marks; `md-doc lint` reports unclosed marks and warns about marks left in a `status: final`
   document; the browser editor highlights them. Guide: `docs/handbook.md#markdown-review-markup`.
+- **Simple markup and multi-version review exports.** `review_markup: simple` gives the final
+  text with a change bar beside each changed line (PDF margin bar, Word paragraph border) and
+  the highlights and comments kept. `review_exports: [clean, original, simple, markup]` builds
+  one file per version in a single run (`-clean`, `-original`, `-simple`, `-markup` suffixes).
 - **PDF features.** Everything WeasyPrint offers beyond a plain HTML → PDF call is now a config
   key (full guide: `docs/handbook.md#pdf-features`):
   - *Container:* `pdf_variant` (PDF/A, PDF/UA, PDF/X), `pdf_tags`, `pdf_identifier`,

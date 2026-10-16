@@ -571,6 +571,10 @@ def mark_toc_levels(html: str, start: int, depth: int) -> str:
 
 def postprocess_html(html: str, config: dict[str, Any]) -> str:
     """Apply the HTML-level transforms the config asks for."""
+    if 'class="critic-bar"' in html:
+        from .critic import mark_changed_blocks
+
+        html = mark_changed_blocks(html)
     if _flag(config, "page_footnotes"):
         html = page_footnotes(html)
     if _flag(config, "xref_pages"):

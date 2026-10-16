@@ -150,7 +150,7 @@ def _extract_title(md_content: str) -> str | None:
     match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
     if not match:
         return None
-    title = match.group(1).strip()
+    title = re.sub(r"<[^>]+>", "", match.group(1)).strip()  # review marks in show mode
     title = re.sub(r"\*\*(.+?)\*\*", r"\1", title)
     title = re.sub(r"\*(.+?)\*", r"\1", title)
     title = re.sub(r"`(.+?)`", r"\1", title)

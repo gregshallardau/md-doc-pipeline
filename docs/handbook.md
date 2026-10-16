@@ -824,7 +824,8 @@ The deadline is {~~Friday~>Monday~~}. {==Budget approval==}{>>Is this still curr
 |------|--------|
 | `accept` (default) | Every change is applied; highlights keep their text; comments disappear. Clean output never leaks edits. |
 | `reject` | Every change is reverted; highlights keep their text; comments disappear. |
-| `show` | The marks stay visible, as below. |
+| `show` | The full markup: every change visible, as below. |
+| `simple` | Word's "simple markup": the final text with changes applied, a change bar beside each changed line, and the highlights and comments kept. |
 
 In `show` mode:
 
@@ -834,7 +835,34 @@ In `show` mode:
   reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
   (underline, strike-through, highlight) rather than tracked changes, and cell comments are
   dropped.
-- **Slides** treat `show` as `accept`.
+- **Slides** treat `show` and `simple` as `accept`.
+
+In `simple` mode the text reads as the finished document. In the **PDF** a red bar sits in the
+margin beside every heading, paragraph, list item or table cell that changed (a deleted line
+leaves no bar, since nothing remains to mark), and highlights and comments appear as in `show`.
+In **Word** each changed paragraph gets a red left border, highlights are kept, and comments are
+real Word comments; no tracked changes are created.
+
+#### One build, several versions
+
+`review_exports` writes a separate file for each version you name, so a reviewed draft can go
+out as a clean copy, a quick-read copy and a full markup in one command:
+
+```yaml
+review_exports: [clean, simple, markup]
+```
+
+| Variant | Mode | File |
+|---------|------|------|
+| `clean` | `accept` | `report-clean.pdf` |
+| `original` | `reject` | `report-original.pdf` |
+| `simple` | `simple` | `report-simple.pdf` |
+| `markup` (or `full`) | `show` | `report-markup.pdf` |
+
+Every format in `outputs` is built for every variant (`report-markup.docx` is the tracked-changes
+Word file), and each file is skipped when it is up to date. `md-doc build --review MODE` builds
+just that one version, ignoring `review_exports`. Slides ignore review marks, so every variant of
+a deck is the same.
 
 ```yaml
 review_markup: show          # in a draft's frontmatter
@@ -2080,7 +2108,9 @@ run does not label samples pass or fail; it is a review aid.
 - **Renderer artifacts.** LibreOffice keeps heading space-before at automatic page breaks (Word
   and the PDF drop it); this shows up only when checking with LibreOffice.
 - **Review marks.** `review_markup: show` gives real tracked changes and comments in Word but
-  coloured text and comment footnotes in the PDF; slides never show them.
+  coloured text and comment footnotes in the PDF; `simple` gives a margin bar in the PDF but a
+  paragraph border in Word (Word draws its own change bars only for real tracked changes);
+  slides never show them.
 - **PDF-only features.** Bookmarks, PDF/A/UA/X variants, embedded files, numbered headings,
   page-bottom footnotes, `<!-- columns -->` and `<!-- grid -->` blocks, duplex pages, chapter
   breaks, print marks and bleed have no Word equivalent; Word flows the content normally (see
@@ -3326,8 +3356,9 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `image_resolution` | string | — | Intrinsic image resolution, e.g. `150dpi`, `2x` or `from-image`. |
 | `print_marks` | enum | — | Printer's marks: `crop`, `cross` or `crop cross`. |
 | `bleed` | length | — | Bleed beyond the trim edge, e.g. `3mm`. |
-| `review_markup` | enum | `accept` | What a build does with CriticMarkup review marks: `accept` every change, `reject` every change, or `show` them (PDF colours and comment footnotes, Word tracked changes and comments). |
-| `review_author` | string | `Reviewer` | Author name on Word tracked changes and comments in `show` mode. |
+| `review_markup` | enum | `accept` | What a build does with CriticMarkup review marks: `accept` every change, `reject` every change, `show` them (PDF colours and comment footnotes, Word tracked changes and comments), or `simple` (final text with change bars, highlights and comments). |
+| `review_author` | string | `Reviewer` | Author name on Word tracked changes and comments (`show` and `simple` modes). |
+| `review_exports` | list | — | Build several review versions at once, one file each: `clean`, `original`, `simple`, `markup` (alias `full`). Files get a `-clean`, `-original`, `-simple` or `-markup` suffix. |
 | `sync_target` | enum | — | `azure`, `s3` or `local`. |
 | `sync_config` | mapping | — | Backend settings; `${NAME}` is replaced from the environment. |
 | `export` | boolean | `false` | Mark a note for `md-doc export` (inheritable from `_meta.yml`). |
@@ -3406,7 +3437,7 @@ Builds every document under `ROOT` (default: the current directory) to the forma
 | `--no-lint` | Skip the pre-flight lint (to build anyway while iterating). |
 | `--dry-run` | Print what would be built without building. |
 | `--force` | Rebuild everything. By default a document is skipped when its outputs are newer than its source, config, theme, templates and the md-doc code itself. |
-| `--review [accept\|reject\|show]` | What to do with CriticMarkup review marks for this build, overriding `review_markup` (see [review markup](#markdown-review-markup)). |
+| `--review [accept\|reject\|show\|simple]` | What to do with CriticMarkup review marks for this build, overriding `review_markup` and `review_exports` (see [review markup](#markdown-review-markup)). |
 | `-j, --jobs N` | Build up to N documents in parallel (process pool). Default 1. |
 | `-v, --verbose` | Print full tracebacks on errors. |
 

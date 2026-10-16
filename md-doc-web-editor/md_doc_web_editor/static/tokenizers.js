@@ -66,7 +66,7 @@
         'header_first_page', 'header_layout', 'footer_layout',
         'columns', 'column_gap', 'column_rule', 'image_fit', 'image_resolution',
         // Review markup (CriticMarkup)
-        'review_markup', 'review_author',
+        'review_markup', 'review_author', 'review_exports',
         // Client / engagement fields (common user-defined cascade keys)
         'client', 'client_abn', 'client_contact', 'account_manager',
         'support_email', 'alert_email',

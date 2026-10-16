@@ -291,3 +291,129 @@ def test_cli_review_flag_overrides_the_config(tmp_path):
     result = runner.invoke(main, ["build", str(doc), "--force"])
     assert result.exit_code == 0, result.output
     assert "<w:ins " not in xml_of(tmp_path / "d.docx")
+
+
+# ---------------------------------------------------------------------------
+# simple mode and review_exports
+# ---------------------------------------------------------------------------
+
+BAR = '<span class="critic-bar"></span>'
+
+
+def test_simple_applies_changes_and_marks_them():
+    out = critic.apply(SAMPLE, "simple")
+    assert f"# {BAR}New title" in out
+    assert f"Hello {BAR}{BAR}color " in out  # deletion marker, then the new text
+    assert f"- {BAR}added item\n- keep\n" in out
+    assert "gone item" not in out and "removed" not in out
+    assert '<mark class="critic-hl">world</mark>' in out
+    assert 'data-comment="check *this*"' in out
+    assert "<ins" not in out and "<del" not in out
+
+
+def test_simple_drops_wholly_deleted_lines():
+    out = critic.apply("a\n\n{--\nremoved para\n--}\n\n- {--gone--}\n- keep\n", "simple")
+    assert out == "a\n\n- keep\n"
+
+
+def test_simple_is_accept_for_slides():
+    assert critic.apply("{++a++}{--b--}", "simple", fmt="pptx") == "a"
+
+
+def test_changed_blocks_get_a_class():
+    html = critic.mark_changed_blocks(
+        f'<h1>{BAR}T</h1><ul><li>a<ul><li>{BAR}b</li></ul></li></ul><p class="x">{BAR}q</p><p>z</p>'
+    )
+    assert '<h1 class="critic-changed">' in html
+    assert '<li class="critic-changed">' in html and html.count("critic-changed") == 3
+    assert '<p class="critic-changed x">' in html and "<p>z</p>" in html
+
+
+def test_pdf_simple_draws_change_bars_and_keeps_comments(tmp_path, monkeypatch):
+    weasyprint = pytest.importorskip("weasyprint")
+    from md_doc.builders import pdf
+
+    captured = {}
+    real_write = pdf._write_pdf
+    monkeypatch.setattr(
+        pdf,
+        "_write_pdf",
+        lambda html, base, out, opts: (
+            captured.update(html=html),
+            real_write(html, base, out, opts),
+        ),
+    )
+    (tmp_path / ".git").mkdir()
+    pdf.build(
+        DOC,
+        {"review_markup": "simple"},
+        tmp_path / "o.pdf",
+        repo_root=tmp_path,
+        doc_path=tmp_path / "d.md",
+    )
+    html = captured["html"]
+    assert 'class="critic-changed"' in html and ".critic-changed::before" in html
+    assert 'data-comment="Check this"' in html
+    assert "<ins" not in html.split("<body>")[1] and weasyprint is not None
+
+
+def test_word_simple_has_change_bars_comments_and_no_revisions(tmp_path):
+    from docx import Document
+
+    out = build_docx(tmp_path, "simple")
+    xml = xml_of(out)
+    assert "<w:ins " not in xml and "<w:del " not in xml
+    assert 'w:left w:val="single"' in xml and 'w:highlight w:val="yellow"' in xml
+    assert [c.text for c in Document(str(out)).comments] == ["Check this"]
+
+
+def test_show_titles_are_clean_text(tmp_path, monkeypatch):
+    from md_doc.builders import pdf
+
+    assert pdf._extract_title('# <ins class="critic-ins">New</ins> title\n') == "New title"
+
+
+def write_variants_doc(tmp_path: Path, exports: str) -> Path:
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    doc = tmp_path / "report.md"
+    doc.write_text(
+        f"---\ntitle: T\noutputs: [docx]\nreview_exports: {exports}\n---\n"
+        "# T\n\nHello {--old --}{~~colour~>color~~} there.\n"
+    )
+    return doc
+
+
+def test_review_exports_writes_one_file_per_variant(tmp_path):
+    doc = write_variants_doc(tmp_path, "[clean, original, simple, markup]")
+    result = CliRunner().invoke(main, ["build", str(doc), "--force"])
+    assert result.exit_code == 0, result.output
+    names = sorted(p.name for p in tmp_path.glob("*.docx"))
+    assert names == [
+        "report-clean.docx",
+        "report-markup.docx",
+        "report-original.docx",
+        "report-simple.docx",
+    ]
+    assert "<w:ins " in xml_of(tmp_path / "report-markup.docx")
+    assert "<w:ins " not in xml_of(tmp_path / "report-clean.docx")
+    assert "<w:left " in xml_of(tmp_path / "report-simple.docx")
+
+
+def test_review_flag_replaces_review_exports(tmp_path):
+    doc = write_variants_doc(tmp_path, "[clean, markup]")
+    result = CliRunner().invoke(main, ["build", str(doc), "--review", "show", "--force"])
+    assert result.exit_code == 0, result.output
+    assert [p.name for p in tmp_path.glob("*.docx")] == ["report.docx"]
+    assert "<w:ins " in xml_of(tmp_path / "report.docx")
+
+
+def test_review_exports_are_incremental_and_validated(tmp_path):
+    from md_doc.config_schema import validate_config
+
+    doc = write_variants_doc(tmp_path, "full")
+    first = CliRunner().invoke(main, ["build", str(doc)])
+    again = CliRunner().invoke(main, ["build", str(doc)])
+    assert "report-markup.docx" in first.output and "up to date" in again.output
+    assert validate_config({"review_exports": ["clean", "simple"]}) == []
+    assert validate_config({"review_exports": ["nope"]})[0][0] == "error"
+    assert validate_config({"review_markup": "simple"}) == []

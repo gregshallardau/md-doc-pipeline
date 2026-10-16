@@ -258,6 +258,23 @@ def _set_image_cache(enabled: bool) -> None:
     pdf_builder.use_shared_image_cache(enabled)
 
 
+def _review_variants(config: dict[str, Any]) -> list[tuple[str, str | None]]:
+    """``(file-name suffix, review_markup mode)`` per ``review_exports`` variant.
+
+    Without ``review_exports`` there is one plain build: ``("", None)``.
+    """
+    from .critic import VARIANTS
+
+    raw = config.get("review_exports")
+    names = raw if isinstance(raw, list) else [raw] if raw else []
+    variants: list[tuple[str, str | None]] = []
+    for name in names:
+        entry = VARIANTS.get(str(name).strip().lower())
+        if entry is not None and (entry[1], entry[0]) not in [(s, m) for s, m in variants]:
+            variants.append((entry[1], entry[0]))
+    return variants or [("", None)]
+
+
 def _build_document(
     doc_path: Path,
     *,
@@ -289,6 +306,7 @@ def _build_document(
         config["pdf_theme"] = str(theme.resolve())
     if review is not None:
         config["review_markup"] = review
+        config.pop("review_exports", None)  # an explicit --review is a single build
 
     formats = get_output_formats(config) if fmt == "all" else [fmt]
 
@@ -311,8 +329,9 @@ def _build_document(
     from .dependencies import signature
 
     dependency_signature = "" if force else signature(cascade_root, config, theme_dep)
-    stale: list[tuple[str, Path]] = []
-    for format_name in formats:
+    stale: list[tuple[str, Path, str | None]] = []
+    variants = _review_variants(config)
+    for format_name, (suffix, review_mode) in [(f, v) for f in formats for v in variants]:
         ext = (
             "-form.pdf" if (format_name == "pdf" and config.get("pdf_forms")) else f".{format_name}"
         )
@@ -323,6 +342,8 @@ def _build_document(
             events.append(("error", f"output_filename render failed: {type(exc).__name__}: {exc}"))
             errored = True
             continue
+        if suffix:  # one file per review_exports variant: report-clean.pdf, report-markup.pdf …
+            out_path = out_path.with_name(out_path.name[: -len(ext)] + suffix + ext)
         state_path = out_path.with_name("." + out_path.name + ".md-doc-state")
         same_inputs = False
         if not force:
@@ -339,7 +360,7 @@ def _build_document(
             events.append(("skip", f"up to date {out_path.name}"))
             skipped += 1
         else:
-            stale.append((format_name, out_path))
+            stale.append((format_name, out_path, review_mode))
 
     if not stale:
         return {
@@ -369,25 +390,34 @@ def _build_document(
             "errored": True,
         }
 
-    for format_name, out_path in stale:
+    for format_name, out_path, review_mode in stale:
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        build_config = {**config, "review_markup": review_mode} if review_mode else config
         try:
             if format_name == "pdf":
                 from .builders.pdf import build as build_pdf  # type: ignore[import]
 
-                build_pdf(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+                build_pdf(
+                    rendered_md, build_config, out_path, doc_path=doc_path, repo_root=cascade_root
+                )
             elif format_name == "docx":
                 from .builders.docx import build as build_docx  # type: ignore[import]
 
-                build_docx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+                build_docx(
+                    rendered_md, build_config, out_path, doc_path=doc_path, repo_root=cascade_root
+                )
             elif format_name == "dotx":
                 from .builders.dotx import build as build_dotx  # type: ignore[import]
 
-                build_dotx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+                build_dotx(
+                    rendered_md, build_config, out_path, doc_path=doc_path, repo_root=cascade_root
+                )
             elif format_name == "pptx":
                 from .builders.pptx import build as build_pptx  # type: ignore[import]
 
-                build_pptx(rendered_md, config, out_path, doc_path=doc_path, repo_root=cascade_root)
+                build_pptx(
+                    rendered_md, build_config, out_path, doc_path=doc_path, repo_root=cascade_root
+                )
             else:
                 events.append(("warn", f"unknown format '{format_name}' — skipped"))
                 continue
@@ -810,12 +840,13 @@ def doctor() -> None:
 @click.option(
     "--review",
     default=None,
-    type=click.Choice(["accept", "reject", "show"], case_sensitive=False),
+    type=click.Choice(["accept", "reject", "show", "simple"], case_sensitive=False),
     help=(
         "What to do with CriticMarkup review marks ({++add++}, {--delete--}, {~~old~>new~~}, "
-        "{==highlight==}{>>comment<<}): accept or reject every change, or show them (PDF "
-        "colours and comment footnotes, Word tracked changes and comments). "
-        "Overrides 'review_markup' for this build. Default: accept."
+        "{==highlight==}{>>comment<<}): accept or reject every change, show them (PDF "
+        "colours and comment footnotes, Word tracked changes and comments), or simple "
+        "(final text with change bars, highlights and comments). "
+        "Overrides 'review_markup' and 'review_exports' for this build. Default: accept."
     ),
 )
 @click.option(

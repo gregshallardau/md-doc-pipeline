@@ -1345,6 +1345,21 @@ class _DocxBuilder(HTMLParser):
             for text in run._r.findall(qn("w:t")):
                 text.tag = qn("w:delText")
 
+    def _add_change_bar(self) -> None:
+        """A bar beside the paragraph (Word's "simple markup" change bar)."""
+        paragraph = self._current_para()
+        pPr = paragraph._p.get_or_add_pPr()
+        if pPr.find(qn("w:pBdr")) is not None:
+            return
+        border = OxmlElement("w:pBdr")
+        left = OxmlElement("w:left")
+        left.set(qn("w:val"), "single")
+        left.set(qn("w:sz"), "12")
+        left.set(qn("w:space"), "8")
+        left.set(qn("w:color"), "CF222E")
+        border.append(left)
+        pPr.append(border)
+
     def _add_review_comment(self, text: str) -> None:
         """A Word comment anchored to the highlight just written (else the last run)."""
         text = text.strip()
@@ -1485,6 +1500,8 @@ class _DocxBuilder(HTMLParser):
                 self._hl_runs = []
             elif tag == "span" and "critic-comment" in critic_class:
                 self._add_review_comment(dict(attrs).get("data-comment") or "")
+            elif tag == "span" and "critic-bar" in critic_class:
+                self._add_change_bar()
             return
 
         if tag in ("h1", "h2", "h3", "h4"):
@@ -3222,7 +3239,7 @@ def _extract_title(md_content: str) -> str | None:
     match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
     if not match:
         return None
-    title = match.group(1).strip()
+    title = re.sub(r"<[^>]+>", "", match.group(1)).strip()  # review marks in show mode
     title = re.sub(r"\*\*(.+?)\*\*", r"\1", title)
     title = re.sub(r"\*(.+?)\*", r"\1", title)
     title = re.sub(r"`(.+?)`", r"\1", title)
