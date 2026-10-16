@@ -143,6 +143,30 @@ class TestPdfBuildPagebreak:
         assert "First page" in texts[0] and "Second page" not in texts[0]
         assert "Second page" in texts[1] and "First page" not in texts[1]
 
+    def test_theme_breaking_after_the_marker_adds_no_blank_page(self, tmp_path, monkeypatch):
+        weasyprint = pytest.importorskip("weasyprint")
+        from md_doc.builders.pdf import build as build_pdf
+
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "_pdf-theme.css").write_text(
+            "@page { size: A4; margin: 20mm; }\n.md-doc-page-break { break-after: page; }\n"
+        )
+        rendered = []
+
+        def write_pdf(html, target, **kwargs):
+            document = html.render()
+            rendered.append(document)
+            return document.write_pdf(target, **kwargs)
+
+        monkeypatch.setattr(weasyprint.HTML, "write_pdf", write_pdf)
+        build_pdf(
+            "First page\n\n<!-- pagebreak -->\n\nSecond page\n",
+            {"cover_page": False},
+            tmp_path / "out.pdf",
+            repo_root=tmp_path,
+        )
+        assert len(rendered[0].pages) == 2
+
     def test_builds_without_error(self, tmp_path):
         pytest.importorskip("weasyprint")
         from md_doc.builders.pdf import build as build_pdf

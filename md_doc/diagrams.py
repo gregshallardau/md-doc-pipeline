@@ -645,8 +645,8 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
             e = {"from": edge[0], "to": edge[1], "label": edge[2] if len(edge) > 2 else ""}
         else:
             e = dict(edge)
-        a, b = boxes.get(str(e["from"])), boxes.get(str(e["to"]))
-        if a is None or b is None:
+        src, dst = boxes.get(str(e["from"])), boxes.get(str(e["to"]))
+        if src is None or dst is None:
             continue
         via = e.get("via")
         exit_side = e.get("exit")
@@ -654,37 +654,37 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
         if via:
             exit_side = exit_side or via
             enter_side = enter_side or via
-            sx, sy = port(a, exit_side)
-            tx, ty = port(b, enter_side)
+            sx, sy = port(src, exit_side)
+            tx, ty = port(dst, enter_side)
             if via == "left":
                 lane_x = left_pad - 18 - 34 * lane_l
                 lane_l += 1
             else:
                 lane_x = left_pad + max_col * col_w + 18 + 34 * lane_r
                 lane_r += 1
-            pts = [(sx, sy), (lane_x, sy), (lane_x, ty), (tx, ty)]
+            route = [(sx, sy), (lane_x, sy), (lane_x, ty), (tx, ty)]
         else:
-            forward = b["cy"] > a["cy"] + 1
-            same_row = abs(b["cy"] - a["cy"]) <= 1
+            forward = dst["cy"] > src["cy"] + 1
+            same_row = abs(dst["cy"] - src["cy"]) <= 1
             if same_row:
-                exit_side = exit_side or ("right" if b["cx"] > a["cx"] else "left")
-                enter_side = enter_side or ("left" if b["cx"] > a["cx"] else "right")
-                (sx, sy), (tx, ty) = port(a, exit_side), port(b, enter_side)
-                pts = [(sx, sy), (tx, ty)]
+                exit_side = exit_side or ("right" if dst["cx"] > src["cx"] else "left")
+                enter_side = enter_side or ("left" if dst["cx"] > src["cx"] else "right")
+                (sx, sy), (tx, ty) = port(src, exit_side), port(dst, enter_side)
+                route = [(sx, sy), (tx, ty)]
             else:
                 exit_side = exit_side or ("bottom" if forward else "top")
                 enter_side = enter_side or ("top" if forward else "bottom")
-                (sx, sy), (tx, ty) = port(a, exit_side), port(b, enter_side)
+                (sx, sy), (tx, ty) = port(src, exit_side), port(dst, enter_side)
                 if exit_side in ("left", "right"):
-                    pts = [(sx, sy), (tx, sy), (tx, ty)]
+                    route = [(sx, sy), (tx, sy), (tx, ty)]
                 elif abs(sx - tx) < 1:
-                    pts = [(sx, sy), (tx, ty)]
+                    route = [(sx, sy), (tx, ty)]
                 else:
                     mid = (sy + ty) / 2
-                    pts = [(sx, sy), (sx, mid), (tx, mid), (tx, ty)]
-        d = "M" + " L".join(f"{px:.1f} {py:.1f}" for px, py in pts)
+                    route = [(sx, sy), (sx, mid), (tx, mid), (tx, ty)]
+        d = "M" + " L".join(f"{px:.1f} {py:.1f}" for px, py in route)
         parts.append(f'<path d="{d}" fill="none" stroke="{arrow}" stroke-width="1.5"/>')
-        (x0, y0), (x1, y1) = pts[-2], pts[-1]
+        (x0, y0), (x1, y1) = route[-2], route[-1]
         dx, dy = x1 - x0, y1 - y0
         norm = math.hypot(dx, dy) or 1
         ux, uy = dx / norm, dy / norm
@@ -693,7 +693,7 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
             f'<path d="M{x1:.1f} {y1:.1f} L{bx - uy * 4:.1f} {by + ux * 4:.1f} L{bx + uy * 4:.1f} {by - ux * 4:.1f} Z" fill="{arrow}"/>'
         )
         if e.get("label"):
-            (lx0, ly0), (lx1, ly1) = pts[0], pts[1]
+            (lx0, ly0), (lx1, ly1) = route[0], route[1]
             lx, ly = (lx0 + lx1) / 2, (ly0 + ly1) / 2
             horizontal = abs(ly1 - ly0) < 1
             parts.append(

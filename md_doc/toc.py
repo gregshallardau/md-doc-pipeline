@@ -26,6 +26,8 @@ PAGE_NUMBER_CSS = """\
 def toc_depth(config: dict[str, Any] | None) -> int | None:
     """The configured ``toc_depth`` (1-6), or None for every heading level."""
     raw = (config or {}).get("toc_depth")
+    if raw is None:
+        return None
     try:
         depth = int(raw)
     except (TypeError, ValueError):
