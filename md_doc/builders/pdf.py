@@ -39,6 +39,7 @@ from ._cover import footer_band_geometry  # noqa: E402
 from ..forms import collapse_select_markup  # noqa: E402
 from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
+from ..table_layout import soften_long_tokens  # noqa: E402
 
 
 def _reject_external(url: str) -> None:
@@ -950,7 +951,8 @@ _BASE_FIXES_CSS = (
     ".report-body h1[data-md-doc-first-heading] { page-break-before: auto; break-before: auto; }\n"
     ".running-date { display: block; position: absolute; visibility: hidden; width: 0; height: 0; overflow: hidden; }\n"
     ".report-body table + table { margin-top: 10pt; }\n"
-    ".report-body table :is(th, td) { overflow-wrap: anywhere; box-sizing: border-box; }\n"
+    ".report-body table :is(th, td) { overflow-wrap: break-word; box-sizing: border-box; }\n"
+    ".report-body table .md-wrap { overflow-wrap: anywhere; }\n"
     ".report-body .md-doc-page-break { page-break-before: always; break-before: page; height: 0; margin: 0; padding: 0; }\n"
     # WeasyPrint does not reliably carry break-inside:avoid from a keep-together
     # wrapper down to a list inside it, and then splits a heading's short list
@@ -1896,6 +1898,9 @@ def build(
         )
     )
     html_body = _drop_empty_table_headers(html_body)
+    html_body = re.sub(
+        r"<table\b.*?</table>", lambda m: soften_long_tokens(m.group(0)), html_body, flags=re.DOTALL
+    )
     if "table-striping:" in html_body:
         from ..table_striping import mark_group_stripes
 

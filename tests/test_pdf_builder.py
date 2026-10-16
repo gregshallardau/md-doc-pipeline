@@ -2,6 +2,8 @@
 
 from unittest.mock import patch, MagicMock
 
+import re
+
 import pytest
 
 from md_doc.builders.pdf import _resolve_css, build as build_pdf
@@ -455,3 +457,34 @@ def test_cover_subtitle_version_and_hidden_meta() -> None:
 
     bare = _build_cover("Title", "Author", "d", {"cover_meta": False}, None)
     assert "cover-meta" not in bare
+
+
+def test_table_auto_layout_keeps_short_columns_readable() -> None:
+    """Auto-sized columns must not collapse below their longest word.
+
+    ``overflow-wrap: anywhere`` makes a column's minimum width one character,
+    so the auto layout squeezed short columns to ~10pt in favour of long text.
+    """
+    from weasyprint import CSS, HTML
+
+    from md_doc.builders.pdf import _BASE_FIXES_CSS
+
+    long = "Controlled or semi-remote managed environments with direct supervision. " * 4
+    html = (
+        '<div class="report-body"><table><tr><th>Capability level</th><th>Indicative band</th>'
+        "<th>Typical contexts</th><th>Evidence</th></tr>"
+        f"<tr><td>Foundation</td><td>0-50 days</td><td>{long}</td><td>{long}</td></tr></table></div>"
+    )
+    css = re.sub(r"</?style>", "", _BASE_FIXES_CSS)
+    doc = HTML(string=html).render(
+        stylesheets=[CSS(string=css), CSS(string="@page { size: 450pt 800pt; margin: 20pt }")]
+    )
+    cells = [b for b in doc.pages[0]._page_box.descendants() if type(b).__name__ == "TableCellBox"]
+    first_row_y = min(b.position_y for b in cells)
+    widths = [
+        b.border_width()
+        for b in sorted(cells, key=lambda b: b.position_x)
+        if abs(b.position_y - first_row_y) < 0.5
+    ]
+    # "Capability" and "Foundation" are ~50pt wide at the default size.
+    assert widths[0] > 50 and widths[1] > 40, widths

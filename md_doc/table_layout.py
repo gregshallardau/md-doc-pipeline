@@ -20,6 +20,26 @@ _log = logging.getLogger(__name__)
 _IMG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 
 
+_LONG_TOKEN_RE = re.compile(r"\S{25,}")
+_TEXT_RE = re.compile(r">([^<>]+)<")
+
+
+def soften_long_tokens(html: str) -> str:
+    """Let very long unbreakable strings (URLs, hashes) wrap inside table cells.
+
+    ``overflow-wrap: anywhere`` on a whole cell also makes every column's
+    minimum width one character, which collapses short columns. Cells use
+    ``break-word`` instead, and only tokens beyond 24 characters are wrapped in
+    a span that may break anywhere. The text itself is unchanged.
+    """
+    return _TEXT_RE.sub(
+        lambda m: ">"
+        + _LONG_TOKEN_RE.sub(lambda t: f'<span class="md-wrap">{t.group(0)}</span>', m.group(1))
+        + "<",
+        html,
+    )
+
+
 def table_html(rows: list[list[tuple[bool, str]]]) -> str:
     """Build a plain ``<table>`` from rows of ``(is_header, cell_html)`` pairs."""
     out = ["<table>"]
@@ -30,7 +50,7 @@ def table_html(rows: list[list[tuple[bool, str]]]) -> str:
             cells.append(f"<{tag}>{_IMG_RE.sub('', html)}</{tag}>")
         out.append("<tr>" + "".join(cells) + "</tr>")
     out.append("</table>")
-    return "".join(out)
+    return soften_long_tokens("".join(out))
 
 
 @lru_cache(maxsize=256)
