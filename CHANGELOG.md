@@ -6,6 +6,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **PDF features.** Everything WeasyPrint offers beyond a plain HTML → PDF call is now a config
+  key (full guide: `docs/handbook.md#pdf-features`):
+  - *Container:* `pdf_variant` (PDF/A, PDF/UA, PDF/X), `pdf_tags`, `pdf_identifier`,
+    `pdf_version`, `pdf_custom_metadata`, `pdf_xmp`, `pdf_attach_source`, `pdf_attachments`,
+    `pdf_optimize_images`, `pdf_jpeg_quality`, `pdf_image_dpi`, `pdf_uncompressed`, `pdf_srgb`,
+    `pdf_full_fonts`, `pdf_hinting`, `pdf_presentational_hints`, `pdf_zoom`, `pdf_color_profile`.
+    `description` and `keywords` fill the PDF (and Word) Subject and Keywords; `version`,
+    `status`, `product` and `document_type` become custom PDF properties.
+  - *Navigation:* heading bookmarks (`pdf_bookmarks`, `pdf_bookmark_depth`), empty links such as
+    `[](#results)` that read the target heading, `xref_pages`, `numbered_headings` (with
+    matching contents entries), `page_footnotes`.
+  - *Typography:* `fonts` (`@font-face`), `font_features`, `tabular_numbers`, `hyphenate`, `lang`.
+  - *Headers and footers:* `{chapter}`, `{section}` and `{title}` tokens (PDF and Word, the latter
+    through `STYLEREF` fields), `header_layout` / `footer_layout: running`, `header_first_page`.
+  - *Layout:* `<!-- columns: N -->` and `<!-- grid: N -->` blocks, `columns`, `duplex` with
+    `binding_margin`, `chapter_break` (`page`, `recto`, `verso`), `image_fit`, `image_resolution`,
+    `print_marks`, `bleed`.
+  - `pdf_layout_check` inspects the laid-out pages (through the WeasyPrint `Document` API) for
+    stranded headings, content past the margin and blank pages.
+- `md-doc build` shares one decoded-image cache across a run, so logos used by many documents
+  are read once.
+- `md-doc lint` reports unclosed `columns` / `grid` blocks and config files (fonts, attachments,
+  ICC profiles) that cannot be found.
+
+### Fixed
+- Contents page numbers (`toc_page_numbers`, list of figures/tables) were hidden by the default
+  theme's `a[href^="#"]::after { content: "" }` rule; the contents selectors are now specific
+  enough to win.
+
 ## [0.4.0] — 2026-10-08
 
 ### Added

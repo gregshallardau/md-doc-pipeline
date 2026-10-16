@@ -111,6 +111,15 @@ cover_page: true
 - **`page_header_bar_logo_position`** — `left`, `center`, or `right`. Default: `right`
 - **`page_header_bar_logos`** — list of `{path, position}` objects for multi-logo support
 
+PDF-only extras (each optional; full list in `docs/handbook.md#pdf-features`):
+
+- **Document properties** — `description`, `keywords`, `lang` (also drives hyphenation); `pdf_variant: pdf/a-3b` for archival, `pdf/ua-1` for accessible PDFs; `pdf_attach_source: true` embeds the Markdown
+- **Navigation** — heading bookmarks are on by default (`pdf_bookmark_depth`); `numbered_headings: true`; `page_footnotes: true`; `[](#heading-id)` links read the heading's text, and `xref_pages: true` adds "(p. N)"
+- **Running text** — `header_text` and `footer_*` accept `{title}`, `{chapter}`, `{section}`, `{page}`, `{pages}` (Word too); `header_layout: running` lays logo and text out in one row
+- **Layout** — `<!-- columns: 2 -->…<!-- /columns -->` and `<!-- grid: 3 -->…<!-- /grid -->` blocks; `duplex`, `binding_margin`, `chapter_break: recto`; `print_marks`, `bleed`
+- **Type and size** — `fonts` (embed brand fonts), `hyphenate`, `tabular_numbers`, `pdf_optimize_images`, `pdf_jpeg_quality`, `pdf_image_dpi`
+- **Checks** — `pdf_layout_check: true` warns about stranded headings, content past the margin and blank pages
+
 Values already set in a parent `_meta.yml` don't need to be repeated here. Only set what's different or new for this specific document.
 
 ---

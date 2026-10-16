@@ -40,6 +40,16 @@ from ..forms import collapse_select_markup  # noqa: E402
 from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 from ..table_layout import soften_long_tokens  # noqa: E402
+from ..pdf_features import (  # noqa: E402
+    chain_finishers,
+    color_profile_css,
+    expand_directives,
+    font_face_css,
+    layout_check_finisher,
+    pdf_zoom,
+    postprocess_html,
+    render_options,
+)
 
 
 def _reject_external(url: str) -> None:
@@ -1108,17 +1118,34 @@ def _build_html(
     page_margins_mm: tuple[float, float] = (25.0, 20.0),
     page_size_mm: tuple[float, float] = (210.0, 297.0),
     theme_body_justify: bool = False,
+    theme_css_text: str | None = None,
+    extra_head: str = "",
 ) -> str:
     css_uri = css_path.as_uri()
 
-    header_style = _build_header_style(
-        header_logo_uri,
-        header_logo_position,
-        header_text,
-        header_text_position,
-        page_header_bar=page_header_bar,
-        logo_dpi=header_logo_dpi,
-    )
+    from ..pdf_features import bar_layout, footer_bar, header_bar
+
+    run_html = ""
+    run_header = bar_layout(full_config or {}, "header_layout") == "running"
+    if run_header and not (page_header_bar or {}).get("enabled"):
+        header_html, header_style = header_bar(
+            full_config or {},
+            text=header_text,
+            text_position=header_text_position,
+            logo_uri=header_logo_uri,
+            logo_position=header_logo_position,
+            logo_height_mm=header_logo_max_mm,
+        )
+        run_html += header_html
+    else:
+        header_style = _build_header_style(
+            header_logo_uri,
+            header_logo_position,
+            header_text,
+            header_text_position,
+            page_header_bar=page_header_bar,
+            logo_dpi=header_logo_dpi,
+        )
 
     section_bar_style = _build_section_bar_style(full_config or {})
     body_align_style = _build_body_align_style(full_config or {}, theme_body_justify)
@@ -1133,7 +1160,30 @@ def _build_html(
         margin_right_mm=page_margins_mm[1],
     )
 
-    footer_style = _build_footer_style(footer_left, footer_center, footer_right)
+    if bar_layout(full_config or {}, "footer_layout") == "running":
+        footer_html, footer_style = footer_bar(
+            full_config or {}, footer_left, footer_center, footer_right
+        )
+        run_html += footer_html
+    else:
+        footer_style = _build_footer_style(footer_left, footer_center, footer_right)
+
+    from ..pdf_features import (
+        document_lang,
+        feature_css,
+        head_meta,
+        uses_running_titles,
+    )
+
+    features_style = feature_css(
+        full_config or {},
+        html_body=html_body,
+        cover_page=cover_page,
+        margins_mm=page_margins_mm,
+        stylesheets=(theme_css_text or "", header_style, footer_style),
+        running_titles=uses_running_titles(header_text, footer_left, footer_center, footer_right),
+    )
+    meta_tags = head_meta(full_config or {}, author=author)
 
     cover_html = ""
     cover_support_style = ""
@@ -1187,10 +1237,11 @@ def _build_html(
         )
 
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{_escape_html(document_lang(full_config or {}))}">
 <head>
   <meta charset="utf-8">
   <title>{_escape_html(title)}</title>
+  {meta_tags}
   {cover_base_style}
   <style>{COMPONENT_CSS}{bullet_css(cover_cfg)}{page_number_css(cover_cfg)}</style>
   <link rel="stylesheet" href="{css_uri}">
@@ -1203,8 +1254,11 @@ def _build_html(
   {_form_support_css(primary_color) if is_form else ""}
   {css_vars_style}
   {page_bar_css}
+  {extra_head}
+  {features_style}
 </head>
 <body>
+{run_html}
 {cover_html}
   {page_bar_html}
   <!-- REPORT BODY -->
@@ -1226,7 +1280,7 @@ _FOOTER_POSITIONS = {
 }
 
 
-_PAGE_TOKEN_RE = re.compile(r"(\{pages?\})")
+_PAGE_TOKEN_RE = re.compile(r"(\{(?:pages?|chapter|section)\})")
 
 
 def _css_string(text: str) -> str:
@@ -1244,7 +1298,8 @@ def _css_content_value(text: str) -> str:
 
     Literal segments become quoted strings; ``{page}``/``{pages}`` become
     ``counter(page)``/``counter(pages)`` so PDF page numbers work with the same
-    tokens the docx footer understands.
+    tokens the docx footer understands. ``{chapter}``/``{section}`` read the
+    running H1/H2 titles (PDF only; see ``pdf_features.feature_css``).
     """
     out: list[str] = []
     for part in _PAGE_TOKEN_RE.split(text):
@@ -1252,6 +1307,10 @@ def _css_content_value(text: str) -> str:
             out.append("counter(page)")
         elif part == "{pages}":
             out.append("counter(pages)")
+        elif part == "{chapter}":
+            out.append("string(md-chapter, first)")
+        elif part == "{section}":
+            out.append("string(md-section, last)")
         elif part:
             out.append(f"'{_css_string(part)}'")
     return " ".join(out) if out else "''"
@@ -1335,7 +1394,7 @@ def _build_header_style(
         if text:
             pos = _HEADER_POSITIONS.get(text_position, "@top-left")
             rules.append(
-                f"  {pos} {{ content: '{_css_string(text)}'; "
+                f"  {pos} {{ content: {_css_content_value(text)}; "
                 f"font-size: 8pt; color: #5d6d7e; vertical-align: middle; }}"
             )
             cover_overrides.append(f"  {pos} {{ content: none; }}")
@@ -1791,6 +1850,10 @@ def build(
     if repo_root is None:
         repo_root = _find_repo_root(out_path.parent)
 
+    def resolve_config_path(value: str | None) -> Path | None:
+        """Fonts, attachments, ICC/XMP files: same confined lookup as logos."""
+        return _resolve_logo(value, repo_root, doc_path)
+
     # Resolve the theme up front: --mddoc-* custom properties in it provide
     # brand defaults for the look-related config keys (YAML always wins).
     css_path = _resolve_css(config, repo_root, doc_path=doc_path)
@@ -1840,6 +1903,14 @@ def build(
     footer_center: str | None = config.get("footer_center")
     footer_right: str | None = config.get("footer_right")
 
+    def _with_title(text: Any) -> Any:
+        return text.replace("{title}", title) if isinstance(text, str) else text
+
+    header_text = _with_title(header_text)
+    footer_left, footer_center, footer_right = (
+        _with_title(t) for t in (footer_left, footer_center, footer_right)
+    )
+
     page_header_bar: dict[str, Any] | None = None
     if config.get("page_header_bar"):
         phb_logo_path = _resolve_logo(config.get("page_header_bar_logo"), repo_root, doc_path)
@@ -1879,6 +1950,7 @@ def build(
     from ..pagination import inject_section_breaks, pdf_sections
 
     body = inject_section_breaks(_inject_page_breaks(_inject_blank_lines(body)))
+    body = expand_directives(body)
 
     is_form = bool(config.get("pdf_forms"))
     body = _expand_form_fields(collapse_select_markup(body), is_form)
@@ -1898,6 +1970,7 @@ def build(
         )
     )
     html_body = _drop_empty_table_headers(html_body)
+    html_body = postprocess_html(html_body, config)
     html_body = re.sub(
         r"<table\b.*?</table>", lambda m: soften_long_tokens(m.group(0)), html_body, flags=re.DOTALL
     )
@@ -2001,19 +2074,33 @@ def build(
         page_margins_mm=page_margins_mm,
         page_size_mm=page_size_mm,
         theme_body_justify=theme_body_justify,
+        theme_css_text=css_text,
+        extra_head=font_face_css(config, resolve_config_path)
+        + color_profile_css(config, resolve_config_path),
     )
 
     if section_css:
         html = html.replace("</head>", f"<style>{section_css}</style></head>")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    wp_kwargs: dict[str, Any] = {}
+    wp_kwargs: dict[str, Any] = render_options(
+        config,
+        resolve=resolve_config_path,
+        rendered_md=rendered_md,
+        doc_path=doc_path,
+    )
+    zoom = pdf_zoom(config)
+    if zoom is not None:
+        wp_kwargs["zoom"] = zoom
+    finishers: list[Any] = []
     if is_form:
         wp_kwargs["pdf_forms"] = True
         # Patch metadata WeasyPrint drops (required/readonly/tooltip/defaults).
         field_meta = _collect_form_field_meta(html_body)
         if field_meta:
-            wp_kwargs["finisher"] = _make_forms_finisher(field_meta)
+            finishers.append(_make_forms_finisher(field_meta))
+    finishers.append(layout_check_finisher(strict=coerce_bool(config.get("pdf_layout_check"))))
+    wp_kwargs["finisher"] = chain_finishers(*finishers)
     _write_pdf(
         html,
         str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
@@ -2022,8 +2109,30 @@ def build(
     )
 
 
+_IMAGE_CACHE: dict[Any, Any] | None = None
+
+
+def use_shared_image_cache(enabled: bool = True) -> None:
+    """Share WeasyPrint's decoded-image cache between documents in this process.
+
+    ``md-doc build`` turns this on for a run (and in each worker of ``-j``), so a
+    logo used by many documents is read and decoded once. It stays off for
+    long-lived callers such as the editor, where a file can change between builds.
+    """
+    global _IMAGE_CACHE
+    _IMAGE_CACHE = {} if enabled else None
+
+
 def _write_pdf(html: str, base_url: str, out_path: Path, options: dict[str, Any]) -> None:
-    """Output boundary shared with the editor's isolated preview worker."""
+    """Output boundary shared with the editor's isolated preview worker.
+
+    *options* holds only genuine WeasyPrint ``write_pdf`` options (including
+    ``finisher`` and ``zoom``), so the editor can forward them untouched.
+    """
+    from weasyprint.text.fonts import FontConfiguration
+
+    if _IMAGE_CACHE is not None:
+        options = {**options, "cache": _IMAGE_CACHE}
     weasyprint.HTML(string=html, base_url=base_url, url_fetcher=_make_url_fetcher()).write_pdf(
-        str(out_path), **options
+        str(out_path), font_config=FontConfiguration(), **options
     )

@@ -249,6 +249,15 @@ def _newest_dep_mtime(doc_path: Path, repo_root: Path, extra: list[Path] | None 
     return max(mtimes) if mtimes else float("inf")
 
 
+def _set_image_cache(enabled: bool) -> None:
+    """Turn the PDF builder's shared image cache on or off (a no-op without WeasyPrint)."""
+    try:
+        from .builders import pdf as pdf_builder
+    except Exception:  # WeasyPrint or its system libraries are missing: nothing to cache
+        return
+    pdf_builder.use_shared_image_cache(enabled)
+
+
 def _build_document(
     doc_path: Path,
     *,
@@ -947,40 +956,48 @@ def build(
 
     started = time.perf_counter()
 
-    if jobs > 1 and len(docs) > 1:
-        from concurrent.futures import ProcessPoolExecutor
+    # One image cache for the whole run: logos shared by many documents are
+    # decoded once per process. Only here, where files cannot change mid-run.
+    _set_image_cache(True)
+    try:
+        if jobs > 1 and len(docs) > 1:
+            from concurrent.futures import ProcessPoolExecutor
 
-        logger.info("building %d document(s) with %d workers", len(docs), jobs)
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
-            futures = [
-                pool.submit(
-                    _build_document,
-                    d,
-                    root=root,
-                    cascade_root=cascade_root,
-                    output=output,
-                    theme=theme,
-                    fmt=fmt,
-                    strict=strict,
-                    force=force,
-                    verbose=verbose,
+            logger.info("building %d document(s) with %d workers", len(docs), jobs)
+            with ProcessPoolExecutor(
+                max_workers=jobs, initializer=_set_image_cache, initargs=(True,)
+            ) as pool:
+                futures = [
+                    pool.submit(
+                        _build_document,
+                        d,
+                        root=root,
+                        cascade_root=cascade_root,
+                        output=output,
+                        theme=theme,
+                        fmt=fmt,
+                        strict=strict,
+                        force=force,
+                        verbose=verbose,
+                    )
+                    for d in docs
+                ]
+                for fut in futures:  # submission order → deterministic output
+                    res = fut.result()
+                    _print_doc_result(res)
+                    _tally(res)
+        else:
+            logger.info("building %d document(s) sequentially", len(docs))
+            for doc_path in docs:
+                t0 = time.perf_counter()
+                res = _build_one(doc_path)
+                logger.info(
+                    "%s → %d built in %.2fs", res["rel"], res["built"], time.perf_counter() - t0
                 )
-                for d in docs
-            ]
-            for fut in futures:  # submission order → deterministic output
-                res = fut.result()
                 _print_doc_result(res)
                 _tally(res)
-    else:
-        logger.info("building %d document(s) sequentially", len(docs))
-        for doc_path in docs:
-            t0 = time.perf_counter()
-            res = _build_one(doc_path)
-            logger.info(
-                "%s → %d built in %.2fs", res["rel"], res["built"], time.perf_counter() - t0
-            )
-            _print_doc_result(res)
-            _tally(res)
+    finally:
+        _set_image_cache(False)
 
     elapsed = time.perf_counter() - started
 

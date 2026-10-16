@@ -64,7 +64,7 @@ p.table-caption { font-size: 8.5pt; font-style: italic; margin: 10pt 0 3pt 0; pa
 .list-of ul { list-style: none; padding-left: 0; margin: 0 0 8pt 0; }
 .list-of li { margin: 0 0 3pt 0; }
 .list-of a { text-decoration: none; display: block; color: inherit; }
-.list-of a::after { content: leader('.') target-counter(attr(href url), page); }
+.list-of a[href^="#"]::after { content: leader('.') target-counter(attr(href url), page); }
 """
 
 

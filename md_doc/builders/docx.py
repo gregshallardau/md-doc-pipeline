@@ -3886,7 +3886,7 @@ def _add_page_header_bar(
 # ---------------------------------------------------------------------------
 
 
-_FOOTER_TOKEN_RE = re.compile(r"(\{pages?\})")
+_FOOTER_TOKEN_RE = re.compile(r"(\{(?:pages?|chapter|section)\})")
 
 _CSS_CONTENT_TOKEN_RE = re.compile(
     r'"([^"]*)"'  # double-quoted string
@@ -3967,7 +3967,7 @@ def _css_footer_defaults(css_text: str | None, date_str: str) -> dict[str, tuple
     return result
 
 
-def _add_simple_field(paragraph: Any, instr: str) -> list[Any]:
+def _add_simple_field(paragraph: Any, instr: str, placeholder: str = "1") -> list[Any]:
     """Append a simple Word field (e.g. ``PAGE``/``NUMPAGES``); return all its runs.
 
     Every run (not just the result) is returned so the caller can style them:
@@ -3989,7 +3989,7 @@ def _add_simple_field(paragraph: Any, instr: str) -> list[Any]:
     sep.set(qn("w:fldCharType"), "separate")
     run3._r.append(sep)
 
-    value_run = paragraph.add_run("1")
+    value_run = paragraph.add_run(placeholder)
 
     run5 = paragraph.add_run()
     end = OxmlElement("w:fldChar")
@@ -4014,6 +4014,11 @@ def _emit_footer_segment(paragraph: Any, text: str, lead_tabs: int = 0) -> list[
             runs.extend(_add_simple_field(paragraph, "PAGE"))
         elif part == "{pages}":
             runs.extend(_add_simple_field(paragraph, "NUMPAGES"))
+        elif part == "{chapter}":
+            # The PDF's running H1 title: Word's STYLEREF field reads it per page.
+            runs.extend(_add_simple_field(paragraph, 'STYLEREF "Heading 1"', ""))
+        elif part == "{section}":
+            runs.extend(_add_simple_field(paragraph, 'STYLEREF "Heading 2"', ""))
         elif part:
             for i, line in enumerate(part.split("\n")):
                 if i > 0:
@@ -4184,9 +4189,9 @@ def _add_plain_header(
     slots: dict[str, list[Any]] = {"left": [], "center": [], "right": []}
 
     def _slot_text(pos: str) -> None:
-        run = para.add_run(str(header_text))
-        run.font.size = Pt(8)
-        run.font.color.rgb = RGBColor(0x5D, 0x6D, 0x7E)
+        for run in _emit_footer_segment(para, str(header_text)):
+            run.font.size = Pt(8)
+            run.font.color.rgb = RGBColor(0x5D, 0x6D, 0x7E)
 
     def _slot_logo(pos: str) -> None:
         run = para.add_run()
@@ -4579,6 +4584,25 @@ def build(
         props.title = title
         if author:
             props.author = author
+    # Same document metadata the PDF carries (Subject / Keywords).
+    description = str(config.get("description") or "").strip()
+    if description:
+        props.subject = description
+    from ..pdf_features import keywords_of
+
+    keywords = keywords_of(config)
+    if keywords:
+        props.keywords = ", ".join(keywords)
+
+    # {title} in header/footer text is the document title (same token as the PDF).
+    config = {
+        **config,
+        **{
+            key: config[key].replace("{title}", title)
+            for key in ("header_text", "footer_left", "footer_center", "footer_right")
+            if isinstance(config.get(key), str)
+        },
+    }
 
     _add_page_header_bar(doc, config, doc_path, repo_root)
     _add_plain_header(doc, config, doc_path, repo_root)

@@ -19,7 +19,7 @@ PAGE_NUMBER_CSS = """\
 .toc ul { list-style: none; padding-left: 0; }
 .toc ul ul { padding-left: 14pt; }
 .toc a { text-decoration: none; display: block; color: inherit; }
-.toc a::after { content: leader('.') target-counter(attr(href url), page); }
+.toc a[href^="#"]::after { content: leader('.') target-counter(attr(href url), page); }
 """
 
 

@@ -346,6 +346,46 @@ def _check_form_fields(
         )
 
 
+def _check_layout_blocks(body: str, doc_path: Path, issues: list[LintIssue]) -> None:
+    """``<!-- columns: N -->`` / ``<!-- grid: N -->`` blocks must be closed."""
+    from .pdf_features import unbalanced_directives
+
+    for line, message in unbalanced_directives(body):
+        issues.append(LintIssue(path=doc_path, message=f"line {line}: {message}", severity="error"))
+
+
+def _check_pdf_assets(
+    config: dict[str, Any], doc_path: Path, repo_root: Path, issues: list[LintIssue]
+) -> None:
+    """Fonts, attachments, XMP and ICC files named in config must resolve."""
+    from .builders.pdf import _resolve_logo
+
+    wanted: list[tuple[str, str]] = []
+    for key in ("pdf_attachments", "pdf_xmp"):
+        raw = config.get(key)
+        wanted += [(key, str(item)) for item in (raw if isinstance(raw, list) else [raw]) if item]
+    if config.get("pdf_color_profile"):
+        wanted.append(("pdf_color_profile", str(config["pdf_color_profile"])))
+    fonts = config.get("fonts")
+    for entry in fonts if isinstance(fonts, list) else []:
+        if isinstance(entry, str):
+            wanted.append(("fonts", entry))
+        elif isinstance(entry, dict):
+            for slot in ("path", "src", "regular", "bold", "italic", "bold_italic"):
+                if entry.get(slot):
+                    wanted.append(("fonts", str(entry[slot])))
+    for key, value in wanted:
+        path = _resolve_logo(value, repo_root, doc_path)
+        if path is None or not path.is_file():
+            issues.append(
+                LintIssue(
+                    path=doc_path,
+                    message=f"'{key}': file not found (or outside the project): {value}",
+                    severity="warning",
+                )
+            )
+
+
 def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     """
     Lint a single Markdown document and return all found issues.
@@ -489,9 +529,12 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     def check_directives(prose: str) -> str:
         _check_form_fields(prose, config, doc_path, issues)
         _check_col_width_comments(prose, doc_path, issues)
+        _check_layout_blocks(prose, doc_path, issues)
         return prose
 
     transform_outside_code(body, check_directives)
+
+    _check_pdf_assets(config, doc_path, repo_root, issues)
 
     # ------------------------------------------------------------------
     # 3d. Adjacent tables without a blank line (silently merge into one)

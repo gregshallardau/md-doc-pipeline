@@ -52,6 +52,19 @@
         'pptx_template', 'slide_size', 'slide_split',
         // Export destination
         'export_folder',
+        // PDF container, production and print
+        'pdf_variant', 'pdf_version', 'pdf_identifier', 'pdf_tags', 'pdf_custom_metadata',
+        'pdf_presentational_hints', 'pdf_optimize_images', 'pdf_jpeg_quality', 'pdf_image_dpi',
+        'pdf_uncompressed', 'pdf_srgb', 'pdf_full_fonts', 'pdf_hinting', 'pdf_zoom',
+        'pdf_attach_source', 'pdf_attachments', 'pdf_xmp', 'pdf_color_profile',
+        'pdf_bookmarks', 'pdf_bookmark_depth', 'pdf_layout_check',
+        'description', 'keywords', 'print_marks', 'bleed',
+        // Typography, numbering, navigation and page layout (PDF)
+        'lang', 'fonts', 'font_features', 'tabular_numbers', 'hyphenate',
+        'page_footnotes', 'xref_pages', 'numbered_headings', 'numbered_headings_depth',
+        'heading_number_style', 'duplex', 'binding_margin', 'chapter_break',
+        'header_first_page', 'header_layout', 'footer_layout',
+        'columns', 'column_gap', 'column_rule', 'image_fit', 'image_resolution',
         // Client / engagement fields (common user-defined cascade keys)
         'client', 'client_abn', 'client_contact', 'account_manager',
         'support_email', 'alert_email',
