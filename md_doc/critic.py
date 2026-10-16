@@ -288,7 +288,7 @@ def problems(markdown: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
-_BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th"}
+_BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "blockquote"}
 _TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>")
 
 
@@ -296,7 +296,8 @@ def mark_changed_blocks(html: str) -> str:
     """Give each block that holds a change-bar marker the class ``critic-changed``.
 
     The marker is an empty ``<span class="critic-bar">`` written by ``simple`` mode;
-    CSS cannot style a parent from a child, so the PDF builder tags the block.
+    CSS cannot style a parent from a child, so the PDF builder tags the block (the
+    whole callout, for a change inside a blockquote).
     """
     if 'class="critic-bar"' not in html:
         return html
@@ -313,7 +314,10 @@ def mark_changed_blocks(html: str) -> str:
             else:
                 stack.append((tag, match.start(), match.end()))
         elif tag == "span" and not closing and 'class="critic-bar"' in attrs and stack:
-            marked.add(stack[-1][1])
+            # A change inside a callout (blockquote) marks the whole box, so the bar
+            # sits outside it rather than on top of the callout's own rule.
+            box = next((entry for entry in stack if entry[0] == "blockquote"), stack[-1])
+            marked.add(box[1])
     out = html
     for start in sorted(marked, reverse=True):
         end = out.index(">", start)

@@ -766,6 +766,7 @@ class _DocxBuilder(HTMLParser):
         self._critic: str | None = None
         self._hl = False
         self._hl_runs: list[Any] = []
+        self._bar_paragraphs: list[Any] = []
         self._rev_id = 0
         self._list_stack: list[str] = []
         self._list_num_ids: list[int | None] = []
@@ -1346,19 +1347,59 @@ class _DocxBuilder(HTMLParser):
                 text.tag = qn("w:delText")
 
     def _add_change_bar(self) -> None:
-        """A bar beside the paragraph (Word's "simple markup" change bar)."""
+        """Queue the current paragraph for a change bar (see ``apply_change_bars``)."""
         paragraph = self._current_para()
-        pPr = paragraph._p.get_or_add_pPr()
-        if pPr.find(qn("w:pBdr")) is not None:
-            return
-        border = OxmlElement("w:pBdr")
-        left = OxmlElement("w:left")
-        left.set(qn("w:val"), "single")
-        left.set(qn("w:sz"), "12")
-        left.set(qn("w:space"), "8")
-        left.set(qn("w:color"), "CF222E")
-        border.append(left)
-        pPr.append(border)
+        if all(p._p is not paragraph._p for p in self._bar_paragraphs):
+            self._bar_paragraphs.append(paragraph)
+
+    def apply_change_bars(self) -> None:
+        """Word's "simple markup" change bar: a red border beside each changed paragraph.
+
+        Run after the whole document is built, because paragraph styling (callouts)
+        replaces any border set earlier. A callout paragraph already carries its own
+        left rule, so its bar goes on the right-hand edge instead.
+        """
+        targets = [p._p for p in self._bar_paragraphs]
+
+        def box_style(element: Any) -> tuple[str, str] | None:
+            """(left-rule colour, fill) of a callout paragraph, else None."""
+            if element.tag != qn("w:p") or element.pPr is None:
+                return None
+            left = element.pPr.xpath("./w:pBdr/w:left/@w:color")
+            fill = element.pPr.xpath("./w:shd/@w:fill")
+            return (left[0], fill[0] if fill else "") if left else None
+
+        # A change in a callout flags the whole box (as the PDF does), so the paragraphs
+        # of one box keep identical borders and Word keeps drawing it as one block.
+        for element in list(targets):
+            style = box_style(element)
+            if style is None:
+                continue
+            for step in ("getprevious", "getnext"):
+                neighbour = getattr(element, step)()
+                while neighbour is not None and box_style(neighbour) == style:
+                    if neighbour not in targets:
+                        targets.append(neighbour)
+                    neighbour = getattr(neighbour, step)()
+
+        for element in targets:
+            pPr = element.get_or_add_pPr()
+            border = pPr.find(qn("w:pBdr"))
+            edge = "left"
+            if border is None:
+                border = OxmlElement("w:pBdr")
+                _insert_ppr_in_order(pPr, border, ["shd", *_PPR_AFTER_SHD])
+            elif border.find(qn("w:left")) is not None:
+                edge = "right"
+            if border.find(qn(f"w:{edge}")) is not None:
+                continue
+            bar = OxmlElement(f"w:{edge}")
+            bar.set(qn("w:val"), "single")
+            bar.set(qn("w:sz"), "12")
+            bar.set(qn("w:space"), "8")
+            bar.set(qn("w:color"), "CF222E")
+            border.append(bar)
+        self._bar_paragraphs = []
 
     def _add_review_comment(self, text: str) -> None:
         """A Word comment anchored to the highlight just written (else the last run)."""
@@ -4786,6 +4827,7 @@ def build(
     # formats break pages at the same places.
     html = _keep_heading_with_next(_merge_joined_field_boxes(html))
     builder.feed(html)
+    builder.apply_change_bars()
     from ..toc import insert_word_caption_lists, insert_word_toc_fields
 
     insert_word_toc_fields(doc, config)

@@ -841,7 +841,9 @@ In `simple` mode the text reads as the finished document. In the **PDF** a red b
 margin beside every heading, paragraph, list item or table cell that changed (a deleted line
 leaves no bar, since nothing remains to mark), and highlights and comments appear as in `show`.
 In **Word** each changed paragraph gets a red left border, highlights are kept, and comments are
-real Word comments; no tracked changes are created.
+real Word comments; no tracked changes are created. A change inside a callout flags the whole
+box: the PDF bar sits outside the box, and in Word the red bar goes on the box's right-hand edge
+so it does not compete with the callout's own left rule.
 
 #### One build, several versions
 

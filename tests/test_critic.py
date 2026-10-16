@@ -417,3 +417,32 @@ def test_review_exports_are_incremental_and_validated(tmp_path):
     assert validate_config({"review_exports": ["clean", "simple"]}) == []
     assert validate_config({"review_exports": ["nope"]})[0][0] == "error"
     assert validate_config({"review_markup": "simple"}) == []
+
+
+def test_changes_inside_a_callout_mark_the_whole_box():
+    html = critic.mark_changed_blocks(
+        f"<blockquote><p>a</p><ul><li>{BAR}b</li></ul></blockquote><blockquote><p>c</p></blockquote>"
+    )
+    assert html.startswith('<blockquote class="critic-changed">')
+    assert html.count("critic-changed") == 1 and "<li>" in html
+
+
+def test_word_callout_paragraphs_get_the_bar_on_the_other_side(tmp_path):
+    from md_doc.builders import docx
+
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    (tmp_path / "_pdf-theme.css").write_text(
+        "blockquote { background: #eef5fa; border-left: 3pt solid #2e86c1; padding: 6pt 10pt; }"
+    )
+    out = tmp_path / "c.docx"
+    docx.build(
+        "# T\n\n> **Note**\n>\n> Callout with {++new text++}.\n\nPlain {++new++} line.\n",
+        {"title": "T", "review_markup": "simple"},
+        out,
+        repo_root=tmp_path,
+        doc_path=tmp_path / "d.md",
+    )
+    xml = xml_of(out)
+    # Both callout paragraphs (the whole box) get the right-hand bar; the plain one the left.
+    assert xml.count('<w:right w:val="single" w:sz="12" w:space="8" w:color="CF222E"/>') == 2
+    assert xml.count('<w:left w:val="single" w:sz="12" w:space="8" w:color="CF222E"/>') == 1
