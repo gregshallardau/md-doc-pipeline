@@ -40,7 +40,14 @@ from ..forms import collapse_select_markup  # noqa: E402
 from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 from ..table_layout import soften_long_tokens  # noqa: E402
-from ..critic import prepare as prepare_review_markup  # noqa: E402
+from ..critic import (  # noqa: E402
+    comment_notes,
+    counts as review_marks,
+    legend_html,
+    prepare as prepare_review_markup,
+    review_author,
+    review_mode,
+)
 from ..pdf_features import (  # noqa: E402
     chain_finishers,
     change_bars_finisher,
@@ -1877,6 +1884,7 @@ def build(
 
     # Strip frontmatter (already processed by renderer)
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", rendered_md, count=1, flags=re.DOTALL)
+    review_counts = review_marks(body)
     body = prepare_review_markup(body, config, "pdf")
 
     title: str = config.get("title") or _extract_title(body) or out_path.stem
@@ -1978,6 +1986,10 @@ def build(
     )
     html_body = _drop_empty_table_headers(html_body)
     html_body = postprocess_html(html_body, config)
+    if review_mode(config) in ("show", "simple"):
+        author_name = review_author(config)
+        html_body = comment_notes(html_body, author_name)
+        html_body = legend_html(review_mode(config), review_counts, author_name) + html_body
     html_body = re.sub(
         r"<table\b.*?</table>", lambda m: soften_long_tokens(m.group(0)), html_body, flags=re.DOTALL
     )

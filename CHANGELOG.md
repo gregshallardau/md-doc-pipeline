@@ -14,6 +14,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   slides always accept. `md-doc extract` turns Word tracked changes and comments back into the
   marks; `md-doc lint` reports unclosed marks and warns about marks left in a `status: final`
   document; the browser editor highlights them. Guide: `docs/handbook.md#markdown-review-markup`.
+- **Review markup is easier to read.** Marked-up PDFs and Word files start with a key (reviewer,
+  counts, what the colours and bars mean); PDF insertions and deletions have a coloured wash, and
+  each comment is a numbered marker with a visible note box under the text it is about, headed by
+  the reviewer's name, instead of a page-foot footnote.
 - **Simple markup and multi-version review exports.** `review_markup: simple` gives the final
   text with a change bar in the right-hand margin beside each changed block (one aligned strip;
   a Word paragraph border, or a PDF bar drawn from the laid-out block) and the highlights and

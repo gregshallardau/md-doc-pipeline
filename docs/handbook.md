@@ -829,13 +829,19 @@ The deadline is {~~Friday~>Monday~~}. {==Budget approval==}{>>Is this still curr
 
 In `show` mode:
 
-- **PDF** — insertions are green and underlined, deletions red and struck through, highlights
-  yellow, and each comment becomes a numbered `[1]` note at the foot of the page.
+- **PDF** — insertions are green on a green wash and underlined, deletions red on a red wash and
+  struck through, highlights yellow. Each comment becomes a numbered `[1]` marker with a note box
+  (the reviewer's name and the comment) directly under the paragraph, list item, table or callout
+  it is about. A key at the top of the document says what the colours mean and counts the changes
+  and comments.
 - **Word** (`.docx`) — real tracked changes and comments, attributed to `review_author`, that a
   reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
   (underline, strike-through, highlight) rather than tracked changes, and cell comments are
   dropped.
 - **Slides** treat `show` and `simple` as `accept`.
+
+Marked-up Word files (`show` and `simple`) also start with a one-line key (reviewer, counts, what
+the markup means); `accept` and `reject` files never do.
 
 In `simple` mode the text reads as the finished document, and a red change bar marks every
 changed block in the **right-hand page margin**, in one vertical strip down the page, so the

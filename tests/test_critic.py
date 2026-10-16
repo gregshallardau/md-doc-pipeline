@@ -193,7 +193,7 @@ def test_word_clean_modes_have_no_revisions(tmp_path, mode):
     assert ("Hello old colour" in text) == (mode == "reject")
 
 
-def test_pdf_show_renders_marks_and_comment_footnotes(tmp_path, monkeypatch):
+def test_pdf_show_renders_marks_comment_notes_and_a_legend(tmp_path, monkeypatch):
     weasyprint = pytest.importorskip("weasyprint")
     from md_doc.builders import pdf
 
@@ -218,16 +218,18 @@ def test_pdf_show_renders_marks_and_comment_footnotes(tmp_path, monkeypatch):
     )
     pdf.build(
         DOC,
-        {"review_markup": "show"},
+        {"review_markup": "show", "review_author": "Greg Shallard"},
         tmp_path / "o.pdf",
         repo_root=tmp_path,
         doc_path=tmp_path / "d.md",
     )
     assert "ins.critic-ins" in captured["html"] and 'class="critic-ins"' in captured["html"]
     page = seen["document"].pages[0]._page_box
-    assert any(type(c).__name__ == "FootnoteAreaBox" for c in page.children)
+    assert not any(type(c).__name__ == "FootnoteAreaBox" for c in page.children)
     texts = " ".join(b.text for b in page.descendants() if type(b).__name__ == "TextBox")
-    assert "Check this" in texts
+    assert "Check this" in texts and "Greg Shallard:" in texts  # a visible note, with its author
+    assert 'class="critic-note"' in captured["html"] and "Review markup" in texts
+    assert "5 changes" in texts and "1 comment" in texts
 
     pdf.build(DOC, {}, tmp_path / "o.pdf", repo_root=tmp_path, doc_path=tmp_path / "d.md")
     assert "critic-" not in captured["html"] and "Check this" not in captured["html"]
@@ -353,7 +355,8 @@ def test_pdf_simple_draws_change_bars_and_keeps_comments(tmp_path, monkeypatch):
     )
     html = captured["html"]
     assert 'class="critic-changed"' in html and '<tr class="critic-changed">' in html
-    assert 'data-comment="Check this"' in html
+    assert 'class="critic-note"' in html and "Check this" in html
+    assert "red bar in the right margin" in html
     assert "<ins" not in html.split("<body>")[1] and weasyprint is not None
 
 
@@ -501,3 +504,91 @@ def test_pdf_bars_follow_blocks_across_pages(tmp_path):
     per_page = [pdf_features._changed_spans(p) for p in document.pages]
     assert len(document.pages) > 1 and sum(len(s) for s in per_page) == 2
     assert per_page[0] and per_page[-1]
+
+
+# ---------------------------------------------------------------------------
+# Visible comments and the legend
+# ---------------------------------------------------------------------------
+
+COMMENT = '<span class="critic-comment" data-comment="{}"></span>'
+
+
+def test_counts_ignore_code_and_frontmatter():
+    found = critic.counts(SAMPLE)
+    assert found == {"changes": 6, "highlights": 1, "comments": 1}
+    assert critic.counts("plain `{++x++}` text") == {"changes": 0, "highlights": 0, "comments": 0}
+
+
+def test_comment_notes_follow_the_block_that_holds_them():
+    html = (
+        f"<p>one {COMMENT.format('first &amp; <b>')}</p><ul><li>item {COMMENT.format('second')}"
+        f"</li></ul><p>plain</p>"
+    )
+    out = critic.comment_notes(html, "Ada <L>")
+    assert out.startswith('<p>one <sup class="critic-ref">[1]</sup></p><div class="critic-note">')
+    assert "<strong>Ada &lt;L&gt;:</strong> first &amp; &lt;b&gt;</div><ul>" in out
+    assert '</li><div class="critic-note"><span class="critic-note-n">[2]</span>' in out
+    assert out.endswith("<p>plain</p>") and "critic-comment" not in out
+
+
+def test_comment_in_a_table_is_noted_after_the_table():
+    html = f"<table><tr><td>cell {COMMENT.format('note')}</td></tr></table><p>after</p>"
+    out = critic.comment_notes(html, "R")
+    assert out.index("</table>") < out.index("critic-note") < out.index("<p>after")
+    assert out.count("critic-note") == 2  # the box and its [1] number span
+
+
+def test_comments_in_a_callout_stay_inside_the_box():
+    out = critic.comment_notes(f"<blockquote><p>x {COMMENT.format('hi')}</p></blockquote>", "R")
+    assert out.index("critic-note") < out.index("</blockquote>")
+
+
+def test_legend_describes_the_mode_and_is_absent_when_clean():
+    summary = {"changes": 3, "highlights": 1, "comments": 1}
+    show = critic.legend_html("show", summary, "Ada")
+    assert "Ada" in show and "3 changes, 1 comment" in show and "critic-ins" in show
+    simple = critic.legend_html("simple", summary, "Ada")
+    assert "red bar in the right margin" in simple and "critic-ins" not in simple
+    assert critic.legend_html("accept", summary, "Ada") == ""
+    assert critic.legend_html("show", {"changes": 0, "highlights": 0, "comments": 0}, "Ada") == ""
+    assert "Review markup · Ada · 3 changes, 1 comment" in critic.legend_text(
+        "show", summary, "Ada"
+    )
+    assert "red bar" in critic.legend_text("simple", summary, "Ada")
+
+
+def test_word_gets_a_legend_only_for_marked_up_versions(tmp_path):
+    from docx import Document
+
+    show = Document(str(build_docx(tmp_path, "show")))
+    assert show.paragraphs[0].text.startswith("Review markup · Greg Shallard · ")
+    assert "accept or reject them on Word's Review tab" in show.paragraphs[0].text
+    simple = Document(str(build_docx(tmp_path, "simple")))
+    assert "red bar in the right margin" in simple.paragraphs[0].text
+    clean = Document(str(build_docx(tmp_path, "accept")))
+    assert not clean.paragraphs[0].text.startswith("Review markup")
+
+
+def test_pdf_clean_versions_have_no_legend_or_notes(tmp_path, monkeypatch):
+    from md_doc.builders import pdf
+
+    captured = {}
+    real_write = pdf._write_pdf
+    monkeypatch.setattr(
+        pdf,
+        "_write_pdf",
+        lambda html, base, out, opts: (
+            captured.update(html=html),
+            real_write(html, base, out, opts),
+        ),
+    )
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    for mode in ("accept", "reject"):
+        pdf.build(
+            DOC,
+            {"review_markup": mode},
+            tmp_path / "o.pdf",
+            repo_root=tmp_path,
+            doc_path=tmp_path / "d.md",
+        )
+        assert "critic-legend" not in captured["html"] and "critic-note" not in captured["html"]

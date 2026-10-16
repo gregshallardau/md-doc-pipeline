@@ -4215,6 +4215,26 @@ def _emit_footer_segment(paragraph: Any, text: str, lead_tabs: int = 0) -> list[
     return runs
 
 
+def _add_review_legend(doc: Document, mode: str, summary: dict[str, int], author: str) -> None:
+    """A one-paragraph key above a marked-up document (what the markup means)."""
+    from ..critic import legend_text
+
+    text = legend_text(mode, summary, author)
+    if not text:
+        return
+    paragraph = doc.add_paragraph()
+    run = paragraph.add_run(text)
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+    paragraph.paragraph_format.space_after = Pt(8)
+    pPr = paragraph._p.get_or_add_pPr()
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:val"), "clear")
+    shading.set(qn("w:color"), "auto")
+    shading.set(qn("w:fill"), "F3F4F6")
+    pPr.append(shading)
+
+
 def _add_footer(
     doc: Document,
     config: dict[str, Any],
@@ -4661,8 +4681,14 @@ def build(
         ft = str(config.get("dotx_field_type", "form")).lower()
         field_type = ft if ft in ("form", "merge") else "form"
 
-    from ..critic import prepare as prepare_review_markup, review_author
+    from ..critic import (
+        counts as review_marks,
+        prepare as prepare_review_markup,
+        review_author,
+        review_mode,
+    )
 
+    review_counts = review_marks(_strip_frontmatter(rendered_md))
     body = prepare_review_markup(_strip_frontmatter(rendered_md), config, "docx")
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     # Same defaults as the PDF builder so the cover carries identical metadata
@@ -4850,6 +4876,9 @@ def build(
             builder,
             theme,
         )
+
+    if review_mode(config) in ("show", "simple"):
+        _add_review_legend(doc, review_mode(config), review_counts, review_author(config))
 
     # Content after the cover starts the pagination baseline — the first body
     # heading must not force an extra page break on top of the cover's.

@@ -902,9 +902,6 @@ def feature_css(
         from .critic import CSS as critic_css
 
         rules.append(critic_css)
-        page_rules.append(
-            "@footnote { border-top: 0.5pt solid #b0b7bf; padding-top: 3pt; margin-top: 6pt; }"
-        )
 
     # Typography.
     features = config.get("font_features")

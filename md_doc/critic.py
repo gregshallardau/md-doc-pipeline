@@ -333,16 +333,138 @@ def mark_changed_blocks(html: str) -> str:
     return out
 
 
-#: Stylesheet for ``show`` mode in PDF; added only when the document has marks.
+_COMMENT_SPAN_RE = re.compile(r'<span class="critic-comment" data-comment="([^"]*)"></span>')
+_NOTE_BLOCKS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "blockquote"}
+
+
+def counts(markdown: str) -> dict[str, int]:
+    """How many changes, highlights and comments the Markdown holds (frontmatter and code ignored)."""
+    front = _FRONTMATTER_RE.match(markdown)
+    body = markdown[front.end() :] if front else markdown
+    found = {"changes": 0, "highlights": 0, "comments": 0}
+
+    def tally(prose: str) -> str:
+        for match in _CRITIC_RE.finditer(prose):
+            if match.group("hl") is not None:
+                found["highlights"] += 1
+            elif match.group("comment") is not None:
+                found["comments"] += 1
+            else:
+                found["changes"] += 1
+        return prose
+
+    transform_outside_code(body, tally)
+    return found
+
+
+def comment_notes(html: str, author: str) -> str:
+    """PDF: turn each comment into a numbered reference and a visible note box.
+
+    The reference (``[1]``) replaces the empty comment span; the note, with the
+    reviewer's name, follows the paragraph, list item, heading, table or callout
+    that holds it, so a comment is read beside the text it is about.
+    """
+    if 'class="critic-comment"' not in html:
+        return html
+    stack: list[list[Any]] = []  # [tag, notes] for open note-capable blocks
+    replacements: list[tuple[int, int, str]] = []
+    insertions: list[tuple[int, str]] = []
+    number = 0
+    skip_until = 0
+    for match in _TAG_RE.finditer(html):
+        if match.start() < skip_until:
+            continue
+        closing, tag = match.group(1), match.group(2).lower()
+        if tag in _NOTE_BLOCKS:
+            if closing:
+                while stack and stack[-1][0] != tag:
+                    stack.pop()
+                if stack:
+                    notes = stack.pop()[1]
+                    if notes:
+                        insertions.append((match.end(), "".join(notes)))
+            else:
+                stack.append([tag, []])
+        elif tag == "span" and not closing:
+            span = _COMMENT_SPAN_RE.match(html, match.start())
+            if span and stack:
+                number += 1
+                text = _html.unescape(span.group(1))
+                replacements.append(
+                    (span.start(), span.end(), f'<sup class="critic-ref">[{number}]</sup>')
+                )
+                # A comment in a table is noted after the table, not inside a row.
+                owner = next((e for e in stack if e[0] == "table"), stack[-1])
+                owner[1].append(
+                    '<div class="critic-note">'
+                    f'<span class="critic-note-n">[{number}]</span> '
+                    f"<strong>{_html.escape(author)}:</strong> {_html.escape(text)}</div>"
+                )
+                skip_until = span.end()
+    edits = [(a, b, new) for a, b, new in replacements] + [
+        (pos, pos, new) for pos, new in insertions
+    ]
+    for start, end, new in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
+        html = html[:start] + new + html[end:]
+    return html
+
+
+def legend_html(mode: str, summary: dict[str, int], author: str) -> str:
+    """The key printed above a marked-up PDF: what the colours and bars mean."""
+    if mode not in ("show", "simple") or not (summary["changes"] or summary["comments"]):
+        return ""
+    if mode == "show":
+        key = (
+            '<ins class="critic-ins">Added</ins> <del class="critic-del">Deleted</del> '
+            '<mark class="critic-hl">Highlighted</mark> '
+            '<sup class="critic-ref">[1]</sup> Comment'
+        )
+    else:
+        key = (
+            '<span class="critic-legend-bar"></span> Changed (red bar in the right margin) '
+            '<mark class="critic-hl">Highlighted</mark> <sup class="critic-ref">[1]</sup> Comment'
+        )
+    facts = []
+    if summary["changes"]:
+        facts.append(f"{summary['changes']} change{'s' if summary['changes'] != 1 else ''}")
+    if summary["comments"]:
+        facts.append(f"{summary['comments']} comment{'s' if summary['comments'] != 1 else ''}")
+    return (
+        '<div class="critic-legend"><strong>Review markup</strong> '
+        f"· {_html.escape(author)} · {', '.join(facts)}<br>{key}</div>\n"
+    )
+
+
+def legend_text(mode: str, summary: dict[str, int], author: str) -> str:
+    """Plain-text legend for Word, where changes and comments are native."""
+    if mode not in ("show", "simple") or not (summary["changes"] or summary["comments"]):
+        return ""
+    facts = []
+    if summary["changes"]:
+        facts.append(f"{summary['changes']} change{'s' if summary['changes'] != 1 else ''}")
+    if summary["comments"]:
+        facts.append(f"{summary['comments']} comment{'s' if summary['comments'] != 1 else ''}")
+    how = (
+        "Changes are tracked: accept or reject them on Word's Review tab."
+        if mode == "show"
+        else "A red bar in the right margin marks each changed paragraph; comments are in the margin."
+    )
+    return f"Review markup · {author} · {', '.join(facts)}. {how}"
+
+
+#: Stylesheet for ``show`` and ``simple`` modes in PDF; added only when the document has marks.
 CSS = """\
-ins.critic-ins { color: #1a7f37; background: #e6ffec; text-decoration: underline; }
-del.critic-del { color: #cf222e; background: #ffebe9; text-decoration: line-through; }
-mark.critic-hl { background: #fff3a3; color: inherit; }
-.critic-comment { float: footnote; footnote-display: block; font-size: 8pt; line-height: 1.35;
-  font-style: italic; color: #5d6d7e; }
-.critic-comment::before { content: attr(data-comment); }
-.critic-comment::footnote-call { content: "[" counter(footnote) "]"; font-size: 70%;
-  vertical-align: super; line-height: 0; color: #9a6700; font-style: normal; }
-.critic-comment::footnote-marker { content: "[" counter(footnote) "] "; font-style: normal;
-  color: #9a6700; }
+ins.critic-ins { color: #0b5d1e; background: #c8f0d2; text-decoration: underline; }
+del.critic-del { color: #a40e26; background: #ffd6d9; text-decoration: line-through; }
+mark.critic-hl { background: #ffe97a; color: inherit; }
+sup.critic-ref { color: #7a4b00; background: #ffe97a; font-weight: 700; font-size: 70%;
+  line-height: 0; padding: 0 1.5pt; border-radius: 2pt; font-style: normal; }
+.critic-note { margin: 2pt 0 7pt 0; padding: 4pt 8pt; background: #fff8dc;
+  border-left: 3pt solid #d4a017; font-size: 8.5pt; line-height: 1.35; font-style: normal;
+  color: #4a3b00; break-inside: avoid; break-before: avoid; }
+.critic-note-n { font-weight: 700; color: #9a6700; }
+.critic-legend { margin: 0 0 10pt 0; padding: 4pt 8pt; background: #f3f4f6; border: 0.5pt solid #d1d5db;
+  font-size: 8pt; line-height: 1.6; color: #374151; break-inside: avoid; }
+.critic-legend-bar { display: inline-block; width: 2.5pt; height: 8pt; background: #cf222e;
+  vertical-align: middle; margin-right: 2pt; }
 """
