@@ -269,6 +269,7 @@ def _build_document(
     strict: bool,
     force: bool,
     verbose: bool,
+    review: str | None = None,
 ) -> dict[str, Any]:
     """Build one document to all its formats. Pure/worker-safe: returns a result
     dict (no console I/O) so it can run in a process pool.
@@ -286,6 +287,8 @@ def _build_document(
     config = _render_config_strings(config)
     if theme is not None:
         config["pdf_theme"] = str(theme.resolve())
+    if review is not None:
+        config["review_markup"] = review
 
     formats = get_output_formats(config) if fmt == "all" else [fmt]
 
@@ -805,6 +808,17 @@ def doctor() -> None:
     ),
 )
 @click.option(
+    "--review",
+    default=None,
+    type=click.Choice(["accept", "reject", "show"], case_sensitive=False),
+    help=(
+        "What to do with CriticMarkup review marks ({++add++}, {--delete--}, {~~old~>new~~}, "
+        "{==highlight==}{>>comment<<}): accept or reject every change, or show them (PDF "
+        "colours and comment footnotes, Word tracked changes and comments). "
+        "Overrides 'review_markup' for this build. Default: accept."
+    ),
+)
+@click.option(
     "--jobs",
     "-j",
     default=1,
@@ -824,6 +838,7 @@ def build(
     no_lint: bool,
     dry_run: bool,
     force: bool,
+    review: str | None,
     jobs: int,
     verbose: bool,
 ) -> None:
@@ -943,6 +958,7 @@ def build(
             strict=strict,
             force=force,
             verbose=verbose,
+            review=review.lower() if review else None,
         )
 
     built_total = 0
@@ -979,6 +995,7 @@ def build(
                         strict=strict,
                         force=force,
                         verbose=verbose,
+                        review=review.lower() if review else None,
                     )
                     for d in docs
                 ]

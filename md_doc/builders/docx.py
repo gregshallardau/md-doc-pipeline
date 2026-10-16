@@ -41,7 +41,12 @@ from typing import Any
 from docx import Document
 from docx.enum.section import WD_ORIENT, WD_SECTION_START
 from docx.enum.table import WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
+from docx.enum.text import (
+    WD_ALIGN_PARAGRAPH,
+    WD_COLOR_INDEX,
+    WD_LINE_SPACING,
+    WD_TAB_ALIGNMENT,
+)
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
@@ -537,9 +542,15 @@ def _render_cell_html(
             self._link_text = ""
             self._label = False
             self._cap = False
+            self._review: str | None = None  # CriticMarkup: "ins", "del" or "hl"
 
         def handle_starttag(self, tag: str, attrs: list) -> None:
             tag = tag.lower()
+            if "critic-" in (dict(attrs).get("class") or ""):
+                # Cells show review marks as formatting (Word tracked changes
+                # cannot be built from a flattened cell).
+                self._review = {"ins": "ins", "del": "del", "mark": "hl"}.get(tag)
+                return
             if tag == "span" and "docx-cap" in (dict(attrs).get("class") or ""):
                 self._cap = True
             elif tag == "label" and label_style:
@@ -580,7 +591,9 @@ def _render_cell_html(
 
         def handle_endtag(self, tag: str) -> None:
             tag = tag.lower()
-            if tag in ("strong", "b"):
+            if tag in ("ins", "del", "mark"):
+                self._review = None
+            elif tag in ("strong", "b"):
                 self._bold = bold_override  # back to cell default
             elif tag in ("em", "i"):
                 self._italic = False
@@ -612,7 +625,18 @@ def _render_cell_html(
             if self._label and label_style:
                 self._write_label(data)
                 return
+            before = len(paragraph.runs)
             write_text(paragraph, data, bold=self._bold, italic=self._italic, code=self._code)
+            if self._review:
+                for run in paragraph.runs[before:]:
+                    if self._review == "del":
+                        run.font.strike = True
+                        run.font.color.rgb = RGBColor(0xCF, 0x22, 0x2E)
+                    elif self._review == "ins":
+                        run.font.underline = True
+                        run.font.color.rgb = RGBColor(0x1A, 0x7F, 0x37)
+                    else:
+                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
         def _write_caption(self, data: str) -> None:
             """Caption under a write-in rule: small bold uppercase, themed colour."""
@@ -699,6 +723,7 @@ class _DocxBuilder(HTMLParser):
         section_bar: dict[str, Any] | None = None,
         layout_css: Path | None = None,
         form_document: bool = False,
+        review_author: str = "Reviewer",
     ) -> None:
         super().__init__()
         self.convert_charrefs = True
@@ -734,6 +759,14 @@ class _DocxBuilder(HTMLParser):
         self._sup = False
         self._sub = False
         self._strike = False
+        # CriticMarkup (review_markup: show): tracked insertions/deletions,
+        # highlights and Word comments. ``_critic`` is "ins", "del" or None.
+        self._review_author = review_author
+        self._review_stamp = ""
+        self._critic: str | None = None
+        self._hl = False
+        self._hl_runs: list[Any] = []
+        self._rev_id = 0
         self._list_stack: list[str] = []
         self._list_num_ids: list[int | None] = []
         self._list_counters: list[int] = []
@@ -1287,6 +1320,43 @@ class _DocxBuilder(HTMLParser):
             run.font.subscript = True
         if strike:
             run.font.strike = True
+        if self._critic or self._hl or self._hl_runs:
+            self._mark_review_run(run)
+
+    def _mark_review_run(self, run: Any) -> None:
+        """Make *run* a tracked insertion/deletion and/or a highlight (CriticMarkup)."""
+        if self._hl:
+            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            self._hl_runs.append(run)
+        else:
+            self._hl_runs = []  # a comment only anchors to the highlight right before it
+        if not self._critic:
+            return
+        from ..critic import review_stamp
+
+        self._rev_id += 1
+        wrapper = OxmlElement("w:ins" if self._critic == "ins" else "w:del")
+        wrapper.set(qn("w:id"), str(9000 + self._rev_id))
+        wrapper.set(qn("w:author"), self._review_author)
+        wrapper.set(qn("w:date"), self._review_stamp or review_stamp())
+        run._r.addprevious(wrapper)
+        wrapper.append(run._r)
+        if self._critic == "del":
+            for text in run._r.findall(qn("w:t")):
+                text.tag = qn("w:delText")
+
+    def _add_review_comment(self, text: str) -> None:
+        """A Word comment anchored to the highlight just written (else the last run)."""
+        text = text.strip()
+        if not text:
+            return
+        paragraph = self._current_para()
+        runs = list(self._hl_runs)
+        if not runs:
+            runs = [paragraph.runs[-1]] if paragraph.runs else [paragraph.add_run("")]
+        initials = "".join(w[0] for w in self._review_author.split()[:2]).upper() or "R"
+        self.doc.add_comment(runs, text=text, author=self._review_author, initials=initials)
+        self._hl_runs = []
 
     def _write_text(
         self,
@@ -1402,6 +1472,19 @@ class _DocxBuilder(HTMLParser):
             for k, v in attrs:
                 attr_str += f' {k}="{v}"' if v is not None else f" {k}"
             self._current_cell_html += f"<{tag}{attr_str}>"
+            return
+
+        critic_class = dict(attrs).get("class") or ""
+        if "critic-" in critic_class:
+            if tag == "ins":
+                self._critic = "ins"
+            elif tag == "del":
+                self._critic = "del"
+            elif tag == "mark":
+                self._hl = True
+                self._hl_runs = []
+            elif tag == "span" and "critic-comment" in critic_class:
+                self._add_review_comment(dict(attrs).get("data-comment") or "")
             return
 
         if tag in ("h1", "h2", "h3", "h4"):
@@ -1788,7 +1871,16 @@ class _DocxBuilder(HTMLParser):
             self._sub = False
 
         elif tag in ("del", "s", "strike"):
-            self._strike = False
+            if tag == "del" and self._critic == "del":
+                self._critic = None
+            else:
+                self._strike = False
+
+        elif tag == "ins" and self._critic == "ins":
+            self._critic = None
+
+        elif tag == "mark" and self._hl:
+            self._hl = False
 
         elif tag in ("th", "td"):
             if self._in_table:
@@ -4480,7 +4572,9 @@ def build(
         ft = str(config.get("dotx_field_type", "form")).lower()
         field_type = ft if ft in ("form", "merge") else "form"
 
-    body = _strip_frontmatter(rendered_md)
+    from ..critic import prepare as prepare_review_markup, review_author
+
+    body = prepare_review_markup(_strip_frontmatter(rendered_md), config, "docx")
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     # Same defaults as the PDF builder so the cover carries identical metadata
     # (the PDF always shows an author and a date).
@@ -4655,6 +4749,7 @@ def build(
         section_bar=section_bar,
         layout_css=layout_css_path,
         form_document=coerce_bool(config.get("pdf_forms", False)),
+        review_author=review_author(config),
     )
 
     if cover_page:

@@ -65,6 +65,8 @@
         'heading_number_style', 'duplex', 'binding_margin', 'chapter_break',
         'header_first_page', 'header_layout', 'footer_layout',
         'columns', 'column_gap', 'column_rule', 'image_fit', 'image_resolution',
+        // Review markup (CriticMarkup)
+        'review_markup', 'review_author',
         // Client / engagement fields (common user-defined cascade keys)
         'client', 'client_abn', 'client_contact', 'account_manager',
         'support_email', 'alert_email',
@@ -128,6 +130,13 @@
                 [/\{\{/, { token: 'delimiter.jinja', next: '@jinja_expr' }],
                 [/\{%-?/, { token: 'delimiter.jinja', next: '@jinja_tag' }],
                 [/\{#/, { token: 'comment.jinja', next: '@jinja_comment' }],
+
+                // ── CriticMarkup review marks (single-line forms) ──────────────
+                [/\{\+\+.*?\+\+\}/, 'insert.critic'],
+                [/\{--.*?--\}/, 'delete.critic'],
+                [/\{~~.*?~>.*?~~\}/, 'replace.critic'],
+                [/\{==.*?==\}/, 'highlight.critic'],
+                [/\{>>.*?<<\}/, 'comment.critic'],
 
                 // ── md-doc custom syntax ───────────────────────────────────────
                 // Word / merge fields  [[field_name]]
@@ -400,6 +409,11 @@
             { token: 'comment.jinja',        foreground: '94a3b8', fontStyle: 'italic' },
 
             // ── [[Word fields]] ──────────────────────────────────────────────────
+            { token: 'insert.critic',        foreground: '1a7f37', fontStyle: 'bold' }, // green  {++ ++}
+            { token: 'delete.critic',        foreground: 'cf222e' },            // red    {-- --}
+            { token: 'replace.critic',       foreground: '9a6700' },            // amber  {~~ ~> ~~}
+            { token: 'highlight.critic',     foreground: '7a5c00', background: 'fff3a3' }, // {== ==}
+            { token: 'comment.critic',       foreground: '5d6d7e', fontStyle: 'italic' }, // {>> <<}
             { token: 'type.mddoc.field',     foreground: '7c3aed', fontStyle: 'bold' }, // violet-600
 
             // ── ?[PDF form fields] ───────────────────────────────────────────────

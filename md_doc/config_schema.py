@@ -18,6 +18,7 @@ import difflib
 from typing import Any, Iterable
 
 from .config import is_boolish
+from .critic import MODES as REVIEW_MODES
 from .pdf_features import (
     BAR_LAYOUTS,
     CHAPTER_BREAKS,
@@ -103,6 +104,7 @@ ENUM_KEYS: dict[str, set[str]] = {
     "heading_number_style": set(NUMBER_STYLES),
     "image_fit": set(IMAGE_FITS),
     "print_marks": set(PRINT_MARKS),
+    "review_markup": set(REVIEW_MODES),
     "header_layout": set(BAR_LAYOUTS),
     "footer_layout": set(BAR_LAYOUTS),
 }
@@ -232,6 +234,9 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "bleed",
         "header_layout",
         "footer_layout",
+        # review markup (CriticMarkup)
+        "review_markup",
+        "review_author",
     }
     | BOOL_KEYS
 )

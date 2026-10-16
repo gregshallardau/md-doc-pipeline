@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **CriticMarkup review marks.** `{++add++}`, `{--delete--}`, `{~~old~>new~~}`,
+  `{==highlight==}{>>comment<<}` in Markdown. `review_markup: accept | reject | show` (default
+  `accept`; also `md-doc build --review`) applies, reverts or shows them: coloured marks and
+  comment footnotes in PDF, real Word tracked changes and comments (`review_author`) in `.docx`,
+  slides always accept. `md-doc extract` turns Word tracked changes and comments back into the
+  marks; `md-doc lint` reports unclosed marks and warns about marks left in a `status: final`
+  document; the browser editor highlights them. Guide: `docs/handbook.md#markdown-review-markup`.
 - **PDF features.** Everything WeasyPrint offers beyond a plain HTML → PDF call is now a config
   key (full guide: `docs/handbook.md#pdf-features`):
   - *Container:* `pdf_variant` (PDF/A, PDF/UA, PDF/X), `pdf_tags`, `pdf_identifier`,

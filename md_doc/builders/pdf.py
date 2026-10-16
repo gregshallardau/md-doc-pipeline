@@ -40,6 +40,7 @@ from ..forms import collapse_select_markup  # noqa: E402
 from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 from ..table_layout import soften_long_tokens  # noqa: E402
+from ..critic import prepare as prepare_review_markup  # noqa: E402
 from ..pdf_features import (  # noqa: E402
     chain_finishers,
     color_profile_css,
@@ -1875,6 +1876,7 @@ def build(
 
     # Strip frontmatter (already processed by renderer)
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", rendered_md, count=1, flags=re.DOTALL)
+    body = prepare_review_markup(body, config, "pdf")
 
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     author: str = config.get("author", "Document Producer")

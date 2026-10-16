@@ -797,6 +797,56 @@ in config are resolved through the document, ancestors, repo-root cascade instea
 
 ![Example organisation logo](../examples/feature-showcase/logo.png)
 
+<a id="markdown-review-markup"></a>
+
+### Review markup (CriticMarkup)
+
+Reviewers can mark up the Markdown source with [CriticMarkup](https://criticmarkup.com/)
+instead of editing it directly. A build then applies, reverts or shows the marks.
+
+| Mark | Meaning |
+|------|---------|
+| `{++added++}` | Insertion |
+| `{--deleted--}` | Deletion |
+| `{~~old~>new~~}` | Substitution |
+| `{==highlighted==}` | Highlight |
+| `{>>comment<<}` | Comment (usually straight after a highlight) |
+
+```markdown
+The deadline is {~~Friday~>Monday~~}. {==Budget approval==}{>>Is this still current?<<}
+
+- {++A bullet the reviewer wants added++}
+```
+
+`review_markup` (or `md-doc build --review MODE`) chooses what happens:
+
+| Mode | Result |
+|------|--------|
+| `accept` (default) | Every change is applied; highlights keep their text; comments disappear. Clean output never leaks edits. |
+| `reject` | Every change is reverted; highlights keep their text; comments disappear. |
+| `show` | The marks stay visible, as below. |
+
+In `show` mode:
+
+- **PDF** — insertions are green and underlined, deletions red and struck through, highlights
+  yellow, and each comment becomes a numbered `[1]` note at the foot of the page.
+- **Word** (`.docx`) — real tracked changes and comments, attributed to `review_author`, that a
+  reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
+  (underline, strike-through, highlight) rather than tracked changes, and cell comments are
+  dropped.
+- **Slides** treat `show` as `accept`.
+
+```yaml
+review_markup: show          # in a draft's frontmatter
+review_author: Greg Shallard
+```
+
+Marks inside code blocks and inline code stay literal, and a mark may span lines, paragraphs, a
+list item or a table cell; a removed mark that owned its lines takes them with it. `md-doc lint`
+reports a mark that is never closed, and warns when a `status: final` document still has any.
+Going the other way, `md-doc extract` turns Word tracked changes and comments in a `.docx` into
+the same marks, so a reviewed Word file returns to the Markdown source with its edits intact.
+
 <a id="markdown-page-breaks-and-sections"></a>
 
 ### Page breaks and sections
@@ -2029,6 +2079,8 @@ run does not label samples pass or fail; it is a review aid.
 - **`.section-note` and other class-based styles** in a theme are not translated to Word.
 - **Renderer artifacts.** LibreOffice keeps heading space-before at automatic page breaks (Word
   and the PDF drop it); this shows up only when checking with LibreOffice.
+- **Review marks.** `review_markup: show` gives real tracked changes and comments in Word but
+  coloured text and comment footnotes in the PDF; slides never show them.
 - **PDF-only features.** Bookmarks, PDF/A/UA/X variants, embedded files, numbered headings,
   page-bottom footnotes, `<!-- columns -->` and `<!-- grid -->` blocks, duplex pages, chapter
   breaks, print marks and bleed have no Word equivalent; Word flows the content normally (see
@@ -3274,6 +3326,8 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `image_resolution` | string | — | Intrinsic image resolution, e.g. `150dpi`, `2x` or `from-image`. |
 | `print_marks` | enum | — | Printer's marks: `crop`, `cross` or `crop cross`. |
 | `bleed` | length | — | Bleed beyond the trim edge, e.g. `3mm`. |
+| `review_markup` | enum | `accept` | What a build does with CriticMarkup review marks: `accept` every change, `reject` every change, or `show` them (PDF colours and comment footnotes, Word tracked changes and comments). |
+| `review_author` | string | `Reviewer` | Author name on Word tracked changes and comments in `show` mode. |
 | `sync_target` | enum | — | `azure`, `s3` or `local`. |
 | `sync_config` | mapping | — | Backend settings; `${NAME}` is replaced from the environment. |
 | `export` | boolean | `false` | Mark a note for `md-doc export` (inheritable from `_meta.yml`). |
@@ -3352,6 +3406,7 @@ Builds every document under `ROOT` (default: the current directory) to the forma
 | `--no-lint` | Skip the pre-flight lint (to build anyway while iterating). |
 | `--dry-run` | Print what would be built without building. |
 | `--force` | Rebuild everything. By default a document is skipped when its outputs are newer than its source, config, theme, templates and the md-doc code itself. |
+| `--review [accept\|reject\|show]` | What to do with CriticMarkup review marks for this build, overriding `review_markup` (see [review markup](#markdown-review-markup)). |
 | `-j, --jobs N` | Build up to N documents in parallel (process pool). Default 1. |
 | `-v, --verbose` | Print full tracebacks on errors. |
 
@@ -3378,7 +3433,8 @@ Checks, without invoking WeasyPrint: frontmatter YAML is valid; `outputs` are re
 formats; Jinja2 syntax is valid; `{{ variables }}` (body and frontmatter strings) exist in the
 config cascade (warning); `{% include %}` targets resolve (error); `[[fields]]` exist in the
 `_merge_fields.yml` cascade (warning, when a schema is present); config keys are known and well
-typed; PDF form fields have valid types and unique names. Exits non-zero on errors; warnings do
+typed; PDF form fields have valid types and unique names; CriticMarkup marks are closed, and a
+`status: final` document has none left (warning). Exits non-zero on errors; warnings do
 not affect the exit code.
 
 | Option | Description |
@@ -3664,6 +3720,10 @@ The `md-doc extract` command converts PDF and DOCX files to Markdown snippets, p
 ```bash
 md-doc extract <FILE> [OPTIONS]
 ```
+
+Word tracked changes and comments in a `.docx` come out as [review markup](#markdown-review-markup)
+(`{++added++}`, `{--deleted--}`, `{~~old~>new~~}`, `{==text==}{>>comment<<}`), so a reviewed
+document keeps its edits.
 
 <a id="extracting-minimal-example"></a>
 
