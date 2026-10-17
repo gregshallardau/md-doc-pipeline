@@ -334,7 +334,6 @@ def mark_changed_blocks(html: str) -> str:
 
 
 _COMMENT_SPAN_RE = re.compile(r'<span class="critic-comment" data-comment="([^"]*)"></span>')
-_NOTE_BLOCKS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "blockquote"}
 
 
 def counts(markdown: str) -> dict[str, int]:
@@ -357,82 +356,169 @@ def counts(markdown: str) -> dict[str, int]:
     return found
 
 
-def comment_notes(html: str, author: str) -> str:
-    """PDF: turn each comment into a numbered reference and a visible note box.
+def margin_notes(html: str, author: str) -> str:
+    """PDF: turn each comment into a numbered reference and a margin note.
 
-    The reference (``[1]``) replaces the empty comment span; the note, with the
-    reviewer's name, follows the paragraph, list item, heading, table or callout
-    that holds it, so a comment is read beside the text it is about.
+    The empty comment span becomes a ``[n]`` chip in the text plus an absolutely
+    positioned note (``.critic-margin-note``) that sits in the review column beside the
+    line it belongs to. The note takes no space in the flow, so the document paginates
+    exactly as the clean version does.
     """
-    if 'class="critic-comment"' not in html:
-        return html
-    stack: list[list[Any]] = []  # [tag, notes] for open note-capable blocks
-    replacements: list[tuple[int, int, str]] = []
-    insertions: list[tuple[int, str]] = []
     number = 0
-    skip_until = 0
-    for match in _TAG_RE.finditer(html):
-        if match.start() < skip_until:
-            continue
-        closing, tag = match.group(1), match.group(2).lower()
-        if tag in _NOTE_BLOCKS:
-            if closing:
-                while stack and stack[-1][0] != tag:
-                    stack.pop()
-                if stack:
-                    notes = stack.pop()[1]
-                    if notes:
-                        insertions.append((match.end(), "".join(notes)))
-            else:
-                stack.append([tag, []])
-        elif tag == "span" and not closing:
-            span = _COMMENT_SPAN_RE.match(html, match.start())
-            if span and stack:
-                number += 1
-                text = _html.unescape(span.group(1))
-                replacements.append(
-                    (span.start(), span.end(), f'<sup class="critic-ref">[{number}]</sup>')
-                )
-                # A comment in a table is noted after the table, not inside a row.
-                owner = next((e for e in stack if e[0] == "table"), stack[-1])
-                owner[1].append(
-                    '<div class="critic-note">'
-                    f'<span class="critic-note-n">[{number}]</span> '
-                    f"<strong>{_html.escape(author)}:</strong> {_html.escape(text)}</div>"
-                )
-                skip_until = span.end()
-    edits = [(a, b, new) for a, b, new in replacements] + [
-        (pos, pos, new) for pos, new in insertions
-    ]
-    for start, end, new in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
-        html = html[:start] + new + html[end:]
-    return html
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal number
+        number += 1
+        text = _html.unescape(match.group(1))
+        return (
+            f'<sup class="critic-ref">{number}</sup>'
+            f'<span class="critic-margin-note" data-note="{number}">'
+            f'<span class="critic-note-n">{number}</span> '
+            f"<strong>{_html.escape(author)}</strong> {_html.escape(text)}</span>"
+        )
+
+    return _COMMENT_SPAN_RE.sub(replace, html)
 
 
-def legend_html(mode: str, summary: dict[str, int], author: str) -> str:
-    """The key printed above a marked-up PDF: what the colours and bars mean."""
+def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool = False) -> str:
+    """The key for a marked-up PDF: what the colours and bars mean.
+
+    With ``margin`` it is the first item of the review column (so the document itself
+    carries no review furniture); otherwise a slim line above the text.
+    """
     if mode not in ("show", "simple") or not (summary["changes"] or summary["comments"]):
         return ""
     if mode == "show":
         key = (
             '<ins class="critic-ins">Added</ins> <del class="critic-del">Deleted</del> '
-            '<mark class="critic-hl">Highlighted</mark> '
-            '<sup class="critic-ref">[1]</sup> Comment'
+            '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Comment'
         )
     else:
         key = (
-            '<span class="critic-legend-bar"></span> Changed (red bar in the right margin) '
-            '<mark class="critic-hl">Highlighted</mark> <sup class="critic-ref">[1]</sup> Comment'
+            '<span class="critic-legend-bar"></span> Changed '
+            '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Comment'
         )
     facts = []
     if summary["changes"]:
         facts.append(f"{summary['changes']} change{'s' if summary['changes'] != 1 else ''}")
     if summary["comments"]:
         facts.append(f"{summary['comments']} comment{'s' if summary['comments'] != 1 else ''}")
+    extra = ' critic-margin-note" data-note="0' if margin else ""
     return (
-        '<div class="critic-legend"><strong>Review markup</strong> '
-        f"· {_html.escape(author)} · {', '.join(facts)}<br>{key}</div>\n"
+        f'<div class="critic-legend{extra}"><strong>REVIEW</strong> · {_html.escape(author)} · '
+        f"{', '.join(facts)}<br>{key}</div>\n"
     )
+
+
+#: Width of the review column added beside the page for margin comments, in mm.
+COLUMN_MM = 62.0
+
+
+def review_page(
+    page_size_mm: tuple[float, float], margins_mm: tuple[float, float], bottom_mm: float
+) -> dict[str, Any]:
+    """Geometry that makes room for the review column without moving the document.
+
+    The page gets ``COLUMN_MM`` wider on the right, and taller by the same ratio with the
+    extra height added to the bottom margin, so the text area, line breaks and page
+    breaks are exactly those of the clean version. The PDF is then scaled by ``zoom``
+    back to the original width: the page keeps its paper size and the document is
+    shrunk to make room for the margin, as Word's "all markup" view does.
+    """
+    width, height = page_size_mm
+    left, right = margins_mm
+    new_width = width + COLUMN_MM
+    zoom = width / new_width
+    new_height = height / zoom
+    text_right = width - right  # where the text area ends on the clean page
+    return {
+        "size": (new_width, new_height),
+        "margin_right": right + COLUMN_MM,
+        "margin_bottom": bottom_mm + (new_height - height),
+        "zoom": zoom,
+        "note_left": text_right - left + 12.0,  # past the change-bar strip
+        "note_width": right + COLUMN_MM - 12.0 - 4.0,
+    }
+
+
+def review_page_css(geometry: dict[str, Any]) -> str:
+    """``@page`` size/margins and the margin-note rules for ``review_page`` geometry."""
+    width, height = geometry["size"]
+    return (
+        "<style>\n"
+        f"@page {{ size: {width:.3f}mm {height:.3f}mm; "
+        f"margin-right: {geometry['margin_right']:.3f}mm; "
+        f"margin-bottom: {geometry['margin_bottom']:.3f}mm; }}\n"
+        # The footer stays directly under the text, not at the foot of the taller sheet.
+        "@page { @bottom-left { vertical-align: top; } @bottom-center { vertical-align: top; } "
+        "@bottom-right { vertical-align: top; } }\n"
+        ".critic-margin-note { position: absolute; top: auto; "
+        f"left: {geometry['note_left']:.3f}mm; width: {geometry['note_width']:.3f}mm; }}\n"
+        "</style>"
+    )
+
+
+_NOTE_ATTR_RE = re.compile(r'data-note="(\d+)"')
+
+
+def spread_margin_notes(html: str, measure: Any, gap_px: float = 5.0) -> str:
+    """Nudge margin notes apart so none overlaps another or runs off the page.
+
+    ``measure(html)`` lays the page out and returns a WeasyPrint ``Document``. Notes sit
+    beside their anchor line; where two would collide the later one moves down, and
+    where the last would pass the foot of the page the stack moves up. The change is a
+    ``margin-top`` on each note, which cannot affect the flow.
+    """
+    if "critic-margin-note" not in html:
+        return html
+    document = measure(html)
+    shifts: dict[str, float] = {}
+    for page in document.pages:
+        page_box = page._page_box
+        # Notes stay inside the text area (WeasyPrint will not draw an absolutely
+        # positioned box past its foot). A page with more comments than the column holds
+        # packs them tightly from the top.
+        floor = page_box.content_box_y()
+        limit = floor + page_box.height
+        notes: list[dict[str, Any]] = []
+
+        def visit(box: Any) -> None:
+            element = getattr(box, "element", None)
+            if (
+                element is not None
+                and type(box).__name__ in {"BlockBox", "AbsolutePlaceholder"}
+                and "critic-margin-note" in (element.get("class") or "")
+            ):
+                top = box.position_y + box.margin_top
+                notes.append(
+                    {"id": element.get("data-note"), "was": top, "y": top, "h": box.border_height()}
+                )
+                return
+            for child in getattr(box, "children", []) or []:
+                visit(child)
+
+        visit(page_box)
+        notes.sort(key=lambda n: n["was"])
+        for before, note in zip(notes, notes[1:]):  # later notes move down past earlier ones
+            note["y"] = max(note["y"], before["y"] + before["h"] + gap_px)
+        ceiling = limit
+        for note in reversed(notes):  # a crowded foot moves back up
+            note["y"] = min(note["y"], ceiling - note["h"])
+            ceiling = note["y"] - gap_px
+        edge = floor
+        for note in notes:  # ...but not above the text area
+            note["y"] = max(note["y"], edge)
+            edge = note["y"] + note["h"] + gap_px
+        for note in notes:
+            if note["id"] is not None and abs(note["y"] - note["was"]) > 0.5:
+                shifts[note["id"]] = note["y"] - note["was"]
+
+    def style(match: re.Match[str]) -> str:
+        delta = shifts.get(match.group(1))
+        tail = f' style="margin-top: {delta:.2f}px"' if delta else ""
+        return match.group(0) + tail
+
+    return _NOTE_ATTR_RE.sub(style, html)
 
 
 def legend_text(mode: str, summary: dict[str, int], author: str) -> str:
@@ -453,18 +539,22 @@ def legend_text(mode: str, summary: dict[str, int], author: str) -> str:
 
 
 #: Stylesheet for ``show`` and ``simple`` modes in PDF; added only when the document has marks.
+#: The review layer has its own look (neutral greys, a dark number chip, no boxes or
+#: coloured rules) so it never reads as part of the document's own styling.
 CSS = """\
 ins.critic-ins { color: #0b5d1e; background: #c8f0d2; text-decoration: underline; }
 del.critic-del { color: #a40e26; background: #ffd6d9; text-decoration: line-through; }
 mark.critic-hl { background: #ffe97a; color: inherit; }
-sup.critic-ref { color: #7a4b00; background: #ffe97a; font-weight: 700; font-size: 70%;
-  line-height: 0; padding: 0 1.5pt; border-radius: 2pt; font-style: normal; }
-.critic-note { margin: 2pt 0 7pt 0; padding: 4pt 8pt; background: #fff8dc;
-  border-left: 3pt solid #d4a017; font-size: 8.5pt; line-height: 1.35; font-style: normal;
-  color: #4a3b00; break-inside: avoid; break-before: avoid; }
-.critic-note-n { font-weight: 700; color: #9a6700; }
-.critic-legend { margin: 0 0 10pt 0; padding: 4pt 8pt; background: #f3f4f6; border: 0.5pt solid #d1d5db;
-  font-size: 8pt; line-height: 1.6; color: #374151; break-inside: avoid; }
-.critic-legend-bar { display: inline-block; width: 2.5pt; height: 8pt; background: #cf222e;
+sup.critic-ref { background: #374151; color: #fff; font: 700 6.5pt/1 Helvetica, Arial, sans-serif;
+  vertical-align: super; padding: 1pt 2.5pt; border-radius: 6pt; }
+.critic-margin-note { font: 8.5pt/1.35 Helvetica, Arial, sans-serif; color: #374151;
+  border-top: 0.75pt solid #9ca3af; padding-top: 2pt; break-inside: avoid; }
+.critic-margin-note strong { color: #111827; }
+.critic-note-n { display: inline-block; background: #374151; color: #fff; font-weight: 700;
+  font-size: 7pt; line-height: 1; padding: 1pt 2.5pt; border-radius: 6pt; }
+.critic-legend { font: 8pt/1.5 Helvetica, Arial, sans-serif; color: #4b5563;
+  border-top: 0.75pt solid #9ca3af; padding-top: 2pt; margin: 0 0 8pt 0; break-inside: avoid; }
+.critic-legend strong { letter-spacing: 1pt; color: #111827; }
+.critic-legend-bar { display: inline-block; width: 2.5pt; height: 7pt; background: #cf222e;
   vertical-align: middle; margin-right: 2pt; }
 """

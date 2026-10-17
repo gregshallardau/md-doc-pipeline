@@ -1137,7 +1137,7 @@ def layout_check_finisher(*, strict: bool) -> Callable[[Any, Any], None]:
 
 #: Change bar: colour, thickness and distance from the text edge, in CSS px.
 _BAR_RGB = (0.812, 0.133, 0.18)
-_BAR_WIDTH_PX = 2.5
+_BAR_WIDTH_PX = 3.5
 _BAR_GAP_PX = 22.7  # 6 mm
 _BAR_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "blockquote"}
 _LIST_TAGS = {"ul", "ol"}

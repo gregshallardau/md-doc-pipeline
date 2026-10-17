@@ -41,12 +41,15 @@ from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 from ..table_layout import soften_long_tokens  # noqa: E402
 from ..critic import (  # noqa: E402
-    comment_notes,
     counts as review_marks,
     legend_html,
+    margin_notes,
     prepare as prepare_review_markup,
     review_author,
     review_mode,
+    review_page,
+    review_page_css,
+    spread_margin_notes,
 )
 from ..pdf_features import (  # noqa: E402
     chain_finishers,
@@ -1988,8 +1991,18 @@ def build(
     html_body = postprocess_html(html_body, config)
     if review_mode(config) in ("show", "simple"):
         author_name = review_author(config)
-        html_body = comment_notes(html_body, author_name)
-        html_body = legend_html(review_mode(config), review_counts, author_name) + html_body
+        # Comments live in a review column beside the page, so the document itself keeps
+        # its own styling; the key joins them there (or is a slim line when none exist).
+        html_body = margin_notes(html_body, author_name)
+        html_body = (
+            legend_html(
+                review_mode(config),
+                review_counts,
+                author_name,
+                margin=bool(review_counts["comments"]),
+            )
+            + html_body
+        )
     html_body = re.sub(
         r"<table\b.*?</table>", lambda m: soften_long_tokens(m.group(0)), html_body, flags=re.DOTALL
     )
@@ -2045,12 +2058,14 @@ def build(
 
     page_margins_mm = (25.0, 20.0)
     page_size_mm = (210.0, 297.0)
+    page_bottom_mm = 20.0
     theme_body_justify = False
     if css_text:
         try:
             geom = _page_geometry(css_text)
             page_margins_mm = (geom["left"], geom["right"])
             page_size_mm = (geom["w"], geom["h"])
+            page_bottom_mm = geom["bottom"]
         except Exception:
             pass
         if not str(config.get("body_text_align", "")).strip():
@@ -2062,6 +2077,14 @@ def build(
                 )
             except Exception:
                 theme_body_justify = False
+
+    # Margin comments: widen the page for a review column (same text area, same page
+    # breaks) and scale the PDF back to the paper width, shrinking the document.
+    review_geometry = None
+    if review_mode(config) in ("show", "simple") and review_counts["comments"]:
+        review_geometry = review_page(page_size_mm, page_margins_mm, page_bottom_mm)
+        page_size_mm = review_geometry["size"]
+        page_margins_mm = (page_margins_mm[0], review_geometry["margin_right"])
 
     html_body = _keep_heading_with_next(_group_label_with_textarea(html_body), split_tables=True)
     html_body, section_css = pdf_sections(html_body, page_size_mm)
@@ -2095,7 +2118,8 @@ def build(
         theme_body_justify=theme_body_justify,
         theme_css_text=css_text,
         extra_head=font_face_css(config, resolve_config_path)
-        + color_profile_css(config, resolve_config_path),
+        + color_profile_css(config, resolve_config_path)
+        + (review_page_css(review_geometry) if review_geometry else ""),
     )
 
     if section_css:
@@ -2109,6 +2133,10 @@ def build(
         doc_path=doc_path,
     )
     zoom = pdf_zoom(config)
+    if review_geometry:
+        base_url = str(doc_path.resolve().parent if doc_path is not None else out_path.parent)
+        html = spread_margin_notes(html, lambda markup: _measure_layout(markup, base_url))
+        zoom = (zoom or 1.0) * review_geometry["zoom"]
     if zoom is not None:
         wp_kwargs["zoom"] = zoom
     finishers: list[Any] = []
@@ -2127,6 +2155,15 @@ def build(
         str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
         out_path,
         wp_kwargs,
+    )
+
+
+def _measure_layout(html: str, base_url: str) -> Any:
+    """Lay *html* out without writing a PDF (used to place margin notes)."""
+    from weasyprint.text.fonts import FontConfiguration
+
+    return weasyprint.HTML(string=html, base_url=base_url, url_fetcher=_make_url_fetcher()).render(
+        font_config=FontConfiguration()
     )
 
 

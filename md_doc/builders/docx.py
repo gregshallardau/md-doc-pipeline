@@ -4227,12 +4227,7 @@ def _add_review_legend(doc: Document, mode: str, summary: dict[str, int], author
     run.font.size = Pt(8)
     run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
     paragraph.paragraph_format.space_after = Pt(8)
-    pPr = paragraph._p.get_or_add_pPr()
-    shading = OxmlElement("w:shd")
-    shading.set(qn("w:val"), "clear")
-    shading.set(qn("w:color"), "auto")
-    shading.set(qn("w:fill"), "F3F4F6")
-    pPr.append(shading)
+    run.font.italic = True
 
 
 def _add_footer(

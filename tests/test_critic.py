@@ -193,6 +193,14 @@ def test_word_clean_modes_have_no_revisions(tmp_path, mode):
     assert ("Hello old colour" in text) == (mode == "reject")
 
 
+def all_texts(box) -> list[str]:
+    """Every text run under *box*, including absolutely positioned margin notes."""
+    found = [box.text] if type(box).__name__ == "TextBox" else []
+    for child in getattr(box, "children", []) or []:
+        found += all_texts(child)
+    return found
+
+
 def test_pdf_show_renders_marks_comment_notes_and_a_legend(tmp_path, monkeypatch):
     weasyprint = pytest.importorskip("weasyprint")
     from md_doc.builders import pdf
@@ -226,10 +234,11 @@ def test_pdf_show_renders_marks_comment_notes_and_a_legend(tmp_path, monkeypatch
     assert "ins.critic-ins" in captured["html"] and 'class="critic-ins"' in captured["html"]
     page = seen["document"].pages[0]._page_box
     assert not any(type(c).__name__ == "FootnoteAreaBox" for c in page.children)
-    texts = " ".join(b.text for b in page.descendants() if type(b).__name__ == "TextBox")
-    assert "Check this" in texts and "Greg Shallard:" in texts  # a visible note, with its author
-    assert 'class="critic-note"' in captured["html"] and "Review markup" in texts
+    texts = " ".join(all_texts(page))
+    assert "Check this" in texts and "Greg Shallard" in texts  # a margin note, with its author
+    assert "critic-margin-note" in captured["html"] and "REVIEW" in texts
     assert "5 changes" in texts and "1 comment" in texts
+    assert not any(type(c).__name__ == "FootnoteAreaBox" for c in page.children)
 
     pdf.build(DOC, {}, tmp_path / "o.pdf", repo_root=tmp_path, doc_path=tmp_path / "d.md")
     assert "critic-" not in captured["html"] and "Check this" not in captured["html"]
@@ -355,8 +364,8 @@ def test_pdf_simple_draws_change_bars_and_keeps_comments(tmp_path, monkeypatch):
     )
     html = captured["html"]
     assert 'class="critic-changed"' in html and '<tr class="critic-changed">' in html
-    assert 'class="critic-note"' in html and "Check this" in html
-    assert "red bar in the right margin" in html
+    assert "critic-margin-note" in html and "Check this" in html
+    assert "Changed" in html and "critic-legend-bar" in html
     assert "<ins" not in html.split("<body>")[1] and weasyprint is not None
 
 
@@ -483,7 +492,7 @@ def test_pdf_bars_are_drawn_in_one_margin_strip(tmp_path, monkeypatch):
     )
     data = out.read_bytes().decode("latin-1")
     rects = re.findall(r"([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) re f", data)
-    bars = [r for r in rects if abs(float(r[2]) - 2.5 * 0.75) < 0.01]
+    bars = [r for r in rects if abs(float(r[2]) - 3.5 * 0.75) < 0.01]
     assert len(bars) == 4  # paragraph, list item, callout (whole box), table row
     assert len({r[0] for r in bars}) == 1  # one x: a single strip
     page = seen["document"].pages[0]._page_box
@@ -519,28 +528,13 @@ def test_counts_ignore_code_and_frontmatter():
     assert critic.counts("plain `{++x++}` text") == {"changes": 0, "highlights": 0, "comments": 0}
 
 
-def test_comment_notes_follow_the_block_that_holds_them():
-    html = (
-        f"<p>one {COMMENT.format('first &amp; <b>')}</p><ul><li>item {COMMENT.format('second')}"
-        f"</li></ul><p>plain</p>"
-    )
-    out = critic.comment_notes(html, "Ada <L>")
-    assert out.startswith('<p>one <sup class="critic-ref">[1]</sup></p><div class="critic-note">')
-    assert "<strong>Ada &lt;L&gt;:</strong> first &amp; &lt;b&gt;</div><ul>" in out
-    assert '</li><div class="critic-note"><span class="critic-note-n">[2]</span>' in out
-    assert out.endswith("<p>plain</p>") and "critic-comment" not in out
-
-
-def test_comment_in_a_table_is_noted_after_the_table():
-    html = f"<table><tr><td>cell {COMMENT.format('note')}</td></tr></table><p>after</p>"
-    out = critic.comment_notes(html, "R")
-    assert out.index("</table>") < out.index("critic-note") < out.index("<p>after")
-    assert out.count("critic-note") == 2  # the box and its [1] number span
-
-
-def test_comments_in_a_callout_stay_inside_the_box():
-    out = critic.comment_notes(f"<blockquote><p>x {COMMENT.format('hi')}</p></blockquote>", "R")
-    assert out.index("critic-note") < out.index("</blockquote>")
+def test_margin_notes_replace_the_comment_span():
+    html = f"<p>one {COMMENT.format('first &amp; <b>')}</p><p>two {COMMENT.format('second')}</p>"
+    out = critic.margin_notes(html, "Ada <L>")
+    assert out.count('<sup class="critic-ref">') == 2 and "critic-comment" not in out
+    assert '<span class="critic-margin-note" data-note="1">' in out
+    assert "<strong>Ada &lt;L&gt;</strong> first &amp; &lt;b&gt;</span>" in out
+    assert 'data-note="2"' in out and out.index('data-note="1"') < out.index('data-note="2"')
 
 
 def test_legend_describes_the_mode_and_is_absent_when_clean():
@@ -548,7 +542,9 @@ def test_legend_describes_the_mode_and_is_absent_when_clean():
     show = critic.legend_html("show", summary, "Ada")
     assert "Ada" in show and "3 changes, 1 comment" in show and "critic-ins" in show
     simple = critic.legend_html("simple", summary, "Ada")
-    assert "red bar in the right margin" in simple and "critic-ins" not in simple
+    assert "critic-legend-bar" in simple and "critic-ins" not in simple
+    assert 'data-note="0"' in critic.legend_html("show", summary, "Ada", margin=True)
+    assert 'data-note="0"' not in show
     assert critic.legend_html("accept", summary, "Ada") == ""
     assert critic.legend_html("show", {"changes": 0, "highlights": 0, "comments": 0}, "Ada") == ""
     assert "Review markup · Ada · 3 changes, 1 comment" in critic.legend_text(
@@ -591,4 +587,98 @@ def test_pdf_clean_versions_have_no_legend_or_notes(tmp_path, monkeypatch):
             repo_root=tmp_path,
             doc_path=tmp_path / "d.md",
         )
-        assert "critic-legend" not in captured["html"] and "critic-note" not in captured["html"]
+        assert "critic-legend" not in captured["html"] and "critic-margin" not in captured["html"]
+
+
+# ---------------------------------------------------------------------------
+# The review column: shrunk page, margin notes, no change to the document layout
+# ---------------------------------------------------------------------------
+
+
+def test_review_page_keeps_the_text_area_and_scales_back_to_paper_width():
+    geometry = critic.review_page((210.0, 297.0), (25.0, 20.0), 20.0)
+    width, height = geometry["size"]
+    assert width == 210.0 + critic.COLUMN_MM
+    assert geometry["margin_right"] == 20.0 + critic.COLUMN_MM
+    assert round(width * geometry["zoom"], 6) == 210.0  # the sheet is still the paper width
+    assert round(height * geometry["zoom"], 6) == 297.0  # ...and the paper height
+    # Text area unchanged: page height - bottom margin = original page height - 20mm.
+    assert round(height - geometry["margin_bottom"], 6) == 277.0
+    css = critic.review_page_css(geometry)
+    assert "@page { size: 272.000mm" in css and "position: absolute" in css
+
+
+def test_notes_beside_the_same_line_are_spread_apart():
+    weasyprint = pytest.importorskip("weasyprint")
+    note = '<span class="critic-margin-note n" data-note="{0}">note {0}</span>'
+    html = (
+        "<style>@page{size:200mm 100mm;margin:10mm 80mm 10mm 20mm}"
+        ".n{position:absolute;left:100mm;width:60mm;font-size:8pt}</style>"
+        f"<p>text {note.format(1)} more {note.format(2)} and {note.format(3)}</p>"
+    )
+    spread = critic.spread_margin_notes(
+        html, lambda markup: weasyprint.HTML(string=markup).render()
+    )
+    assert 'data-note="1"' in spread and 'data-note="1" style=' not in spread  # first stays
+    assert 'data-note="2" style="margin-top:' in spread
+    assert 'data-note="3" style="margin-top:' in spread
+    boxes = []
+    document = weasyprint.HTML(string=spread).render()
+
+    def visit(box):
+        element = getattr(box, "element", None)
+        if element is not None and "critic-margin-note" in (element.get("class") or ""):
+            boxes.append((box.position_y + box.margin_top, box.border_height()))
+            return
+        for child in getattr(box, "children", []) or []:
+            visit(child)
+
+    visit(document.pages[0]._page_box)
+    boxes.sort()
+    assert len(boxes) == 3
+    assert all(a[0] + a[1] <= b[0] + 0.5 for a, b in zip(boxes, boxes[1:]))
+
+
+def test_spread_leaves_documents_without_notes_alone():
+    assert (
+        critic.spread_margin_notes("<p>plain</p>", lambda _: pytest.fail("measured"))
+        == "<p>plain</p>"
+    )
+
+
+def test_pdf_with_comments_is_paper_size_and_paginates_like_the_clean_version(tmp_path):
+    weasyprint = pytest.importorskip("weasyprint")
+    from md_doc.builders import pdf
+
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    body = "# Review\n\n" + "".join(
+        f"Paragraph {i} with {{++added words ++}}and a {{==point==}}{{>>comment {i}<<}} to check.\n\n"
+        for i in range(60)
+    )
+    layouts = {}
+    real_render = weasyprint.HTML.render
+    for mode in ("accept", "simple"):
+        captured = {}
+        weasyprint.HTML.render = lambda self, *a, **k: captured.setdefault(
+            "document", real_render(self, *a, **k)
+        )
+        try:
+            pdf.build(
+                body,
+                {"review_markup": mode, "pdf_uncompressed": True},
+                tmp_path / f"{mode}.pdf",
+                repo_root=tmp_path,
+                doc_path=tmp_path / "d.md",
+            )
+        finally:
+            weasyprint.HTML.render = real_render
+        document = captured["document"]
+        ys = []
+        for page in document.pages:
+            for box in page._page_box.descendants():
+                if getattr(box, "element_tag", None) == "p" and type(box).__name__ == "BlockBox":
+                    ys.append(round(box.position_y, 1))
+        layouts[mode] = (len(document.pages), ys)
+    assert layouts["accept"][0] > 1 and layouts["accept"] == layouts["simple"]
+    text = (tmp_path / "simple.pdf").read_bytes()
+    assert re.search(rb"/MediaBox \[[^\]]*595\.27", text)  # A4 width, scaled back

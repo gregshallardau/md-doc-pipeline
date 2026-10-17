@@ -830,10 +830,9 @@ The deadline is {~~Friday~>Monday~~}. {==Budget approval==}{>>Is this still curr
 In `show` mode:
 
 - **PDF** — insertions are green on a green wash and underlined, deletions red on a red wash and
-  struck through, highlights yellow. Each comment becomes a numbered `[1]` marker with a note box
-  (the reviewer's name and the comment) directly under the paragraph, list item, table or callout
-  it is about. A key at the top of the document says what the colours mean and counts the changes
-  and comments.
+  struck through, highlights yellow. Comments are not drawn in the document: each is a dark
+  numbered chip in the text and a matching note in a **review column** in the right margin,
+  level with the line it is about (see below).
 - **Word** (`.docx`) — real tracked changes and comments, attributed to `review_author`, that a
   reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
   (underline, strike-through, highlight) rather than tracked changes, and cell comments are
@@ -842,6 +841,24 @@ In `show` mode:
 
 Marked-up Word files (`show` and `simple`) also start with a one-line key (reviewer, counts, what
 the markup means); `accept` and `reject` files never do.
+
+The markup has its own look, kept apart from the document's: the key, the numbered chips and the
+margin notes use small neutral grey type and a dark chip, never the theme's callout boxes, colours
+or rules, so a comment cannot be mistaken for part of the document.
+
+#### The review column (PDF, when there are comments)
+
+When a `show` or `simple` document has comments, the PDF makes room for them the way Word's "all
+markup" view does. The page gets a 62 mm review column on its right, the text area stays exactly
+as it was, and the whole PDF is scaled back to the paper size, so the sheet is still A4 (or
+whatever the theme sets) with the document shrunk to about three quarters. Because the text area
+is untouched, every line and page break matches the clean version, so a reviewer can compare the
+two page for page. The key sits at the top of the column, and each comment is placed beside its
+line; where two would collide the later one moves down. A page with more comments than the column
+holds packs them tightly from the top. Landscape sections are not given a review column.
+
+In Word, comments are Word's own margin comments, so nothing is shrunk by md-doc: Word's review
+pane does that itself.
 
 In `simple` mode the text reads as the finished document, and a red change bar marks every
 changed block in the **right-hand page margin**, in one vertical strip down the page, so the
