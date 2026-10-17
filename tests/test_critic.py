@@ -80,8 +80,11 @@ def test_show_renders_inline_html():
     assert '# <ins class="critic-ins">New</ins> title' in out
     assert '<del class="critic-del">old</del> <del class="critic-del">colour</del>' in out
     assert '<ins class="critic-ins">color</ins>' in out
-    assert '<mark class="critic-hl">world</mark>' in out
-    assert '<span class="critic-comment" data-comment="check *this*"></span>' in out
+    assert '<mark class="critic-hl critic-c1">world</mark>' in out  # paired with its comment
+    assert (
+        '<span class="critic-comment" data-comment="check *this*" data-c="1" data-mark="0"></span>'
+        in out
+    )
     assert '- <ins class="critic-ins">added item</ins>' in out
     assert '<ins class="critic-ins">para one</ins>\n\n<ins class="critic-ins">para two</ins>' in out
 
@@ -317,7 +320,7 @@ def test_simple_applies_changes_and_marks_them():
     assert f"Hello {BAR}{BAR}color " in out  # deletion marker, then the new text
     assert f"- {BAR}added item\n- keep\n" in out
     assert "gone item" not in out and "removed" not in out
-    assert '<mark class="critic-hl">world</mark>' in out
+    assert '<mark class="critic-hl critic-c1">world</mark>' in out
     assert 'data-comment="check *this*"' in out
     assert "<ins" not in out and "<del" not in out
 
@@ -519,7 +522,20 @@ def test_pdf_bars_follow_blocks_across_pages(tmp_path):
 # Visible comments and the legend
 # ---------------------------------------------------------------------------
 
-COMMENT = '<span class="critic-comment" data-comment="{}"></span>'
+
+def COMMENT_SPAN(text: str, colour: int = 1, mark: int = 1) -> str:
+    return (
+        f'<span class="critic-comment" data-comment="{text}" data-c="{colour}" '
+        f'data-mark="{mark}"></span>'
+    )
+
+
+class _CommentFormat:
+    def format(self, text: str, colour: int = 1, mark: int = 1) -> str:
+        return COMMENT_SPAN(text, colour, mark)
+
+
+COMMENT = _CommentFormat()
 
 
 def test_counts_ignore_code_and_frontmatter():
@@ -528,13 +544,15 @@ def test_counts_ignore_code_and_frontmatter():
     assert critic.counts("plain `{++x++}` text") == {"changes": 0, "highlights": 0, "comments": 0}
 
 
-def test_margin_notes_replace_the_comment_span():
-    html = f"<p>one {COMMENT.format('first &amp; <b>')}</p><p>two {COMMENT.format('second')}</p>"
+def test_margin_notes_replace_the_comment_span_with_a_colour_matched_note():
+    html = f"<p>one {COMMENT.format('first &amp; <b>', 1)}</p><p>two {COMMENT.format('second', 2, mark=0)}</p>"
     out = critic.margin_notes(html, "Ada <L>")
-    assert out.count('<sup class="critic-ref">') == 2 and "critic-comment" not in out
-    assert '<span class="critic-margin-note" data-note="1">' in out
-    assert "<strong>Ada &lt;L&gt;</strong> first &amp; &lt;b&gt;</span>" in out
-    assert 'data-note="2"' in out and out.index('data-note="1"') < out.index('data-note="2"')
+    assert "critic-comment" not in out and "critic-ref" not in out  # no numbers anywhere
+    assert '<span class="critic-tick critic-c1"></span>' in out  # standalone: a tick marks the spot
+    assert out.count("critic-tick") == 1  # the second follows a highlight: the tint is its marker
+    assert '<span class="critic-margin-note critic-c1" data-note="1">' in out
+    assert '<span class="critic-swatch critic-c1"></span><strong>Ada &lt;L&gt;</strong>' in out
+    assert "first &amp; &lt;b&gt;" in out and 'critic-c2" data-note="2"' in out
 
 
 def test_legend_describes_the_mode_and_is_absent_when_clean():
@@ -691,12 +709,10 @@ def test_pdf_with_comments_is_paper_size_and_paginates_like_the_clean_version(tm
 
 def test_hybrid_applies_changes_with_a_light_highlight_and_a_note_anchor():
     out = critic.apply(SAMPLE, "hybrid")
-    assert f'# {BAR}<span class="critic-chg">New</span> title' in out.replace(
-        '<span class="critic-change-note" data-kind="add" data-old="" data-new="New"></span>', ""
-    )
+    assert re.search(rf'# {BAR}<span class="critic-chg critic-c1">New</span>', out)
     assert 'data-kind="sub" data-old="colour" data-new="color"' in out
     assert 'data-kind="del" data-old="old"' in out
-    assert '<mark class="critic-hl">world</mark>' in out and 'data-comment="check *this*"' in out
+    assert '<mark class="critic-hl critic-c' in out and 'data-comment="check *this*"' in out
     assert "<ins" not in out and "<del" not in out and "old " not in out.split("# ")[1]
 
 
@@ -710,22 +726,44 @@ def test_hybrid_keeps_a_deleted_line_as_a_note_on_the_line_above():
     assert 'data-kind="del"' in table
 
 
-def test_hybrid_margin_notes_spell_out_each_change():
+def test_hybrid_margin_notes_spell_out_each_change_in_distinct_colours():
     html = critic.apply("A {~~old~>new~~} B {--gone--} C {++more++} {>>why<<}", "hybrid")
     out = critic.margin_notes(f"<p>{html}</p>", "Ada")
-    assert out.count('<sup class="critic-ref">') == 4  # numbered in document order
+    assert len(re.findall(r'data-note="\d"', out)) == 4
+    assert [int(c) for c in re.findall(r'<span class="critic-swatch critic-c(\d)', out)] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+    assert '<del class="critic-del">old</del> <ins class="critic-ins">new</ins>' in out
     assert (
-        '<del class="critic-del">old</del> <ins class="critic-ins">new</ins>' in out
-        and "CHANGED" in out
+        "CHANGED" in out
+        and "DELETED" in out
+        and "ADDED" in out
+        and "<strong>Ada</strong> why" in out
     )
-    assert "DELETED" in out and "ADDED" in out and "<strong>Ada</strong> why" in out
-    assert out.index('data-note="1"') < out.index('data-note="4"')
+    assert 'class="critic-chg critic-c1">new</span>' in out  # the text carries the same colour
+    assert 'class="critic-chg critic-c3">more</span>' in out
+    assert out.count("critic-tick") == 2  # the deletion and the stand-alone comment
     assert "critic-change-note" not in out and "critic-comment" not in out
+
+
+def test_colours_cycle_and_a_highlight_shares_its_comments_colour():
+    marks = "".join(f"{{++a{i}++}}" for i in range(10)) + "{==x==}{>>c<<}"
+    out = critic.apply(marks, "hybrid")
+    assert 'critic-chg critic-c8">a7' in out and 'critic-chg critic-c1">a8' in out
+    assert (
+        'mark class="critic-hl critic-c3">x' in out
+        and 'data-comment="c" data-c="3" data-mark="0"' in out
+    )
+    # A highlight with no comment stays the plain yellow.
+    assert '<mark class="critic-hl">y</mark>' in critic.apply("{==y==}", "hybrid")
 
 
 def test_hybrid_legend_and_modes_per_format():
     summary = {"changes": 2, "highlights": 0, "comments": 0}
-    assert "detail in margin" in critic.legend_html("hybrid", summary, "Ada")
+    assert "matched to its margin note" in critic.legend_html("hybrid", summary, "Ada")
     assert critic.mode_for({"review_markup": "hybrid"}, "pdf") == "hybrid"
     assert critic.mode_for({"review_markup": "hybrid"}, "docx") == "show"
     assert critic.mode_for({"review_markup": "hybrid"}, "pptx") == "accept"

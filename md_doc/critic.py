@@ -164,12 +164,62 @@ def _wrap_lines(
     return "".join(out)
 
 
-def _comment_html(text: str) -> str:
+class _Palette:
+    """Colour index (1..SIZE) for each reviewer item, in document order.
+
+    A highlight and the comment right after it share one colour, so the tinted text and
+    its margin note match. Colours repeat after ``SIZE`` items; neighbours always differ.
+    """
+
+    SIZE = 8
+
+    def __init__(self) -> None:
+        self.n = 0
+        self.highlight: tuple[int, int] | None = None  # (colour, end offset in this chunk)
+
+    def new_chunk(self) -> None:
+        self.highlight = None
+
+    def next(self) -> int:
+        self.n += 1
+        return (self.n - 1) % self.SIZE + 1
+
+    def for_match(self, match: re.Match[str]) -> tuple[int, bool]:
+        """``(colour, follows_a_highlight)`` for a mark."""
+        if match.group("hl") is not None:
+            colour = self.next()
+            self.highlight = (colour, match.end())
+            return colour, False
+        if (
+            match.group("comment") is not None
+            and self.highlight
+            and self.highlight[1] == match.start()
+        ):
+            return self.highlight[0], True
+        return self.next(), False
+
+
+def _comment_html(text: str, colour: int = 1, linked: bool = False) -> str:
     flat = " ".join(text.split())
-    return f'<span class="critic-comment" data-comment="{_html.escape(flat, quote=True)}"></span>'
+    return (
+        f'<span class="critic-comment" data-comment="{_html.escape(flat, quote=True)}" '
+        f'data-c="{colour}" data-mark="{0 if linked else 1}"></span>'
+    )
 
 
-def _show(match: re.Match[str]) -> str:
+def _highlight(match: re.Match[str], colour: int) -> str:
+    """A reviewer highlight; one with a comment straight after takes that item's colour."""
+    paired = match.string.startswith("{>>", match.end())
+    cls = f"critic-hl critic-c{colour}" if paired else "critic-hl"
+    return _wrap_lines(match.group("hl"), "mark", cls)
+
+
+def _show(match: re.Match[str], palette: _Palette) -> str:
+    if match.group("hl") is not None or match.group("comment") is not None:
+        colour, linked = palette.for_match(match)
+        if match.group("hl") is not None:
+            return _highlight(match, colour)
+        return _comment_html(match.group("comment") or "", colour, linked)
     if match.group("add") is not None:
         return _wrap_lines(match.group("add"), "ins", "critic-ins")
     if match.group("del") is not None:
@@ -178,9 +228,7 @@ def _show(match: re.Match[str]) -> str:
         return _wrap_lines(match.group("old"), "del", "critic-del") + _wrap_lines(
             match.group("new"), "ins", "critic-ins"
         )
-    if match.group("hl") is not None:
-        return _wrap_lines(match.group("hl"), "mark", "critic-hl")
-    return _comment_html(match.group("comment") or "")
+    return ""
 
 
 def _resolve(match: re.Match[str], accept: bool) -> str:
@@ -195,8 +243,13 @@ def _resolve(match: re.Match[str], accept: bool) -> str:
     return ""  # comments never reach clean output
 
 
-def _resolve_simple(match: re.Match[str]) -> str:
+def _resolve_simple(match: re.Match[str], palette: _Palette) -> str:
     """Changes applied, with a change-bar marker; highlights and comments kept."""
+    if match.group("hl") is not None or match.group("comment") is not None:
+        colour, linked = palette.for_match(match)
+        if match.group("hl") is not None:
+            return _highlight(match, colour)
+        return _comment_html(match.group("comment") or "", colour, linked)
     if match.group("add") is not None:
         return _wrap_lines(match.group("add"), "span", "", bar_only=True)
     if match.group("del") is not None:
@@ -204,13 +257,16 @@ def _resolve_simple(match: re.Match[str]) -> str:
     if match.group("old") is not None:
         new = match.group("new")
         return _wrap_lines(new, "span", "", bar_only=True) if new.strip() else _BAR
-    if match.group("hl") is not None:
-        return _wrap_lines(match.group("hl"), "mark", "critic-hl")
-    return _comment_html(match.group("comment") or "")
+    return ""
 
 
-def _change_note(kind: str, old: str = "", new: str = "") -> str:
-    """An empty anchor that ``margin_notes`` turns into a numbered chip and a margin note."""
+def _change_note(
+    kind: str, old: str = "", new: str = "", colour: int = 1, marker: bool = True
+) -> str:
+    """An empty anchor that ``margin_notes`` turns into a colour-matched margin note.
+
+    ``marker`` asks for a small coloured tick in the text (a deletion has no text to tint).
+    """
 
     def clean(text: str) -> str:
         flat = " ".join(text.split())
@@ -219,33 +275,37 @@ def _change_note(kind: str, old: str = "", new: str = "") -> str:
 
     return (
         f'<span class="critic-change-note" data-kind="{kind}" '
-        f'data-old="{clean(old)}" data-new="{clean(new)}"></span>'
+        f'data-old="{clean(old)}" data-new="{clean(new)}" '
+        f'data-c="{colour}" data-mark="{1 if marker else 0}"></span>'
     )
 
 
-def _resolve_hybrid(match: re.Match[str]) -> str:
-    """Changes applied and lightly highlighted with a change bar; the detail goes in the margin."""
+def _resolve_hybrid(match: re.Match[str], palette: _Palette) -> str:
+    """Changes applied and tinted with a change bar; the detail goes in the margin."""
+    if match.group("hl") is not None or match.group("comment") is not None:
+        colour, linked = palette.for_match(match)
+        if match.group("hl") is not None:
+            return _highlight(match, colour)
+        return _comment_html(match.group("comment") or "", colour, linked)
+    colour = palette.next()
+    tint = f"critic-chg critic-c{colour}"
     if match.group("add") is not None:
         text = match.group("add")
-        return _wrap_lines(text, "span", "critic-chg", with_bar=True) + _change_note(
-            "add", new=text
+        return _wrap_lines(text, "span", tint, with_bar=True) + _change_note(
+            "add", new=text, colour=colour, marker=False
         )
     if match.group("del") is not None:
-        return _BAR + _change_note("del", old=match.group("del"))
-    if match.group("old") is not None:
-        old, new = match.group("old"), match.group("new")
-        shown = _wrap_lines(new, "span", "critic-chg", with_bar=True) if new.strip() else _BAR
-        return shown + _change_note("sub", old=old, new=new)
-    if match.group("hl") is not None:
-        return _wrap_lines(match.group("hl"), "mark", "critic-hl")
-    return _comment_html(match.group("comment") or "")
+        return _BAR + _change_note("del", old=match.group("del"), colour=colour)
+    old, new = match.group("old"), match.group("new")
+    shown = _wrap_lines(new, "span", tint, with_bar=True) if new.strip() else _BAR
+    return shown + _change_note("sub", old=old, new=new, colour=colour, marker=not new.strip())
 
 
 _PREFIX_ONLY_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|>|#{1,6})?[ \t]*$")
 _EMPTY_BLOCK_LINE_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|>|#{1,6})[ \t]*(?:\n|\Z)", re.MULTILINE)
 
 
-def _resolve_all(prose: str, mode: str) -> str:
+def _resolve_all(prose: str, mode: str, palette: _Palette) -> str:
     """Accept or reject every mark, tidying the lines a removal leaves behind.
 
     A mark that disappears while alone on its line(s) takes the line with it (and
@@ -259,9 +319,9 @@ def _resolve_all(prose: str, mode: str) -> str:
     for match in _CRITIC_RE.finditer(prose):
         out.append(prose[position : match.start()])
         if mode == "hybrid":
-            replacement = _resolve_hybrid(match)
+            replacement = _resolve_hybrid(match, palette)
         elif simple:
-            replacement = _resolve_simple(match)
+            replacement = _resolve_simple(match, palette)
         else:
             replacement = _resolve(match, mode == "accept")
         position = match.end()
@@ -275,7 +335,7 @@ def _resolve_all(prose: str, mode: str) -> str:
             if _PREFIX_ONLY_RE.match(before[line_start:]) and not prose[position:line_end].strip():
                 if mode == "hybrid":
                     # The line goes, but its note rides at the end of the line above.
-                    anchor = _change_note("del", old=match.group("del"))
+                    anchor = replacement.replace(_BAR, "", 1)  # the note, without a bar
                     above = before[:line_start].rstrip("\n")
                     gap = before[len(above) : line_start]
                     if above and above.lstrip().startswith("|") and above.rstrip().endswith("|"):
@@ -323,10 +383,13 @@ def apply(markdown: str, mode: str, *, fmt: str = "pdf") -> str:
     if "{" not in markdown or not has_markup(markdown):
         return markdown
 
+    palette = _Palette()
+
     def transform(prose: str) -> str:
+        palette.new_chunk()
         if mode == "show":
-            return _CRITIC_RE.sub(_show, prose)
-        return _resolve_all(prose, mode)
+            return _CRITIC_RE.sub(lambda m: _show(m, palette), prose)
+        return _resolve_all(prose, mode, palette)
 
     front = _FRONTMATTER_RE.match(markdown)
     head, body = (markdown[: front.end()], markdown[front.end() :]) if front else ("", markdown)
@@ -408,9 +471,6 @@ def mark_changed_blocks(html: str) -> str:
     return out
 
 
-_COMMENT_SPAN_RE = re.compile(r'<span class="critic-comment" data-comment="([^"]*)"></span>')
-
-
 def counts(markdown: str) -> dict[str, int]:
     """How many changes, highlights and comments the Markdown holds (frontmatter and code ignored)."""
     front = _FRONTMATTER_RE.match(markdown)
@@ -432,18 +492,20 @@ def counts(markdown: str) -> dict[str, int]:
 
 
 _ANY_NOTE_RE = re.compile(
-    r'<span class="critic-comment" data-comment="([^"]*)"></span>'
-    r'|<span class="critic-change-note" data-kind="(\w+)" data-old="([^"]*)" data-new="([^"]*)"></span>'
+    r'<span class="critic-comment" data-comment="([^"]*)" data-c="(\d+)" data-mark="(\d)"></span>'
+    r'|<span class="critic-change-note" data-kind="(\w+)" data-old="([^"]*)" data-new="([^"]*)" '
+    r'data-c="(\d+)" data-mark="(\d)"></span>'
 )
 
 
 def margin_notes(html: str, author: str) -> str:
     """PDF: turn each comment (and, in ``hybrid`` mode, each change) into a margin note.
 
-    The empty anchor span becomes a numbered ``n`` chip in the text plus an absolutely
-    positioned note (``.critic-margin-note``) that sits in the review column beside the
-    line it belongs to. The note takes no space in the flow, so the document paginates
-    exactly as the clean version does. Notes are numbered in document order.
+    Each item has a colour. Its text carries that colour as a light tint (a highlight,
+    or the changed words), or as a small tick where there is no text to tint (a
+    deletion); the same colour marks its note in the review column. The note is
+    absolutely positioned beside the line it belongs to and takes no space in the flow,
+    so the document paginates exactly as the clean version does.
     """
     number = 0
     who = f"<strong>{_html.escape(author)}</strong>"
@@ -451,14 +513,14 @@ def margin_notes(html: str, author: str) -> str:
     def replace(match: re.Match[str]) -> str:
         nonlocal number
         number += 1
-        chip = f'<span class="critic-note-n">{number}</span>'
         if match.group(1) is not None:
+            colour, marker = match.group(2), match.group(3) == "1"
             body = f"{who} {_html.escape(_html.unescape(match.group(1)))}"
             cls = "critic-margin-note"
         else:
-            kind = match.group(2)
-            old = _html.escape(_html.unescape(match.group(3)))
-            new = _html.escape(_html.unescape(match.group(4)))
+            kind, colour, marker = match.group(4), match.group(7), match.group(8) == "1"
+            old = _html.escape(_html.unescape(match.group(5)))
+            new = _html.escape(_html.unescape(match.group(6)))
             label = {"add": "ADDED", "del": "DELETED", "sub": "CHANGED"}.get(kind, "CHANGED")
             parts = []
             if old:
@@ -467,9 +529,10 @@ def margin_notes(html: str, author: str) -> str:
                 parts.append(f'<ins class="critic-ins">{new}</ins>')
             body = f'<span class="critic-kind">{label}</span> {" ".join(parts)}'
             cls = "critic-margin-note critic-margin-change"
+        tick = f'<span class="critic-tick critic-c{colour}"></span>' if marker else ""
         return (
-            f'<sup class="critic-ref">{number}</sup>'
-            f'<span class="{cls}" data-note="{number}">{chip} {body}</span>'
+            f'{tick}<span class="{cls} critic-c{colour}" data-note="{number}">'
+            f'<span class="critic-swatch critic-c{colour}"></span>{body}</span>'
         )
 
     return _ANY_NOTE_RE.sub(replace, html)
@@ -485,19 +548,19 @@ def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool
         return ""
     if mode == "hybrid":
         key = (
-            '<span class="critic-legend-bar"></span> <span class="critic-chg">Changed</span> '
-            "(detail in margin) "
-            '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Note'
+            '<span class="critic-legend-bar"></span> Changed: '
+            '<span class="critic-chg critic-c1">tinted</span> <span class="critic-chg critic-c2">text</span>'
+            ", each colour matched to its margin note"
         )
     elif mode == "show":
         key = (
             '<ins class="critic-ins">Added</ins> <del class="critic-del">Deleted</del> '
-            '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Comment'
+            '<mark class="critic-hl critic-c1">Highlight</mark> + a colour-matched comment'
         )
     else:
         key = (
             '<span class="critic-legend-bar"></span> Changed '
-            '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Comment'
+            '<mark class="critic-hl critic-c1">Highlight</mark> + a colour-matched comment'
         )
     facts = []
     if summary["changes"]:
@@ -639,26 +702,26 @@ def legend_text(mode: str, summary: dict[str, int], author: str) -> str:
     return f"Review markup · {author} · {', '.join(facts)}. {how}"
 
 
-#: Stylesheet for ``show`` and ``simple`` modes in PDF; added only when the document has marks.
-#: The review layer has its own look (neutral greys, a dark number chip, no boxes or
-#: coloured rules) so it never reads as part of the document's own styling.
+#: Stylesheet for ``show``, ``simple`` and ``hybrid`` in PDF; added only when the document has marks.
+#: The review layer has its own look (neutral greys, colour-coded tints and swatches, no
+#: boxes or rules from the theme) so it never reads as part of the document's own styling.
 CSS = """\
 ins.critic-ins { color: #0b5d1e; background: #c8f0d2; text-decoration: underline; }
 del.critic-del { color: #a40e26; background: #ffd6d9; text-decoration: line-through; }
 mark.critic-hl { background: #ffe97a; color: inherit; }
-sup.critic-ref { background: #374151; color: #fff; font: 700 8pt/1 Helvetica, Arial, sans-serif;
-  vertical-align: super; padding: 1pt 3pt; border-radius: 6pt; }
+.critic-chg { background: #e9e5ff; }
 .critic-margin-note { font: 11pt/1.3 Helvetica, Arial, sans-serif; color: #374151; text-align: left;
-  border-top: 0.75pt solid #9ca3af; padding-top: 2pt; break-inside: avoid; }
+  border-top: 2pt solid #9ca3af; padding-top: 2pt; break-inside: avoid; }
 .critic-margin-note strong { color: #111827; }
-.critic-note-n { display: inline-block; background: #374151; color: #fff; font-weight: 700;
-  font-size: 9pt; line-height: 1; padding: 1.5pt 3.5pt; border-radius: 7pt; }
+.critic-swatch { display: inline-block; width: 9pt; height: 9pt; border-radius: 2pt;
+  margin-right: 4pt; vertical-align: baseline; }
+.critic-tick { display: inline-block; width: 3pt; height: 1.05em; border-radius: 1pt;
+  vertical-align: text-bottom; margin: 0 1pt; }
+.critic-kind { font-size: 8pt; font-weight: 700; letter-spacing: 0.6pt; color: #6b7280; }
+.critic-margin-change ins.critic-ins, .critic-margin-change del.critic-del { padding: 0 1pt; }
 .critic-legend { font: 9.5pt/1.5 Helvetica, Arial, sans-serif; color: #4b5563;
   border-top: 0.75pt solid #9ca3af; padding-top: 2pt; margin: 0 0 8pt 0; break-inside: avoid; }
 .critic-legend strong { letter-spacing: 1pt; color: #111827; }
-.critic-chg { background: #e9e5ff; }
-.critic-kind { font-size: 8pt; font-weight: 700; letter-spacing: 0.6pt; color: #6b7280; }
-.critic-margin-change ins.critic-ins, .critic-margin-change del.critic-del { padding: 0 1pt; }
 .critic-legend-bar { display: inline-block; width: 3pt; height: 9pt; background: #cf222e;
   vertical-align: middle; margin-right: 2pt; }
-"""
+.critic-chg.critic-c1, mark.critic-hl.critic-c1 { background: #c9e2ff; }\n.critic-swatch.critic-c1, .critic-tick.critic-c1 { background: #2f80ed; }\n.critic-margin-note.critic-c1 { border-top-color: #2f80ed; }\n.critic-chg.critic-c2, mark.critic-hl.critic-c2 { background: #d9c9ff; }\n.critic-swatch.critic-c2, .critic-tick.critic-c2 { background: #7a4dff; }\n.critic-margin-note.critic-c2 { border-top-color: #7a4dff; }\n.critic-chg.critic-c3, mark.critic-hl.critic-c3 { background: #ffd5a3; }\n.critic-swatch.critic-c3, .critic-tick.critic-c3 { background: #f08c1a; }\n.critic-margin-note.critic-c3 { border-top-color: #f08c1a; }\n.critic-chg.critic-c4, mark.critic-hl.critic-c4 { background: #b4ebe5; }\n.critic-swatch.critic-c4, .critic-tick.critic-c4 { background: #0f9d94; }\n.critic-margin-note.critic-c4 { border-top-color: #0f9d94; }\n.critic-chg.critic-c5, mark.critic-hl.critic-c5 { background: #f8bcd9; }\n.critic-swatch.critic-c5, .critic-tick.critic-c5 { background: #d6336c; }\n.critic-margin-note.critic-c5 { border-top-color: #d6336c; }\n.critic-chg.critic-c6, mark.critic-hl.critic-c6 { background: #ffe58a; }\n.critic-swatch.critic-c6, .critic-tick.critic-c6 { background: #d9a400; }\n.critic-margin-note.critic-c6 { border-top-color: #d9a400; }\n.critic-chg.critic-c7, mark.critic-hl.critic-c7 { background: #c3cdf7; }\n.critic-swatch.critic-c7, .critic-tick.critic-c7 { background: #4263eb; }\n.critic-margin-note.critic-c7 { border-top-color: #4263eb; }\n.critic-chg.critic-c8, mark.critic-hl.critic-c8 { background: #ffc4b5; }\n.critic-swatch.critic-c8, .critic-tick.critic-c8 { background: #e8590c; }\n.critic-margin-note.critic-c8 { border-top-color: #e8590c; }\n"""

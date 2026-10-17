@@ -16,10 +16,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   document; the browser editor highlights them. Guide: `docs/handbook.md#markdown-review-markup`.
 - **Review markup is easier to read, and kept apart from the document's own styling.**
   Marked-up PDFs and Word files start with a key (reviewer, counts, what the colours and bars
-  mean); PDF insertions and deletions have a coloured wash. PDF comments are numbered chips with
-  notes in a review column in the right margin, level with their line, in neutral grey type that
-  cannot be mistaken for a callout. The page gets the column by widening, then the PDF is scaled
-  back to paper size (the document shrinks, as in Word's all-markup view) with the text area
+  mean); PDF insertions and deletions have a coloured wash. PDF comments are notes in a review column in the
+  right margin, level with their line, in neutral grey type that cannot be mistaken for a
+  callout; each is colour-matched to a light tint on its text (no numbers). The page gets the
+  column by widening, then the PDF is scaled back to paper size (the document shrinks, as in
+  Word's all-markup view) with the text area
   unchanged, so line and page breaks match the clean version.
 - **Hybrid markup.** `review_markup: hybrid` (also `--review hybrid` and a `review_exports`
   variant) shows the final text with a light highlight and a margin bar on each change, and writes

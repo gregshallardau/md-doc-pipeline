@@ -832,7 +832,8 @@ In `show` mode:
 
 - **PDF** — insertions are green on a green wash and underlined, deletions red on a red wash and
   struck through, highlights yellow. Comments are not drawn in the document: each is a dark
-  numbered chip in the text and a matching note in a **review column** in the right margin,
+  colour-coded tint in the text (a coloured highlight, or a small coloured tick where there is no
+  text to tint) and a matching note, marked with the same colour, in a **review column** in the right margin,
   level with the line it is about (see below).
 - **Word** (`.docx`) — real tracked changes and comments, attributed to `review_author`, that a
   reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
@@ -843,14 +844,15 @@ In `show` mode:
 Marked-up Word files (`show` and `simple`) also start with a one-line key (reviewer, counts, what
 the markup means); `accept` and `reject` files never do.
 
-The markup has its own look, kept apart from the document's: the key, the numbered chips and the
-margin notes use small neutral grey type and a dark chip, never the theme's callout boxes, colours
+The markup has its own look, kept apart from the document's: the key, the colour-coded tints and
+swatches and the margin notes use neutral grey type, never the theme's callout boxes, colours
 or rules, so a comment cannot be mistaken for part of the document.
 
 #### The review column (PDF)
 
 In `hybrid` mode the text carries only a light lilac highlight and a bar, and the changes live in
-the review column: each is numbered (a chip in the text, the same chip in the column) and spelled
+the review column: each change has its own colour (a light tint on the changed words, the same
+colour as a swatch and rule on its note in the column), and is spelled
 out as `ADDED`, `DELETED` or `CHANGED old → new`, level with its line. A deleted line has no text
 to highlight, so its note rides on the line above. In `show` and `simple` modes the column holds
 only the comments, when there are any.
