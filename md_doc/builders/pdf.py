@@ -1878,7 +1878,7 @@ def build(
 
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     author: str = config.get("author", "Document Producer")
-    date_str: str = config.get("date") or datetime.date.today().strftime("%-d %B %Y")
+    date_str: str = config.get("date") or f"{(today := datetime.date.today()).day} {today:%B %Y}"
 
     cover_page: bool = coerce_bool(config.get("cover_page"), False)
 
