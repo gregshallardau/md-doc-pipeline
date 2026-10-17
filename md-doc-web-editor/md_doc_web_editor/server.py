@@ -159,7 +159,8 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 )
         response = await call_next(request)
         # Never load CDN scripts, remote fonts, images, frames or API resources.
-        response.headers["Content-Security-Policy"] = (
+        response.headers.setdefault(
+            "Content-Security-Policy",
             "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
             "font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; "

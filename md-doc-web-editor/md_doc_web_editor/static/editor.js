@@ -1314,7 +1314,7 @@
       state.sourceScrollFrame = null;
       if (!state.linkedScroll || state.switching || state.mode !== "source" ||
           state.active !== state.pinned || state.active !== state.artifactPath ||
-          !state.view || !state.artifact) return;
+          state.draft || !state.view || !state.artifact) return;
       let line, source;
       if (state.editor) {
         line = state.editor.getVisibleRanges()[0]?.startLineNumber;
@@ -1444,6 +1444,26 @@
       throw error;
     }
   }
+  // Draft mode shows the builder's HTML directly: no page layout, so it is fast
+  // but has no page breaks, running headers/footers or cover geometry.
+  async function showDraft(artifact, sameDocument) {
+    const frame = $("draft-frame");
+    const top = sameDocument ? frame.contentDocument?.scrollingElement?.scrollTop || 0 : 0;
+    await new Promise((resolve, reject) => {
+      frame.onload = resolve;
+      frame.onerror = () => reject(new Error("Draft preview failed to load"));
+      frame.src = artifact.url;
+    });
+    const scroller = frame.contentDocument?.scrollingElement;
+    if (scroller) scroller.scrollTop = top;
+    $("preview-empty").hidden = true;
+  }
+  function applyPreviewMode() {
+    $("preview-pane").dataset.mode = state.draft ? "draft" : "paged";
+    $("preview-mode").value = state.draft ? "draft" : "paged";
+    $("preview-kind-name").textContent = state.draft ? "HTML" : "PDF";
+    $("preview-kind-badge").textContent = state.draft ? "Draft, not paginated" : "Final output";
+  }
   async function renderPreview(force = false) {
     if (!state.pinned) return;
     // Long documents must be allowed to finish. Coalesce automatic updates
@@ -1455,6 +1475,7 @@
     const path = state.pinned;
     const revision = state.revision;
     const content = buffers();
+    const draft = state.draft;
     const jobKey = crypto.randomUUID();
     state.jobKey = jobKey;
     state.previewRunning = jobKey;
@@ -1472,7 +1493,7 @@
         body: JSON.stringify({
           path,
           buffers: content,
-          format: "pdf",
+          format: draft ? "html" : "pdf",
           revision,
           client: state.client,
           purpose: "preview",
@@ -1528,7 +1549,7 @@
       }
       if (result.state !== "succeeded")
         throw new Error(result.error || "Rendering failed");
-      if (!state.view) {
+      if (!draft && !state.view) {
         let module;
         try {
           module = await loadViewerModule();
@@ -1543,10 +1564,12 @@
       if (
         state.jobKey !== jobKey ||
         state.pinned !== path ||
-        state.revision !== revision
+        state.revision !== revision ||
+        state.draft !== draft
       )
         return;
-      await state.view.load(result.artifact, state.artifactPath === path);
+      if (draft) await showDraft(result.artifact, state.artifactPath === path);
+      else await state.view.load(result.artifact, state.artifactPath === path);
       if (
         state.jobKey !== jobKey ||
         state.pinned !== path ||
@@ -3662,6 +3685,14 @@
         }
       });
     $("file-filter").oninput = renderTree;
+    $("preview-mode").onchange = () => {
+      state.draft = $("preview-mode").value === "draft";
+      store("draft", state.draft);
+      applyPreviewMode();
+      state.artifact = null;
+      state.artifactPath = null;
+      schedulePreview(0, true);
+    };
     $("auto-preview").onchange = () => {
       state.auto = $("auto-preview").checked;
       store("auto", state.auto);
@@ -3800,6 +3831,8 @@
       $("linked-scroll").checked = state.linkedScroll;
       state.previewDelay = readStorage("previewDelay", 1500);
       $("auto-preview").checked = state.auto;
+      state.draft = readStorage("draft", false);
+      applyPreviewMode();
       applyAppearance();
       await loadTree();
       applyLayout();

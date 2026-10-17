@@ -286,9 +286,11 @@ class Studio:
                 output.mkdir()
                 session = (
                     await self.preview_session(req.client)
-                    if req.format == "pdf" and req.purpose == "preview"
+                    if req.format in {"pdf", "html"} and req.purpose == "preview"
                     else None
                 )
+                if req.format == "html" and not session:
+                    raise ValueError("Draft preview is busy; retry shortly")
                 if session:
                     self.job_sessions[job_id] = session
                     try:
@@ -304,6 +306,7 @@ class Studio:
                                     ),
                                     "output": str(output),
                                     "visible_page": req.visible_page,
+                                    "format": req.format,
                                 },
                                 lambda event: self.page_event(job_id, directory, event),
                             ),
@@ -540,8 +543,10 @@ def install_studio(app, workspace, build_root, builds, write_lock):
         full = path(req.path)
         if full.suffix != ".md" or (not full.is_file() and req.path not in req.buffers):
             raise HTTPException(400, "Choose a Markdown document to preview")
-        if req.format not in {"pdf", "docx", "dotx", "pptx"}:
+        if req.format not in {"pdf", "docx", "dotx", "pptx", "html"}:
             raise HTTPException(400, "Unsupported output format")
+        if req.format == "html" and req.purpose != "preview":
+            raise HTTPException(400, "HTML is a draft preview format, not an export format")
         if len(req.buffers) > 100:
             raise HTTPException(413, "At most 100 unsaved buffers can be included")
         active = sum(job["state"] in {"queued", "running"} for job in studio.jobs.values())
@@ -612,16 +617,30 @@ def install_studio(app, workspace, build_root, builds, write_lock):
             raise HTTPException(404, "Preview expired; refresh to render again")
         entry["expires_at"] = time.time() + 1800
         types = {
+            "html": "text/html; charset=utf-8",
             "pdf": "application/pdf",
             "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "dotx": "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
             "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         }
+        # Draft HTML embeds document content, so it must never run script or
+        # reach the network, in a frame or opened directly.
+        headers = (
+            {
+                "Content-Security-Policy": (
+                    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
+                    "font-src data:; sandbox allow-same-origin"
+                )
+            }
+            if entry["format"] == "html"
+            else None
+        )
         return FileResponse(
             entry["path"],
             media_type=types[entry["format"]],
             filename=entry["filename"],
             content_disposition_type="attachment" if download else "inline",
+            headers=headers,
         )
 
     @app.get("/api/changes")

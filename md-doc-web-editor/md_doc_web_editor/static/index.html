@@ -363,7 +363,10 @@
             <div>
               <span class="eyebrow">OUTPUT PREVIEW</span
               ><span class="preview-kind"
-                >PDF <span class="exact-badge">Final output</span></span
+                ><span id="preview-kind-name">PDF</span>
+                <span class="exact-badge" id="preview-kind-badge"
+                  >Final output</span
+                ></span
               >
             </div>
             <div class="preview-layout-actions">
@@ -400,7 +403,10 @@
             </div>
           </div>
           <div class="preview-toolbar">
-            <button
+            <select id="preview-mode" aria-label="Preview mode">
+              <option value="paged">Paged PDF</option>
+              <option value="draft">Draft (fast)</option></select
+            ><button
               class="icon-button small"
               id="thumbnails-toggle"
               title="Page thumbnails"
@@ -507,6 +513,12 @@
             >
               <div class="pdfViewer" id="pdf-viewer"></div>
             </div>
+            <iframe
+              class="draft-frame"
+              id="draft-frame"
+              title="Draft preview"
+              sandbox="allow-same-origin"
+            ></iframe>
             <div class="preview-empty" id="preview-empty">
               <span class="empty-page"><span data-icon="file"></span></span>
               <h2>The finished document,<br />as you write.</h2>
