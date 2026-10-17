@@ -4678,9 +4678,9 @@ def build(
 
     from ..critic import (
         counts as review_marks,
+        mode_for,
         prepare as prepare_review_markup,
         review_author,
-        review_mode,
     )
 
     review_counts = review_marks(_strip_frontmatter(rendered_md))
@@ -4872,8 +4872,8 @@ def build(
             theme,
         )
 
-    if review_mode(config) in ("show", "simple"):
-        _add_review_legend(doc, review_mode(config), review_counts, review_author(config))
+    if mode_for(config, "docx") in ("show", "simple"):
+        _add_review_legend(doc, mode_for(config, "docx"), review_counts, review_author(config))
 
     # Content after the cover starts the pagination baseline — the first body
     # heading must not force an extra page break on top of the cover's.

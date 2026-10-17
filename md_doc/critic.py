@@ -12,6 +12,10 @@ key (or ``md-doc build --review``) decides what a build does with them:
             line (PDF margin bar, Word paragraph border), and the highlights and
             comments kept (Word's "Simple Markup")
 
+``hybrid``  the final text with a light highlight on each change and a change bar in the
+            margin, and the full change (what was deleted, what was added) written out in
+            the review column beside it, with the comments (PDF; Word shows ``show``)
+
 Highlights and comments carry no text change, so ``accept`` and ``reject`` keep a
 highlight's text and drop its comment. Formats with no review rendering (slides)
 treat ``show`` and ``simple`` as ``accept``.
@@ -35,13 +39,14 @@ from typing import Any
 from .literal import transform_outside_code
 
 #: Values of the ``review_markup`` key.
-MODES: tuple[str, ...] = ("accept", "reject", "show", "simple")
+MODES: tuple[str, ...] = ("accept", "reject", "show", "simple", "hybrid")
 
 #: ``review_exports`` variants: name → (``review_markup`` mode, file-name suffix).
 VARIANTS: dict[str, tuple[str, str]] = {
     "clean": ("accept", "-clean"),
     "original": ("reject", "-original"),
     "simple": ("simple", "-simple"),
+    "hybrid": ("hybrid", "-hybrid"),
     "markup": ("show", "-markup"),
     "full": ("show", "-markup"),
 }
@@ -76,6 +81,21 @@ def review_mode(config: dict[str, Any] | None) -> str:
     return raw if raw in MODES else DEFAULT_MODE
 
 
+def mode_for(config: dict[str, Any] | None, fmt: str) -> str:
+    """The mode a builder for *fmt* acts on.
+
+    Slides cannot show review marks, so ``show``, ``simple`` and ``hybrid`` act as
+    ``accept`` there. Word has no review column: ``hybrid`` is ``show`` (tracked changes,
+    which Word can display in balloons).
+    """
+    mode = review_mode(config)
+    if fmt == "pptx" and mode in ("show", "simple", "hybrid"):
+        return "accept"
+    if fmt in ("docx", "dotx") and mode == "hybrid":
+        return "show"
+    return mode
+
+
 def review_author(config: dict[str, Any] | None) -> str:
     """Author name on tracked changes and comments (``review_author``, else "Reviewer")."""
     return str((config or {}).get("review_author") or "").strip() or "Reviewer"
@@ -101,7 +121,9 @@ def has_markup(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _wrap_lines(text: str, tag: str, cls: str, *, bar_only: bool = False) -> str:
+def _wrap_lines(
+    text: str, tag: str, cls: str, *, bar_only: bool = False, with_bar: bool = False
+) -> str:
     """Wrap *text* in ``<tag class=cls>``, line by line.
 
     A mark can span lines, list items, headings or table rows, so the wrapper goes
@@ -117,7 +139,8 @@ def _wrap_lines(text: str, tag: str, cls: str, *, bar_only: bool = False) -> str
             return core
         if bar_only:  # change bar: a marker before the text, the text itself unwrapped
             return f"{lead}{_BAR}{body}{trail}"
-        return f'{lead}<{tag} class="{cls}">{body}</{tag}>{trail}'
+        bar = _BAR if with_bar else ""
+        return f'{lead}{bar}<{tag} class="{cls}">{body}</{tag}>{trail}'
 
     out: list[str] = []
     for line in text.splitlines(keepends=True):
@@ -186,6 +209,38 @@ def _resolve_simple(match: re.Match[str]) -> str:
     return _comment_html(match.group("comment") or "")
 
 
+def _change_note(kind: str, old: str = "", new: str = "") -> str:
+    """An empty anchor that ``margin_notes`` turns into a numbered chip and a margin note."""
+
+    def clean(text: str) -> str:
+        flat = " ".join(text.split())
+        flat = flat if len(flat) <= 180 else flat[:177].rstrip() + "..."
+        return _html.escape(flat, quote=True)
+
+    return (
+        f'<span class="critic-change-note" data-kind="{kind}" '
+        f'data-old="{clean(old)}" data-new="{clean(new)}"></span>'
+    )
+
+
+def _resolve_hybrid(match: re.Match[str]) -> str:
+    """Changes applied and lightly highlighted with a change bar; the detail goes in the margin."""
+    if match.group("add") is not None:
+        text = match.group("add")
+        return _wrap_lines(text, "span", "critic-chg", with_bar=True) + _change_note(
+            "add", new=text
+        )
+    if match.group("del") is not None:
+        return _BAR + _change_note("del", old=match.group("del"))
+    if match.group("old") is not None:
+        old, new = match.group("old"), match.group("new")
+        shown = _wrap_lines(new, "span", "critic-chg", with_bar=True) if new.strip() else _BAR
+        return shown + _change_note("sub", old=old, new=new)
+    if match.group("hl") is not None:
+        return _wrap_lines(match.group("hl"), "mark", "critic-hl")
+    return _comment_html(match.group("comment") or "")
+
+
 _PREFIX_ONLY_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|>|#{1,6})?[ \t]*$")
 _EMPTY_BLOCK_LINE_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)]|>|#{1,6})[ \t]*(?:\n|\Z)", re.MULTILINE)
 
@@ -197,13 +252,18 @@ def _resolve_all(prose: str, mode: str) -> str:
     one of two surrounding blank lines); a list item, quote or heading left with
     only its marker is dropped too.
     """
-    simple = mode == "simple"
+    simple = mode in ("simple", "hybrid")
     out: list[str] = []
     position = 0
     removed = False
     for match in _CRITIC_RE.finditer(prose):
         out.append(prose[position : match.start()])
-        replacement = _resolve_simple(match) if simple else _resolve(match, mode == "accept")
+        if mode == "hybrid":
+            replacement = _resolve_hybrid(match)
+        elif simple:
+            replacement = _resolve_simple(match)
+        else:
+            replacement = _resolve(match, mode == "accept")
         position = match.end()
         before = "".join(out)
         line_start = before.rfind("\n") + 1
@@ -213,6 +273,19 @@ def _resolve_all(prose: str, mode: str) -> str:
         if simple and match.group("del") is not None:
             # A deleted line (or list item) leaves nothing to put a change bar beside.
             if _PREFIX_ONLY_RE.match(before[line_start:]) and not prose[position:line_end].strip():
+                if mode == "hybrid":
+                    # The line goes, but its note rides at the end of the line above.
+                    anchor = _change_note("del", old=match.group("del"))
+                    above = before[:line_start].rstrip("\n")
+                    gap = before[len(above) : line_start]
+                    if above and above.lstrip().startswith("|") and above.rstrip().endswith("|"):
+                        above = above.rstrip()[:-1] + anchor + " |"
+                    elif above:
+                        above = above + anchor
+                    out = [above + gap]
+                    position = min(line_end + 1, len(prose))
+                    removed = True
+                    continue
                 replacement, owns_lines = "", True
         if replacement == "":
             removed = True
@@ -243,8 +316,10 @@ def apply(markdown: str, mode: str, *, fmt: str = "pdf") -> str:
     """
     if mode not in MODES:
         mode = DEFAULT_MODE
-    if mode in ("show", "simple") and fmt == "pptx":
+    if mode in ("show", "simple", "hybrid") and fmt == "pptx":
         mode = "accept"
+    if mode == "hybrid" and fmt in ("docx", "dotx"):
+        mode = "show"
     if "{" not in markdown or not has_markup(markdown):
         return markdown
 
@@ -260,7 +335,7 @@ def apply(markdown: str, mode: str, *, fmt: str = "pdf") -> str:
 
 def prepare(rendered_md: str, config: dict[str, Any] | None, fmt: str) -> str:
     """What each builder calls: apply the configured ``review_markup`` mode."""
-    return apply(rendered_md, review_mode(config), fmt=fmt)
+    return apply(rendered_md, mode_for(config, fmt), fmt=fmt)
 
 
 def problems(markdown: str) -> list[tuple[int, str]]:
@@ -356,28 +431,48 @@ def counts(markdown: str) -> dict[str, int]:
     return found
 
 
-def margin_notes(html: str, author: str) -> str:
-    """PDF: turn each comment into a numbered reference and a margin note.
+_ANY_NOTE_RE = re.compile(
+    r'<span class="critic-comment" data-comment="([^"]*)"></span>'
+    r'|<span class="critic-change-note" data-kind="(\w+)" data-old="([^"]*)" data-new="([^"]*)"></span>'
+)
 
-    The empty comment span becomes a ``[n]`` chip in the text plus an absolutely
+
+def margin_notes(html: str, author: str) -> str:
+    """PDF: turn each comment (and, in ``hybrid`` mode, each change) into a margin note.
+
+    The empty anchor span becomes a numbered ``n`` chip in the text plus an absolutely
     positioned note (``.critic-margin-note``) that sits in the review column beside the
     line it belongs to. The note takes no space in the flow, so the document paginates
-    exactly as the clean version does.
+    exactly as the clean version does. Notes are numbered in document order.
     """
     number = 0
+    who = f"<strong>{_html.escape(author)}</strong>"
 
     def replace(match: re.Match[str]) -> str:
         nonlocal number
         number += 1
-        text = _html.unescape(match.group(1))
+        chip = f'<span class="critic-note-n">{number}</span>'
+        if match.group(1) is not None:
+            body = f"{who} {_html.escape(_html.unescape(match.group(1)))}"
+            cls = "critic-margin-note"
+        else:
+            kind = match.group(2)
+            old = _html.escape(_html.unescape(match.group(3)))
+            new = _html.escape(_html.unescape(match.group(4)))
+            label = {"add": "ADDED", "del": "DELETED", "sub": "CHANGED"}.get(kind, "CHANGED")
+            parts = []
+            if old:
+                parts.append(f'<del class="critic-del">{old}</del>')
+            if new:
+                parts.append(f'<ins class="critic-ins">{new}</ins>')
+            body = f'<span class="critic-kind">{label}</span> {" ".join(parts)}'
+            cls = "critic-margin-note critic-margin-change"
         return (
             f'<sup class="critic-ref">{number}</sup>'
-            f'<span class="critic-margin-note" data-note="{number}">'
-            f'<span class="critic-note-n">{number}</span> '
-            f"<strong>{_html.escape(author)}</strong> {_html.escape(text)}</span>"
+            f'<span class="{cls}" data-note="{number}">{chip} {body}</span>'
         )
 
-    return _COMMENT_SPAN_RE.sub(replace, html)
+    return _ANY_NOTE_RE.sub(replace, html)
 
 
 def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool = False) -> str:
@@ -386,9 +481,15 @@ def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool
     With ``margin`` it is the first item of the review column (so the document itself
     carries no review furniture); otherwise a slim line above the text.
     """
-    if mode not in ("show", "simple") or not (summary["changes"] or summary["comments"]):
+    if mode not in ("show", "simple", "hybrid") or not (summary["changes"] or summary["comments"]):
         return ""
-    if mode == "show":
+    if mode == "hybrid":
+        key = (
+            '<span class="critic-legend-bar"></span> <span class="critic-chg">Changed</span> '
+            "(detail in margin) "
+            '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Note'
+        )
+    elif mode == "show":
         key = (
             '<ins class="critic-ins">Added</ins> <del class="critic-del">Deleted</del> '
             '<mark class="critic-hl">Highlight</mark> <sup class="critic-ref">n</sup> Comment'
@@ -411,7 +512,7 @@ def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool
 
 
 #: Width of the review column added beside the page for margin comments, in mm.
-COLUMN_MM = 62.0
+COLUMN_MM = 72.0
 
 
 def review_page(
@@ -523,7 +624,7 @@ def spread_margin_notes(html: str, measure: Any, gap_px: float = 5.0) -> str:
 
 def legend_text(mode: str, summary: dict[str, int], author: str) -> str:
     """Plain-text legend for Word, where changes and comments are native."""
-    if mode not in ("show", "simple") or not (summary["changes"] or summary["comments"]):
+    if mode not in ("show", "simple", "hybrid") or not (summary["changes"] or summary["comments"]):
         return ""
     facts = []
     if summary["changes"]:
@@ -545,16 +646,19 @@ CSS = """\
 ins.critic-ins { color: #0b5d1e; background: #c8f0d2; text-decoration: underline; }
 del.critic-del { color: #a40e26; background: #ffd6d9; text-decoration: line-through; }
 mark.critic-hl { background: #ffe97a; color: inherit; }
-sup.critic-ref { background: #374151; color: #fff; font: 700 6.5pt/1 Helvetica, Arial, sans-serif;
-  vertical-align: super; padding: 1pt 2.5pt; border-radius: 6pt; }
-.critic-margin-note { font: 8.5pt/1.35 Helvetica, Arial, sans-serif; color: #374151;
+sup.critic-ref { background: #374151; color: #fff; font: 700 8pt/1 Helvetica, Arial, sans-serif;
+  vertical-align: super; padding: 1pt 3pt; border-radius: 6pt; }
+.critic-margin-note { font: 11pt/1.3 Helvetica, Arial, sans-serif; color: #374151; text-align: left;
   border-top: 0.75pt solid #9ca3af; padding-top: 2pt; break-inside: avoid; }
 .critic-margin-note strong { color: #111827; }
 .critic-note-n { display: inline-block; background: #374151; color: #fff; font-weight: 700;
-  font-size: 7pt; line-height: 1; padding: 1pt 2.5pt; border-radius: 6pt; }
-.critic-legend { font: 8pt/1.5 Helvetica, Arial, sans-serif; color: #4b5563;
+  font-size: 9pt; line-height: 1; padding: 1.5pt 3.5pt; border-radius: 7pt; }
+.critic-legend { font: 9.5pt/1.5 Helvetica, Arial, sans-serif; color: #4b5563;
   border-top: 0.75pt solid #9ca3af; padding-top: 2pt; margin: 0 0 8pt 0; break-inside: avoid; }
 .critic-legend strong { letter-spacing: 1pt; color: #111827; }
-.critic-legend-bar { display: inline-block; width: 2.5pt; height: 7pt; background: #cf222e;
+.critic-chg { background: #e9e5ff; }
+.critic-kind { font-size: 8pt; font-weight: 700; letter-spacing: 0.6pt; color: #6b7280; }
+.critic-margin-change ins.critic-ins, .critic-margin-change del.critic-del { padding: 0 1pt; }
+.critic-legend-bar { display: inline-block; width: 3pt; height: 9pt; background: #cf222e;
   vertical-align: middle; margin-right: 2pt; }
 """

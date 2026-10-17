@@ -605,7 +605,7 @@ def test_review_page_keeps_the_text_area_and_scales_back_to_paper_width():
     # Text area unchanged: page height - bottom margin = original page height - 20mm.
     assert round(height - geometry["margin_bottom"], 6) == 277.0
     css = critic.review_page_css(geometry)
-    assert "@page { size: 272.000mm" in css and "position: absolute" in css
+    assert "@page { size: 282.000mm" in css and "position: absolute" in css
 
 
 def test_notes_beside_the_same_line_are_spread_apart():
@@ -682,3 +682,91 @@ def test_pdf_with_comments_is_paper_size_and_paginates_like_the_clean_version(tm
     assert layouts["accept"][0] > 1 and layouts["accept"] == layouts["simple"]
     text = (tmp_path / "simple.pdf").read_bytes()
     assert re.search(rb"/MediaBox \[[^\]]*595\.27", text)  # A4 width, scaled back
+
+
+# ---------------------------------------------------------------------------
+# Hybrid: light highlight + bars in the text, the full changes in the review column
+# ---------------------------------------------------------------------------
+
+
+def test_hybrid_applies_changes_with_a_light_highlight_and_a_note_anchor():
+    out = critic.apply(SAMPLE, "hybrid")
+    assert f'# {BAR}<span class="critic-chg">New</span> title' in out.replace(
+        '<span class="critic-change-note" data-kind="add" data-old="" data-new="New"></span>', ""
+    )
+    assert 'data-kind="sub" data-old="colour" data-new="color"' in out
+    assert 'data-kind="del" data-old="old"' in out
+    assert '<mark class="critic-hl">world</mark>' in out and 'data-comment="check *this*"' in out
+    assert "<ins" not in out and "<del" not in out and "old " not in out.split("# ")[1]
+
+
+def test_hybrid_keeps_a_deleted_line_as_a_note_on_the_line_above():
+    out = critic.apply("a para\n\n- keep\n- {--gone item--}\n\nnext\n", "hybrid")
+    assert "gone item</" not in out and "- keep<span" in out
+    assert 'data-kind="del" data-old="gone item"' in out
+    assert out.count("\n- ") == 1  # no empty bullet left behind
+    table = critic.apply("| a | b |\n|---|---|\n| 1 | 2 |\n{--\n| 3 | 4 |\n--}\n", "hybrid")
+    assert "|" in table and table.rstrip().endswith("|")
+    assert 'data-kind="del"' in table
+
+
+def test_hybrid_margin_notes_spell_out_each_change():
+    html = critic.apply("A {~~old~>new~~} B {--gone--} C {++more++} {>>why<<}", "hybrid")
+    out = critic.margin_notes(f"<p>{html}</p>", "Ada")
+    assert out.count('<sup class="critic-ref">') == 4  # numbered in document order
+    assert (
+        '<del class="critic-del">old</del> <ins class="critic-ins">new</ins>' in out
+        and "CHANGED" in out
+    )
+    assert "DELETED" in out and "ADDED" in out and "<strong>Ada</strong> why" in out
+    assert out.index('data-note="1"') < out.index('data-note="4"')
+    assert "critic-change-note" not in out and "critic-comment" not in out
+
+
+def test_hybrid_legend_and_modes_per_format():
+    summary = {"changes": 2, "highlights": 0, "comments": 0}
+    assert "detail in margin" in critic.legend_html("hybrid", summary, "Ada")
+    assert critic.mode_for({"review_markup": "hybrid"}, "pdf") == "hybrid"
+    assert critic.mode_for({"review_markup": "hybrid"}, "docx") == "show"
+    assert critic.mode_for({"review_markup": "hybrid"}, "pptx") == "accept"
+    assert critic.apply("{++a++}{--b--}", "hybrid", fmt="pptx") == "a"
+    assert critic.VARIANTS["hybrid"] == ("hybrid", "-hybrid")
+
+
+def test_pdf_hybrid_has_a_review_column_even_without_comments(tmp_path, monkeypatch):
+    weasyprint = pytest.importorskip("weasyprint")
+    from md_doc.builders import pdf
+
+    seen = {}
+    real_render = weasyprint.HTML.render
+    monkeypatch.setattr(
+        weasyprint.HTML,
+        "render",
+        lambda self, *a, **k: seen.update(doc=real_render(self, *a, **k)) or seen["doc"],
+    )
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    pdf.build(
+        "# T\n\nWe take {~~six~>eight~~} weeks and {--roughly --}cost $5.\n",
+        {"review_markup": "hybrid", "review_author": "Ada"},
+        tmp_path / "o.pdf",
+        repo_root=tmp_path,
+        doc_path=tmp_path / "d.md",
+    )
+    texts = " ".join(all_texts(seen["doc"].pages[0]._page_box))
+    assert "CHANGED" in texts and "DELETED" in texts and "REVIEW" in texts
+    assert seen["doc"].pages[0].width > 210 * 96 / 25.4  # the page was widened for the column
+
+
+def test_word_hybrid_is_tracked_changes(tmp_path):
+    xml = xml_of(build_docx(tmp_path, "hybrid"))
+    assert "<w:ins " in xml and "<w:del " in xml
+
+
+def test_schema_and_variants_accept_hybrid(tmp_path):
+    from md_doc.config_schema import validate_config
+
+    assert validate_config({"review_markup": "hybrid", "review_exports": ["hybrid", "clean"]}) == []
+    doc = write_variants_doc(tmp_path, "[hybrid]")
+    result = CliRunner().invoke(main, ["build", str(doc), "--force"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "report-hybrid.docx").exists()

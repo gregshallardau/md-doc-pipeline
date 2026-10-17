@@ -21,6 +21,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cannot be mistaken for a callout. The page gets the column by widening, then the PDF is scaled
   back to paper size (the document shrinks, as in Word's all-markup view) with the text area
   unchanged, so line and page breaks match the clean version.
+- **Hybrid markup.** `review_markup: hybrid` (also `--review hybrid` and a `review_exports`
+  variant) shows the final text with a light highlight and a margin bar on each change, and writes
+  every change out in the review column (`ADDED` / `DELETED` / `CHANGED old → new`) beside its line,
+  with the comments. Word treats it as `show`. Review-column text is larger (11 pt before the
+  shrink) and the column wider (72 mm).
 - **Simple markup and multi-version review exports.** `review_markup: simple` gives the final
   text with a change bar in the right-hand margin beside each changed block (one aligned strip;
   a Word paragraph border, or a PDF bar drawn from the laid-out block) and the highlights and

@@ -840,12 +840,13 @@ def doctor() -> None:
 @click.option(
     "--review",
     default=None,
-    type=click.Choice(["accept", "reject", "show", "simple"], case_sensitive=False),
+    type=click.Choice(["accept", "reject", "show", "simple", "hybrid"], case_sensitive=False),
     help=(
         "What to do with CriticMarkup review marks ({++add++}, {--delete--}, {~~old~>new~~}, "
         "{==highlight==}{>>comment<<}): accept or reject every change, show them (PDF "
-        "colours and comment footnotes, Word tracked changes and comments), or simple "
-        "(final text with change bars, highlights and comments). "
+        "colours, Word tracked changes and comments), simple (final text with change bars, "
+        "highlights and comments), or hybrid (final text with a light highlight and bars, "
+        "the changes and comments written out in a margin column). "
         "Overrides 'review_markup' and 'review_exports' for this build. Default: accept."
     ),
 )

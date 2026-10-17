@@ -826,6 +826,7 @@ The deadline is {~~Friday~>Monday~~}. {==Budget approval==}{>>Is this still curr
 | `reject` | Every change is reverted; highlights keep their text; comments disappear. |
 | `show` | The full markup: every change visible, as below. |
 | `simple` | Word's "simple markup": the final text with changes applied, a change bar beside each changed line, and the highlights and comments kept. |
+| `hybrid` | The final text with a light highlight and a margin bar on every change, and each change written out in full in a review column beside it (what was deleted, what was added), with the comments. In Word it is the same as `show`. |
 
 In `show` mode:
 
@@ -837,7 +838,7 @@ In `show` mode:
   reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
   (underline, strike-through, highlight) rather than tracked changes, and cell comments are
   dropped.
-- **Slides** treat `show` and `simple` as `accept`.
+- **Slides** treat `show`, `simple` and `hybrid` as `accept`.
 
 Marked-up Word files (`show` and `simple`) also start with a one-line key (reviewer, counts, what
 the markup means); `accept` and `reject` files never do.
@@ -846,16 +847,23 @@ The markup has its own look, kept apart from the document's: the key, the number
 margin notes use small neutral grey type and a dark chip, never the theme's callout boxes, colours
 or rules, so a comment cannot be mistaken for part of the document.
 
-#### The review column (PDF, when there are comments)
+#### The review column (PDF)
 
-When a `show` or `simple` document has comments, the PDF makes room for them the way Word's "all
-markup" view does. The page gets a 62 mm review column on its right, the text area stays exactly
+In `hybrid` mode the text carries only a light lilac highlight and a bar, and the changes live in
+the review column: each is numbered (a chip in the text, the same chip in the column) and spelled
+out as `ADDED`, `DELETED` or `CHANGED old → new`, level with its line. A deleted line has no text
+to highlight, so its note rides on the line above. In `show` and `simple` modes the column holds
+only the comments, when there are any.
+
+To make room, the PDF works the way Word's "all markup" view does. The page gets a 72 mm review
+column on its right, the text area stays exactly
 as it was, and the whole PDF is scaled back to the paper size, so the sheet is still A4 (or
 whatever the theme sets) with the document shrunk to about three quarters. Because the text area
 is untouched, every line and page break matches the clean version, so a reviewer can compare the
 two page for page. The key sits at the top of the column, and each comment is placed beside its
 line; where two would collide the later one moves down. A page with more comments than the column
-holds packs them tightly from the top. Landscape sections are not given a review column.
+holds packs them tightly from the top. Landscape sections are not given a review column. Note text
+is set large enough to read after the shrink (about the size of the body text).
 
 In Word, comments are Word's own margin comments, so nothing is shrunk by md-doc: Word's review
 pane does that itself.
@@ -880,7 +888,7 @@ comments appear as in `show`.
 out as a clean copy, a quick-read copy and a full markup in one command:
 
 ```yaml
-review_exports: [clean, simple, markup]
+review_exports: [clean, simple, hybrid, markup]
 ```
 
 | Variant | Mode | File |
@@ -888,6 +896,7 @@ review_exports: [clean, simple, markup]
 | `clean` | `accept` | `report-clean.pdf` |
 | `original` | `reject` | `report-original.pdf` |
 | `simple` | `simple` | `report-simple.pdf` |
+| `hybrid` | `hybrid` | `report-hybrid.pdf` |
 | `markup` (or `full`) | `show` | `report-markup.pdf` |
 
 Every format in `outputs` is built for every variant (`report-markup.docx` is the tracked-changes
@@ -3388,9 +3397,9 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `image_resolution` | string | — | Intrinsic image resolution, e.g. `150dpi`, `2x` or `from-image`. |
 | `print_marks` | enum | — | Printer's marks: `crop`, `cross` or `crop cross`. |
 | `bleed` | length | — | Bleed beyond the trim edge, e.g. `3mm`. |
-| `review_markup` | enum | `accept` | What a build does with CriticMarkup review marks: `accept` every change, `reject` every change, `show` them (PDF colours and comment footnotes, Word tracked changes and comments), or `simple` (final text with change bars, highlights and comments). |
+| `review_markup` | enum | `accept` | What a build does with CriticMarkup review marks: `accept` every change, `reject` every change, `show` them (PDF colours and comment footnotes, Word tracked changes and comments), `simple` (final text with change bars, highlights and comments), or `hybrid` (final text with a light highlight and bars, the changes and comments written out in a margin column). |
 | `review_author` | string | `Reviewer` | Author name on Word tracked changes and comments (`show` and `simple` modes). |
-| `review_exports` | list | — | Build several review versions at once, one file each: `clean`, `original`, `simple`, `markup` (alias `full`). Files get a `-clean`, `-original`, `-simple` or `-markup` suffix. |
+| `review_exports` | list | — | Build several review versions at once, one file each: `clean`, `original`, `simple`, `hybrid`, `markup` (alias `full`). Files get a `-clean`, `-original`, `-simple`, `-hybrid` or `-markup` suffix. |
 | `sync_target` | enum | — | `azure`, `s3` or `local`. |
 | `sync_config` | mapping | — | Backend settings; `${NAME}` is replaced from the environment. |
 | `export` | boolean | `false` | Mark a note for `md-doc export` (inheritable from `_meta.yml`). |
@@ -3469,7 +3478,7 @@ Builds every document under `ROOT` (default: the current directory) to the forma
 | `--no-lint` | Skip the pre-flight lint (to build anyway while iterating). |
 | `--dry-run` | Print what would be built without building. |
 | `--force` | Rebuild everything. By default a document is skipped when its outputs are newer than its source, config, theme, templates and the md-doc code itself. |
-| `--review [accept\|reject\|show\|simple]` | What to do with CriticMarkup review marks for this build, overriding `review_markup` and `review_exports` (see [review markup](#markdown-review-markup)). |
+| `--review [accept\|reject\|show\|simple\|hybrid]` | What to do with CriticMarkup review marks for this build, overriding `review_markup` and `review_exports` (see [review markup](#markdown-review-markup)). |
 | `-j, --jobs N` | Build up to N documents in parallel (process pool). Default 1. |
 | `-v, --verbose` | Print full tracebacks on errors. |
 

@@ -1989,7 +1989,7 @@ def build(
     )
     html_body = _drop_empty_table_headers(html_body)
     html_body = postprocess_html(html_body, config)
-    if review_mode(config) in ("show", "simple"):
+    if review_mode(config) in ("show", "simple", "hybrid"):
         author_name = review_author(config)
         # Comments live in a review column beside the page, so the document itself keeps
         # its own styling; the key joins them there (or is a slim line when none exist).
@@ -1999,7 +1999,7 @@ def build(
                 review_mode(config),
                 review_counts,
                 author_name,
-                margin=bool(review_counts["comments"]),
+                margin=_has_review_column(config, review_counts),
             )
             + html_body
         )
@@ -2081,7 +2081,7 @@ def build(
     # Margin comments: widen the page for a review column (same text area, same page
     # breaks) and scale the PDF back to the paper width, shrinking the document.
     review_geometry = None
-    if review_mode(config) in ("show", "simple") and review_counts["comments"]:
+    if _has_review_column(config, review_counts):
         review_geometry = review_page(page_size_mm, page_margins_mm, page_bottom_mm)
         page_size_mm = review_geometry["size"]
         page_margins_mm = (page_margins_mm[0], review_geometry["margin_right"])
@@ -2156,6 +2156,17 @@ def build(
         out_path,
         wp_kwargs,
     )
+
+
+def _has_review_column(config: dict[str, Any], marks: dict[str, int]) -> bool:
+    """Does this build need the margin review column?
+
+    Comments always live in it; ``hybrid`` also puts every change there.
+    """
+    mode = review_mode(config)
+    if mode in ("show", "simple"):
+        return bool(marks["comments"])
+    return mode == "hybrid" and bool(marks["comments"] or marks["changes"])
 
 
 def _measure_layout(html: str, base_url: str) -> Any:
