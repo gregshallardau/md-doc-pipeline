@@ -30,6 +30,9 @@ workspace/
 # Browser editor save history / recovery snapshots (written beside each document)
 .editor-history/
 
+# Browser editor trash (files moved to trash are kept here for undo)
+.editor-trash/
+
 /_pdf-theme.css
 
 # Incremental dependency state and browser test dependencies
