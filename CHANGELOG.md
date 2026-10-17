@@ -18,7 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Marked-up PDFs and Word files start with a key (reviewer, counts, what the colours and bars
   mean); PDF insertions and deletions have a coloured wash. PDF comments are notes in a review column in the
   right margin, level with their line, in neutral grey type that cannot be mistaken for a
-  callout; each is colour-matched to a light tint on its text (no numbers). The page gets the
+  callout; each is colour-matched to a light tint and underline on its text (no numbers; ten colours). Notes are grouped into one card per paragraph, list item or table row, level with that block, and colliding stacks are centred on their anchors. The page gets the
   column by widening, then the PDF is scaled back to paper size (the document shrinks, as in
   Word's all-markup view) with the text area
   unchanged, so line and page breaks match the clean version.

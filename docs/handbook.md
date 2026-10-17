@@ -850,12 +850,18 @@ or rules, so a comment cannot be mistaken for part of the document.
 
 #### The review column (PDF)
 
-In `hybrid` mode the text carries only a light lilac highlight and a bar, and the changes live in
-the review column: each change has its own colour (a light tint on the changed words, the same
-colour as a swatch and rule on its note in the column), and is spelled
-out as `ADDED`, `DELETED` or `CHANGED old → new`, level with its line. A deleted line has no text
-to highlight, so its note rides on the line above. In `show` and `simple` modes the column holds
-only the comments, when there are any.
+In `hybrid` mode the text carries only a light tint and a bar, and the changes live in the review
+column. Every change and comment is colour-coded. Its text is tinted in that colour with a
+matching underline (a highlight, or the changed words), or, where there is no text to tint (a
+deletion, or a stand-alone comment), marked by a small tick of that colour. In the column the
+same colour is a swatch beside its note, written out as `ADDED`, `DELETED` or `CHANGED old → new`.
+There are ten colours, used in document order, so neighbours always differ. A deleted line has no
+text to tint, so its tick sits at the end of the line above.
+
+Notes are grouped into one card per paragraph, list item, heading or table row and sit level with
+the start of that block, so a block's notes are beside it. Where cards would overlap, a stack is
+centred on the lines its notes belong to, so each lands as close to its own text as the space
+allows. In `show` and `simple` modes the column holds only the comments, when there are any.
 
 To make room, the PDF works the way Word's "all markup" view does. The page gets a 72 mm review
 column on its right, the text area stays exactly
@@ -864,7 +870,8 @@ whatever the theme sets) with the document shrunk to about three quarters. Becau
 is untouched, every line and page break matches the clean version, so a reviewer can compare the
 two page for page. The key sits at the top of the column, and each comment is placed beside its
 line; where two would collide the later one moves down. A page with more comments than the column
-holds packs them tightly from the top. Landscape sections are not given a review column. Note text
+holds packs them tightly from the top; where a busy paragraph forces its notes down, the colour
+and underline still tie each note to its words. Landscape sections are not given a review column. Note text
 is set large enough to read after the shrink (about the size of the body text).
 
 In Word, comments are Word's own margin comments, so nothing is shrunk by md-doc: Word's review

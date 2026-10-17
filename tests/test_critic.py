@@ -544,15 +544,30 @@ def test_counts_ignore_code_and_frontmatter():
     assert critic.counts("plain `{++x++}` text") == {"changes": 0, "highlights": 0, "comments": 0}
 
 
-def test_margin_notes_replace_the_comment_span_with_a_colour_matched_note():
-    html = f"<p>one {COMMENT.format('first &amp; <b>', 1)}</p><p>two {COMMENT.format('second', 2, mark=0)}</p>"
+def test_margin_notes_make_one_colour_matched_card_per_block():
+    html = (
+        f"<p>one {COMMENT.format('first &amp; <b>', 1)} and {COMMENT.format('again', 2, mark=0)}</p>"
+        f"<p>two {COMMENT.format('second', 3)}</p>"
+    )
     out = critic.margin_notes(html, "Ada <L>")
     assert "critic-comment" not in out and "critic-ref" not in out  # no numbers anywhere
-    assert '<span class="critic-tick critic-c1"></span>' in out  # standalone: a tick marks the spot
-    assert out.count("critic-tick") == 1  # the second follows a highlight: the tint is its marker
-    assert '<span class="critic-margin-note critic-c1" data-note="1">' in out
+    assert out.count("critic-card") == 2  # one card per paragraph, not per comment
+    assert out.startswith('<p><span class="critic-margin-note critic-card" data-note="1">')
+    assert out.count("critic-entry") == 3
     assert '<span class="critic-swatch critic-c1"></span><strong>Ada &lt;L&gt;</strong>' in out
-    assert "first &amp; &lt;b&gt;" in out and 'critic-c2" data-note="2"' in out
+    assert "first &amp; &lt;b&gt;" in out and 'critic-c2"></span><strong>' in out
+    # A tick marks a comment with nothing tinted; one that follows a highlight needs none.
+    assert '<span class="critic-tick critic-c1"></span>' in out
+    assert (
+        '<span class="critic-tick critic-c3"></span>' in out and "critic-tick critic-c2" not in out
+    )
+
+
+def test_table_notes_ride_in_the_first_cell_of_their_row():
+    html = f"<table><tr><td>a</td><td>b {COMMENT.format('hi', 4)}</td></tr></table>"
+    out = critic.margin_notes(html, "R")
+    assert out.index("<td>") < out.index("critic-card") < out.index("<td>b")
+    assert "<tr><span" not in out
 
 
 def test_legend_describes_the_mode_and_is_absent_when_clean():
@@ -561,8 +576,8 @@ def test_legend_describes_the_mode_and_is_absent_when_clean():
     assert "Ada" in show and "3 changes, 1 comment" in show and "critic-ins" in show
     simple = critic.legend_html("simple", summary, "Ada")
     assert "critic-legend-bar" in simple and "critic-ins" not in simple
-    assert 'data-note="0"' in critic.legend_html("show", summary, "Ada", margin=True)
-    assert 'data-note="0"' not in show
+    assert "critic-legend-margin" in critic.legend_html("show", summary, "Ada", margin=True)
+    assert "critic-legend-margin" not in show
     assert critic.legend_html("accept", summary, "Ada") == ""
     assert critic.legend_html("show", {"changes": 0, "highlights": 0, "comments": 0}, "Ada") == ""
     assert "Review markup · Ada · 3 changes, 1 comment" in critic.legend_text(
@@ -637,9 +652,9 @@ def test_notes_beside_the_same_line_are_spread_apart():
     spread = critic.spread_margin_notes(
         html, lambda markup: weasyprint.HTML(string=markup).render()
     )
-    assert 'data-note="1"' in spread and 'data-note="1" style=' not in spread  # first stays
-    assert 'data-note="2" style="margin-top:' in spread
-    assert 'data-note="3" style="margin-top:' in spread
+    # All three wanted the same line: they are spread around it, not piled below it.
+    moved = re.findall(r'data-note="(\d)" style="margin-top: (-?[\d.]+)px"', spread)
+    assert len(moved) >= 2 and min(float(d) for _, d in moved) < 0 < max(float(d) for _, d in moved)
     boxes = []
     document = weasyprint.HTML(string=spread).render()
 
@@ -694,9 +709,15 @@ def test_pdf_with_comments_is_paper_size_and_paginates_like_the_clean_version(tm
         ys = []
         for page in document.pages:
             for box in page._page_box.descendants():
-                if getattr(box, "element_tag", None) == "p" and type(box).__name__ == "BlockBox":
+                element = getattr(box, "element", None)
+                if (
+                    element is not None
+                    and element.tag == "p"
+                    and type(box).__name__ == "BlockBox"
+                    and "critic-margin-note" not in (element.get("class") or "")
+                ):
                     ys.append(round(box.position_y, 1))
-        layouts[mode] = (len(document.pages), ys)
+        layouts[mode] = (len(document.pages), sorted(set(ys)))
     assert layouts["accept"][0] > 1 and layouts["accept"] == layouts["simple"]
     text = (tmp_path / "simple.pdf").read_bytes()
     assert re.search(rb"/MediaBox \[[^\]]*595\.27", text)  # A4 width, scaled back
@@ -729,8 +750,8 @@ def test_hybrid_keeps_a_deleted_line_as_a_note_on_the_line_above():
 def test_hybrid_margin_notes_spell_out_each_change_in_distinct_colours():
     html = critic.apply("A {~~old~>new~~} B {--gone--} C {++more++} {>>why<<}", "hybrid")
     out = critic.margin_notes(f"<p>{html}</p>", "Ada")
-    assert len(re.findall(r'data-note="\d"', out)) == 4
-    assert [int(c) for c in re.findall(r'<span class="critic-swatch critic-c(\d)', out)] == [
+    assert out.count("critic-card") == 1 and out.count("critic-entry") == 4
+    assert [int(c) for c in re.findall(r'<span class="critic-swatch critic-c(\d+)', out)] == [
         1,
         2,
         3,
@@ -752,11 +773,9 @@ def test_hybrid_margin_notes_spell_out_each_change_in_distinct_colours():
 def test_colours_cycle_and_a_highlight_shares_its_comments_colour():
     marks = "".join(f"{{++a{i}++}}" for i in range(10)) + "{==x==}{>>c<<}"
     out = critic.apply(marks, "hybrid")
-    assert 'critic-chg critic-c8">a7' in out and 'critic-chg critic-c1">a8' in out
-    assert (
-        'mark class="critic-hl critic-c3">x' in out
-        and 'data-comment="c" data-c="3" data-mark="0"' in out
-    )
+    assert 'critic-chg critic-c10">a9' in out  # ten colours, then they repeat
+    assert 'mark class="critic-hl critic-c1">x' in out
+    assert 'data-comment="c" data-c="1" data-mark="0"' in out
     # A highlight with no comment stays the plain yellow.
     assert '<mark class="critic-hl">y</mark>' in critic.apply("{==y==}", "hybrid")
 

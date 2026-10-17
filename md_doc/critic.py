@@ -171,7 +171,7 @@ class _Palette:
     its margin note match. Colours repeat after ``SIZE`` items; neighbours always differ.
     """
 
-    SIZE = 8
+    SIZE = 10
 
     def __init__(self) -> None:
         self.n = 0
@@ -270,7 +270,7 @@ def _change_note(
 
     def clean(text: str) -> str:
         flat = " ".join(text.split())
-        flat = flat if len(flat) <= 180 else flat[:177].rstrip() + "..."
+        flat = flat if len(flat) <= 90 else flat[:87].rstrip() + "..."
         return _html.escape(flat, quote=True)
 
     return (
@@ -498,25 +498,53 @@ _ANY_NOTE_RE = re.compile(
 )
 
 
+_OWNER_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"}
+
+
+def _owner_spans(html: str) -> list[tuple[int, int, int, str]]:
+    """``(open_start, insert_at, close_end, tag)`` of every paragraph-like block in *html*."""
+    spans: list[tuple[int, int, int, str]] = []
+    stack: list[tuple[str, int, int]] = []
+    for match in _TAG_RE.finditer(html):
+        closing, tag = match.group(1), match.group(2).lower()
+        if tag not in _OWNER_TAGS:
+            continue
+        if not closing:
+            stack.append((tag, match.start(), match.end()))
+            continue
+        while stack and stack[-1][0] != tag:
+            stack.pop()
+        if not stack:
+            continue
+        _, start, open_end = stack.pop()
+        insert_at = open_end
+        if tag == "tr":  # a card cannot sit directly in a row: put it in the first cell
+            cell = re.compile(r"<t[dh]\b[^>]*>").search(html, open_end, match.start())
+            insert_at = cell.end() if cell else open_end
+        spans.append((start, insert_at, match.end(), tag))
+    return spans
+
+
 def margin_notes(html: str, author: str) -> str:
     """PDF: turn each comment (and, in ``hybrid`` mode, each change) into a margin note.
 
-    Each item has a colour. Its text carries that colour as a light tint (a highlight,
-    or the changed words), or as a small tick where there is no text to tint (a
-    deletion); the same colour marks its note in the review column. The note is
-    absolutely positioned beside the line it belongs to and takes no space in the flow,
-    so the document paginates exactly as the clean version does.
+    Notes are grouped into one card per paragraph, list item, heading or table row, placed
+    level with the start of that block, so a block's notes sit beside it instead of
+    drifting down the column behind earlier ones. Inside a card each item has its colour
+    as a swatch; the same colour tints its text (a highlight, or the changed words) or, where
+    there is no text to tint (a deletion), is a small tick at that spot. The card takes no
+    space in the flow, so the document paginates exactly as the clean version does.
     """
-    number = 0
     who = f"<strong>{_html.escape(author)}</strong>"
+    spans = _owner_spans(html)
+    cards: dict[int, list[str]] = {}  # insertion offset -> entries
+    edits: list[tuple[int, int, str]] = []
 
-    def replace(match: re.Match[str]) -> str:
-        nonlocal number
-        number += 1
+    def entry(match: re.Match[str]) -> tuple[str, str]:
+        """``(entry html, tick html)`` for one anchor."""
         if match.group(1) is not None:
             colour, marker = match.group(2), match.group(3) == "1"
             body = f"{who} {_html.escape(_html.unescape(match.group(1)))}"
-            cls = "critic-margin-note"
         else:
             kind, colour, marker = match.group(4), match.group(7), match.group(8) == "1"
             old = _html.escape(_html.unescape(match.group(5)))
@@ -528,14 +556,32 @@ def margin_notes(html: str, author: str) -> str:
             if new:
                 parts.append(f'<ins class="critic-ins">{new}</ins>')
             body = f'<span class="critic-kind">{label}</span> {" ".join(parts)}'
-            cls = "critic-margin-note critic-margin-change"
         tick = f'<span class="critic-tick critic-c{colour}"></span>' if marker else ""
-        return (
-            f'{tick}<span class="{cls} critic-c{colour}" data-note="{number}">'
-            f'<span class="critic-swatch critic-c{colour}"></span>{body}</span>'
-        )
+        swatch = f'<span class="critic-swatch critic-c{colour}"></span>'
+        return f'<span class="critic-entry">{swatch}{body}</span>', tick
 
-    return _ANY_NOTE_RE.sub(replace, html)
+    for match in _ANY_NOTE_RE.finditer(html):
+        item, tick = entry(match)
+        owners = [sp for sp in spans if sp[0] <= match.start() and match.end() <= sp[2]]
+        if owners:  # the innermost block holds it
+            insert_at = max(owners, key=lambda sp: sp[0])[1]
+            edits.append((match.start(), match.end(), tick))
+        else:  # not inside any block: a card of its own, right here
+            insert_at = match.start()
+            edits.append((match.start(), match.end(), tick))
+        cards.setdefault(insert_at, []).append(item)
+
+    for number, (at, items) in enumerate(sorted(cards.items()), start=1):
+        card = (
+            f'<span class="critic-margin-note critic-card" data-note="{number}">'
+            f'{"".join(items)}</span>'
+        )
+        edits.append((at, at, card))
+    # Later offsets first so earlier ones stay valid; at one offset, an insertion goes before
+    # the replacement that starts there.
+    for start, end, text in sorted(edits, key=lambda e: (e[0], e[0] != e[1]), reverse=True):
+        html = html[:start] + text + html[end:]
+    return html
 
 
 def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool = False) -> str:
@@ -567,7 +613,7 @@ def legend_html(mode: str, summary: dict[str, int], author: str, *, margin: bool
         facts.append(f"{summary['changes']} change{'s' if summary['changes'] != 1 else ''}")
     if summary["comments"]:
         facts.append(f"{summary['comments']} comment{'s' if summary['comments'] != 1 else ''}")
-    extra = ' critic-margin-note" data-note="0' if margin else ""
+    extra = " critic-legend-margin" if margin else ""
     return (
         f'<div class="critic-legend{extra}"><strong>REVIEW</strong> · {_html.escape(author)} · '
         f"{', '.join(facts)}<br>{key}</div>\n"
@@ -616,6 +662,9 @@ def review_page_css(geometry: dict[str, Any]) -> str:
         # The footer stays directly under the text, not at the foot of the taller sheet.
         "@page { @bottom-left { vertical-align: top; } @bottom-center { vertical-align: top; } "
         "@bottom-right { vertical-align: top; } }\n"
+        ".critic-legend-margin { position: absolute; top: auto; "
+        f"left: {geometry['note_left']:.3f}mm; width: {geometry['note_width']:.3f}mm; "
+        "transform: translateY(-100%); margin: -16pt 0 0 0; }\n"
         ".critic-margin-note { position: absolute; top: auto; "
         f"left: {geometry['note_left']:.3f}mm; width: {geometry['note_width']:.3f}mm; }}\n"
         "</style>"
@@ -623,6 +672,55 @@ def review_page_css(geometry: dict[str, Any]) -> str:
 
 
 _NOTE_ATTR_RE = re.compile(r'data-note="(\d+)"')
+
+
+def _place_notes(
+    notes: list[dict[str, Any]], gap: float, floor: float, limit: float
+) -> list[float]:
+    """Top offsets for *notes* (sorted by ``was``) that avoid overlap with least displacement.
+
+    Notes that would collide are merged into a stack, and the stack is centred on where its
+    notes wanted to be (so each ends up as near its own line as it can), then kept inside
+    the text area.
+    """
+    # Each block: [start, height, members], members as (note index, offset in block).
+    blocks: list[list[Any]] = [[n["was"], n["h"], [(i, 0.0)]] for i, n in enumerate(notes)]
+
+    def settle() -> bool:
+        for k in range(len(blocks) - 1):
+            a, b = blocks[k], blocks[k + 1]
+            if a[0] + a[1] + gap > b[0] + 1e-6:
+                offset = a[1] + gap
+                members = a[2] + [(i, off + offset) for i, off in b[2]]
+                start = sum(notes[i]["was"] - off for i, off in members) / len(members)
+                blocks[k : k + 2] = [[start, offset + b[1], members]]
+                return True
+        return False
+
+    while True:
+        while settle():
+            pass
+        # Keep the whole column inside the text area, then re-check for new collisions.
+        moved = False
+        if blocks and blocks[0][0] < floor:
+            blocks[0][0] = floor
+            moved = True
+        if blocks and blocks[-1][0] + blocks[-1][1] > limit:
+            blocks[-1][0] = max(floor, limit - blocks[-1][1])
+            moved = True
+        if not (
+            moved
+            and any(
+                blocks[k][0] + blocks[k][1] + gap > blocks[k + 1][0] + 1e-6
+                for k in range(len(blocks) - 1)
+            )
+        ):
+            break
+    placed = [0.0] * len(notes)
+    for start, _height, members in blocks:
+        for i, off in members:
+            placed[i] = start + off
+    return placed
 
 
 def spread_margin_notes(html: str, measure: Any, gap_px: float = 5.0) -> str:
@@ -663,16 +761,8 @@ def spread_margin_notes(html: str, measure: Any, gap_px: float = 5.0) -> str:
 
         visit(page_box)
         notes.sort(key=lambda n: n["was"])
-        for before, note in zip(notes, notes[1:]):  # later notes move down past earlier ones
-            note["y"] = max(note["y"], before["y"] + before["h"] + gap_px)
-        ceiling = limit
-        for note in reversed(notes):  # a crowded foot moves back up
-            note["y"] = min(note["y"], ceiling - note["h"])
-            ceiling = note["y"] - gap_px
-        edge = floor
-        for note in notes:  # ...but not above the text area
-            note["y"] = max(note["y"], edge)
-            edge = note["y"] + note["h"] + gap_px
+        for note, y in zip(notes, _place_notes(notes, gap_px, floor, limit)):
+            note["y"] = y
         for note in notes:
             if note["id"] is not None and abs(note["y"] - note["was"]) > 0.5:
                 shifts[note["id"]] = note["y"] - note["was"]
@@ -705,18 +795,20 @@ def legend_text(mode: str, summary: dict[str, int], author: str) -> str:
 #: Stylesheet for ``show``, ``simple`` and ``hybrid`` in PDF; added only when the document has marks.
 #: The review layer has its own look (neutral greys, colour-coded tints and swatches, no
 #: boxes or rules from the theme) so it never reads as part of the document's own styling.
-CSS = """\
+_BASE_CSS = """\
 ins.critic-ins { color: #0b5d1e; background: #c8f0d2; text-decoration: underline; }
 del.critic-del { color: #a40e26; background: #ffd6d9; text-decoration: line-through; }
 mark.critic-hl { background: #ffe97a; color: inherit; }
 .critic-chg { background: #e9e5ff; }
 .critic-margin-note { font: 11pt/1.3 Helvetica, Arial, sans-serif; color: #374151; text-align: left;
-  border-top: 2pt solid #9ca3af; padding-top: 2pt; break-inside: avoid; }
+  border-top: 2pt solid #9ca3af; padding-top: 3pt; break-inside: avoid; }
 .critic-margin-note strong { color: #111827; }
-.critic-swatch { display: inline-block; width: 9pt; height: 9pt; border-radius: 2pt;
-  margin-right: 4pt; vertical-align: baseline; }
-.critic-tick { display: inline-block; width: 3pt; height: 1.05em; border-radius: 1pt;
-  vertical-align: text-bottom; margin: 0 1pt; }
+.critic-entry { display: block; margin-top: 4pt; }
+.critic-entry:first-child { margin-top: 0; }
+.critic-swatch { display: inline-block; width: 10pt; height: 10pt; border-radius: 2pt;
+  margin-right: 5pt; vertical-align: baseline; }
+.critic-tick { display: inline-block; width: 4pt; height: 1.2em; border-radius: 1pt;
+  vertical-align: text-bottom; margin: 0 1.5pt; }
 .critic-kind { font-size: 8pt; font-weight: 700; letter-spacing: 0.6pt; color: #6b7280; }
 .critic-margin-change ins.critic-ins, .critic-margin-change del.critic-del { padding: 0 1pt; }
 .critic-legend { font: 9.5pt/1.5 Helvetica, Arial, sans-serif; color: #4b5563;
@@ -724,4 +816,25 @@ mark.critic-hl { background: #ffe97a; color: inherit; }
 .critic-legend strong { letter-spacing: 1pt; color: #111827; }
 .critic-legend-bar { display: inline-block; width: 3pt; height: 9pt; background: #cf222e;
   vertical-align: middle; margin-right: 2pt; }
-.critic-chg.critic-c1, mark.critic-hl.critic-c1 { background: #c9e2ff; }\n.critic-swatch.critic-c1, .critic-tick.critic-c1 { background: #2f80ed; }\n.critic-margin-note.critic-c1 { border-top-color: #2f80ed; }\n.critic-chg.critic-c2, mark.critic-hl.critic-c2 { background: #d9c9ff; }\n.critic-swatch.critic-c2, .critic-tick.critic-c2 { background: #7a4dff; }\n.critic-margin-note.critic-c2 { border-top-color: #7a4dff; }\n.critic-chg.critic-c3, mark.critic-hl.critic-c3 { background: #ffd5a3; }\n.critic-swatch.critic-c3, .critic-tick.critic-c3 { background: #f08c1a; }\n.critic-margin-note.critic-c3 { border-top-color: #f08c1a; }\n.critic-chg.critic-c4, mark.critic-hl.critic-c4 { background: #b4ebe5; }\n.critic-swatch.critic-c4, .critic-tick.critic-c4 { background: #0f9d94; }\n.critic-margin-note.critic-c4 { border-top-color: #0f9d94; }\n.critic-chg.critic-c5, mark.critic-hl.critic-c5 { background: #f8bcd9; }\n.critic-swatch.critic-c5, .critic-tick.critic-c5 { background: #d6336c; }\n.critic-margin-note.critic-c5 { border-top-color: #d6336c; }\n.critic-chg.critic-c6, mark.critic-hl.critic-c6 { background: #ffe58a; }\n.critic-swatch.critic-c6, .critic-tick.critic-c6 { background: #d9a400; }\n.critic-margin-note.critic-c6 { border-top-color: #d9a400; }\n.critic-chg.critic-c7, mark.critic-hl.critic-c7 { background: #c3cdf7; }\n.critic-swatch.critic-c7, .critic-tick.critic-c7 { background: #4263eb; }\n.critic-margin-note.critic-c7 { border-top-color: #4263eb; }\n.critic-chg.critic-c8, mark.critic-hl.critic-c8 { background: #ffc4b5; }\n.critic-swatch.critic-c8, .critic-tick.critic-c8 { background: #e8590c; }\n.critic-margin-note.critic-c8 { border-top-color: #e8590c; }\n"""
+"""
+
+#: (light tint on the text, strong accent for the swatch/tick/underline) per item colour.
+COLOURS: tuple[tuple[str, str], ...] = (
+    ("#c9e2ff", "#2f80ed"),  # blue
+    ("#d9c9ff", "#7a4dff"),  # violet
+    ("#ffd5a3", "#f08c1a"),  # orange
+    ("#b4ebe5", "#0f9d94"),  # teal
+    ("#f8bcd9", "#d6336c"),  # pink
+    ("#ffe58a", "#d9a400"),  # amber
+    ("#c3cdf7", "#4263eb"),  # indigo
+    ("#ffc4b5", "#e8590c"),  # vermilion
+    ("#d6f0b0", "#5fa31b"),  # lime
+    ("#bfeaf7", "#1aa3cf"),  # cyan
+)
+
+CSS = _BASE_CSS + "".join(
+    f".critic-chg.critic-c{n}, mark.critic-hl.critic-c{n} "
+    f"{{ background: {tint}; border-bottom: 1.5pt solid {accent}; }}\n"
+    f".critic-swatch.critic-c{n}, .critic-tick.critic-c{n} {{ background: {accent}; }}\n"
+    for n, (tint, accent) in enumerate(COLOURS, start=1)
+)
