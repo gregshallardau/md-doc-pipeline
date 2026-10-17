@@ -20,6 +20,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **Merge field support** — `[[field_name]]` in Markdown becomes a Word `«MERGEFIELD»` in `.dotx` output for downstream mail merge
 - **PDF output** — WeasyPrint builder with branded cover page, headers, footers, and pagination
 - **Print-grade PDF** — bookmarks, PDF/A, PDF/UA and PDF/X variants, embedded fonts, files and source, hyphenation, numbered headings, page-bottom footnotes, running chapter titles, columns and grids, facing pages with recto chapter starts, crop marks and bleed, and layout checks ([PDF features](docs/handbook.md#pdf-features))
+- **Review markup** — CriticMarkup (`{++add++}`, `{--delete--}`, `{~~old~>new~~}`, `{==highlight==}{>>comment<<}`) in the source; builds accept, reject or show it, with real Word tracked changes and comments, and `md-doc extract` brings Word edits back ([review markup](docs/handbook.md#markdown-review-markup))
 - **DOCX output** — python-docx builder for copy-to-email Word documents
 - **DOTX output** — Word merge template builder; your other application fills the fields
 - **PPTX output** — python-pptx slide builder with a deck-first authoring schema: headings segment into slides, plus layout directives for section dividers, multi-column bodies, big-number stat tiles, pull-quotes, image showcases, per-slide backgrounds, and speaker notes ([slides guide](docs/handbook.md#slides))

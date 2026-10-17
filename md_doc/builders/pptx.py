@@ -945,7 +945,9 @@ def build(
     if split not in ("h1", "h2", "marker"):
         split = "h2"
 
-    body = _strip_frontmatter(rendered_md)
+    from ..critic import prepare as prepare_review_markup
+
+    body = prepare_review_markup(_strip_frontmatter(rendered_md), config, "pptx")
     title = config.get("title") or _extract_title(body) or out_path.stem
     author = str(config.get("author", ""))
     date = str(config.get("date", ""))

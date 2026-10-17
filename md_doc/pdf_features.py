@@ -571,6 +571,10 @@ def mark_toc_levels(html: str, start: int, depth: int) -> str:
 
 def postprocess_html(html: str, config: dict[str, Any]) -> str:
     """Apply the HTML-level transforms the config asks for."""
+    if 'class="critic-bar"' in html:
+        from .critic import mark_changed_blocks
+
+        html = mark_changed_blocks(html)
     if _flag(config, "page_footnotes"):
         html = page_footnotes(html)
     if _flag(config, "xref_pages"):
@@ -893,6 +897,12 @@ def feature_css(
         "{ box-decoration-break: clone; }"
     )
 
+    # Review markup shown in the PDF (CriticMarkup ``show`` mode).
+    if "critic-" in html_body:
+        from .critic import CSS as critic_css
+
+        rules.append(critic_css)
+
     # Typography.
     features = config.get("font_features")
     if features and _FEATURE_RE.match(str(features)):
@@ -1121,5 +1131,89 @@ def layout_check_finisher(*, strict: bool) -> Callable[[Any, Any], None]:
             return
         for finding in findings:
             logger.warning("layout: %s", finding)
+
+    return run
+
+
+#: Change bar: colour, thickness and distance from the text edge, in CSS px.
+_BAR_RGB = (0.812, 0.133, 0.18)
+_BAR_WIDTH_PX = 3.5
+_BAR_GAP_PX = 22.7  # 6 mm
+_BAR_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "blockquote"}
+_LIST_TAGS = {"ul", "ol"}
+
+
+def _changed_spans(page: Any) -> list[tuple[float, float]]:
+    """Vertical ``(top, bottom)`` extents, in CSS px, of the blocks tagged ``critic-changed``."""
+    spans: list[tuple[float, float]] = []
+
+    def visit(box: Any) -> None:
+        element = getattr(box, "element", None)
+        if (
+            element is not None
+            and getattr(box, "element_tag", None) in _BAR_TAGS
+            and type(box).__name__ in {"BlockBox", "TableRowBox"}
+            and "critic-changed" in (element.get("class") or "")
+        ):
+            top = box.position_y + box.margin_top
+            bottom = top + box.border_height()
+            if getattr(box, "element_tag", None) == "li":
+                # A list item's bar covers its own text, not a nested list under it.
+                for child in getattr(box, "children", []):
+                    if getattr(child, "element_tag", None) in _LIST_TAGS:
+                        bottom = min(bottom, child.position_y)
+                        break
+            spans.append((top, bottom))
+        for child in getattr(box, "children", []) or []:
+            visit(child)
+
+    visit(page._page_box)
+    spans.sort()
+    merged: list[tuple[float, float]] = []
+    for top, bottom in spans:
+        if merged and top <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], bottom))
+        else:
+            merged.append((top, bottom))
+    return merged
+
+
+def change_bars_finisher(zoom: float = 1.0) -> Callable[[Any, Any], None]:
+    """A ``finisher`` that draws review change bars in the right-hand page margin.
+
+    ``review_markup: simple`` tags every changed block ``critic-changed``. CSS cannot
+    put a bar in the margin at one fixed distance whatever the nesting (lists,
+    callouts, table rows), so each bar is drawn from the block's laid-out extent: a
+    thin red strip a fixed distance beyond the text edge, in line from page top to
+    bottom. A block split across pages gets a bar on each page.
+    """
+    scale = zoom * 0.75  # PDF points per CSS px, as WeasyPrint's own page streams use
+
+    def run(document: Any, pdf: Any) -> None:
+        import pydyf
+
+        kids = list(pdf.pages["Kids"])
+        page_numbers = [kids[i] for i in range(0, len(kids), 3)]  # flat "n 0 R" triples
+        for page, number in zip(document.pages, page_numbers):
+            spans = _changed_spans(page)
+            if not spans:
+                continue
+            box = page._page_box
+            right_edge = box.content_box_x() + box.width
+            margin = max(0.0, page.width - right_edge)
+            x = right_edge + min(_BAR_GAP_PX, margin * 0.6)
+            red, green, blue = _BAR_RGB
+            ops = ["/Artifact BMC", f"q {red} {green} {blue} rg"]
+            for top, bottom in spans:
+                ops.append(
+                    f"{x * scale:.2f} {(page.height - bottom) * scale:.2f} "
+                    f"{_BAR_WIDTH_PX * scale:.2f} {(bottom - top) * scale:.2f} re f"
+                )
+            ops.extend(["Q", "EMC"])  # decoration: an artifact for tagged/accessible PDFs
+            stream = pydyf.Stream([" ".join(ops).encode()])
+            pdf.add_object(stream)
+            page_dict = pdf.objects[number]
+            # Drawn first, in its own q/Q: the page's own stream keeps its graphics state.
+            page_dict["Contents"] = pydyf.Array([stream.reference, page_dict["Contents"]])
 
     return run

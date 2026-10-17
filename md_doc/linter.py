@@ -354,6 +354,39 @@ def _check_layout_blocks(body: str, doc_path: Path, issues: list[LintIssue]) -> 
         issues.append(LintIssue(path=doc_path, message=f"line {line}: {message}", severity="error"))
 
 
+def _check_review_markup(
+    body: str, config: dict[str, Any], doc_path: Path, issues: list[LintIssue]
+) -> None:
+    """CriticMarkup must be well formed, and a final document should have none left."""
+    from .critic import has_markup, problems
+
+    for line, message in problems(body):
+        issues.append(LintIssue(path=doc_path, message=f"line {line}: {message}", severity="error"))
+    if str(config.get("status", "")).strip().lower() == "final" and has_markup(body):
+        issues.append(
+            LintIssue(
+                path=doc_path,
+                message=(
+                    "status is 'final' but the document still has CriticMarkup review marks "
+                    "(resolve them, or build with --review accept/reject)"
+                ),
+                severity="warning",
+            )
+        )
+
+
+def _check_review_markup_outside_code(
+    body: str, config: dict[str, Any], doc_path: Path, issues: list[LintIssue]
+) -> None:
+    from .literal import transform_outside_code
+
+    def check(prose: str) -> str:
+        _check_review_markup(prose, config, doc_path, issues)
+        return prose
+
+    transform_outside_code(body, check)
+
+
 def _check_pdf_assets(
     config: dict[str, Any], doc_path: Path, repo_root: Path, issues: list[LintIssue]
 ) -> None:
@@ -535,6 +568,7 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
     transform_outside_code(body, check_directives)
 
     _check_pdf_assets(config, doc_path, repo_root, issues)
+    _check_review_markup_outside_code(body, config, doc_path, issues)
 
     # ------------------------------------------------------------------
     # 3d. Adjacent tables without a blank line (silently merge into one)

@@ -797,6 +797,133 @@ in config are resolved through the document, ancestors, repo-root cascade instea
 
 ![Example organisation logo](../examples/feature-showcase/logo.png)
 
+<a id="markdown-review-markup"></a>
+
+### Review markup (CriticMarkup)
+
+Reviewers can mark up the Markdown source with [CriticMarkup](https://criticmarkup.com/)
+instead of editing it directly. A build then applies, reverts or shows the marks.
+
+| Mark | Meaning |
+|------|---------|
+| `{++added++}` | Insertion |
+| `{--deleted--}` | Deletion |
+| `{~~old~>new~~}` | Substitution |
+| `{==highlighted==}` | Highlight |
+| `{>>comment<<}` | Comment (usually straight after a highlight) |
+
+```markdown
+The deadline is {~~Friday~>Monday~~}. {==Budget approval==}{>>Is this still current?<<}
+
+- {++A bullet the reviewer wants added++}
+```
+
+`review_markup` (or `md-doc build --review MODE`) chooses what happens:
+
+| Mode | Result |
+|------|--------|
+| `accept` (default) | Every change is applied; highlights keep their text; comments disappear. Clean output never leaks edits. |
+| `reject` | Every change is reverted; highlights keep their text; comments disappear. |
+| `show` | The full markup: every change visible, as below. |
+| `simple` | Word's "simple markup": the final text with changes applied, a change bar beside each changed line, and the highlights and comments kept. |
+| `hybrid` | The final text with a light highlight and a margin bar on every change, and each change written out in full in a review column beside it (what was deleted, what was added), with the comments. In Word it is the same as `show`. |
+
+In `show` mode:
+
+- **PDF** — insertions are green on a green wash and underlined, deletions red on a red wash and
+  struck through, highlights yellow. Comments are not drawn in the document: each is a dark
+  colour-coded tint in the text (a coloured highlight, or a small coloured tick where there is no
+  text to tint) and a matching note, marked with the same colour, in a **review column** in the right margin,
+  level with the line it is about (see below).
+- **Word** (`.docx`) — real tracked changes and comments, attributed to `review_author`, that a
+  reviewer can accept or reject in Word. Inside table cells Word shows the marks as formatting
+  (underline, strike-through, highlight) rather than tracked changes, and cell comments are
+  dropped.
+- **Slides** treat `show`, `simple` and `hybrid` as `accept`.
+
+Marked-up Word files (`show` and `simple`) also start with a one-line key (reviewer, counts, what
+the markup means); `accept` and `reject` files never do.
+
+The markup has its own look, kept apart from the document's: the key, the colour-coded tints and
+swatches and the margin notes use neutral grey type, never the theme's callout boxes, colours
+or rules, so a comment cannot be mistaken for part of the document.
+
+#### The review column (PDF)
+
+In `hybrid` mode the text carries only a light tint and a bar, and the changes live in the review
+column. Every change and comment is colour-coded. Its text is tinted in that colour with a
+matching underline (a highlight, or the changed words), or, where there is no text to tint (a
+deletion, or a stand-alone comment), marked by a small tick of that colour. In the column the
+same colour is a swatch beside its note, written out as `ADDED`, `DELETED` or `CHANGED old → new`.
+There are ten colours, used in document order, so neighbours always differ. A deleted line has no
+text to tint, so its tick sits at the end of the line above.
+
+Notes are grouped into one card per paragraph, list item, heading or table row and sit level with
+the start of that block, so a block's notes are beside it. Where cards would overlap, a stack is
+centred on the lines its notes belong to, so each lands as close to its own text as the space
+allows. In `show` and `simple` modes the column holds only the comments, when there are any.
+
+To make room, the PDF works the way Word's "all markup" view does. The page gets a 72 mm review
+column on its right, the text area stays exactly
+as it was, and the whole PDF is scaled back to the paper size, so the sheet is still A4 (or
+whatever the theme sets) with the document shrunk to about three quarters. Because the text area
+is untouched, every line and page break matches the clean version, so a reviewer can compare the
+two page for page. The key sits at the top of the column, and each comment is placed beside its
+line; where two would collide the later one moves down. A page with more comments than the column
+holds packs them tightly from the top; where a busy paragraph forces its notes down, the colour
+and underline still tie each note to its words. Landscape sections are not given a review column. Note text
+is set large enough to read after the shrink (about the size of the body text).
+
+In Word, comments are Word's own margin comments, so nothing is shrunk by md-doc: Word's review
+pane does that itself.
+
+In `simple` mode the text reads as the finished document, and a red change bar marks every
+changed block in the **right-hand page margin**, in one vertical strip down the page, so the
+bars line up whatever sits beside them (a paragraph, a list item, a heading, a whole callout, or
+a table row). A deleted line leaves no bar, since nothing remains to mark. Highlights and
+comments appear as in `show`.
+
+- **PDF** — each bar is drawn from the laid-out position of the changed block, a fixed distance
+  beyond the text edge; a block split across pages gets a bar on each page. A change inside a
+  callout flags the whole box.
+- **Word** — the bar is a red right-hand border on each changed paragraph, with a gap that puts it
+  in the margin; a shaded callout's shading stretches to meet it. A changed table row gets a red
+  right edge on its last cell, which stays at the table's edge. Highlights are kept and comments
+  are real Word comments; no tracked changes are created.
+
+#### One build, several versions
+
+`review_exports` writes a separate file for each version you name, so a reviewed draft can go
+out as a clean copy, a quick-read copy and a full markup in one command:
+
+```yaml
+review_exports: [clean, simple, hybrid, markup]
+```
+
+| Variant | Mode | File |
+|---------|------|------|
+| `clean` | `accept` | `report-clean.pdf` |
+| `original` | `reject` | `report-original.pdf` |
+| `simple` | `simple` | `report-simple.pdf` |
+| `hybrid` | `hybrid` | `report-hybrid.pdf` |
+| `markup` (or `full`) | `show` | `report-markup.pdf` |
+
+Every format in `outputs` is built for every variant (`report-markup.docx` is the tracked-changes
+Word file), and each file is skipped when it is up to date. `md-doc build --review MODE` builds
+just that one version, ignoring `review_exports`. Slides ignore review marks, so every variant of
+a deck is the same.
+
+```yaml
+review_markup: show          # in a draft's frontmatter
+review_author: Greg Shallard
+```
+
+Marks inside code blocks and inline code stay literal, and a mark may span lines, paragraphs, a
+list item or a table cell; a removed mark that owned its lines takes them with it. `md-doc lint`
+reports a mark that is never closed, and warns when a `status: final` document still has any.
+Going the other way, `md-doc extract` turns Word tracked changes and comments in a `.docx` into
+the same marks, so a reviewed Word file returns to the Markdown source with its edits intact.
+
 <a id="markdown-page-breaks-and-sections"></a>
 
 ### Page breaks and sections
@@ -2029,6 +2156,11 @@ run does not label samples pass or fail; it is a review aid.
 - **`.section-note` and other class-based styles** in a theme are not translated to Word.
 - **Renderer artifacts.** LibreOffice keeps heading space-before at automatic page breaks (Word
   and the PDF drop it); this shows up only when checking with LibreOffice.
+- **Review marks.** `review_markup: show` gives real tracked changes and comments in Word but
+  coloured text and comment footnotes in the PDF; `simple` draws a margin bar in the PDF and a
+  right-hand paragraph border in Word (Word draws its own change bars only for real tracked
+  changes), with table rows marked at the table edge in Word;
+  slides never show them.
 - **PDF-only features.** Bookmarks, PDF/A/UA/X variants, embedded files, numbered headings,
   page-bottom footnotes, `<!-- columns -->` and `<!-- grid -->` blocks, duplex pages, chapter
   breaks, print marks and bleed have no Word equivalent; Word flows the content normally (see
@@ -3274,6 +3406,9 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `image_resolution` | string | — | Intrinsic image resolution, e.g. `150dpi`, `2x` or `from-image`. |
 | `print_marks` | enum | — | Printer's marks: `crop`, `cross` or `crop cross`. |
 | `bleed` | length | — | Bleed beyond the trim edge, e.g. `3mm`. |
+| `review_markup` | enum | `accept` | What a build does with CriticMarkup review marks: `accept` every change, `reject` every change, `show` them (PDF colours and comment footnotes, Word tracked changes and comments), `simple` (final text with change bars, highlights and comments), or `hybrid` (final text with a light highlight and bars, the changes and comments written out in a margin column). |
+| `review_author` | string | `Reviewer` | Author name on Word tracked changes and comments (`show` and `simple` modes). |
+| `review_exports` | list | — | Build several review versions at once, one file each: `clean`, `original`, `simple`, `hybrid`, `markup` (alias `full`). Files get a `-clean`, `-original`, `-simple`, `-hybrid` or `-markup` suffix. |
 | `sync_target` | enum | — | `azure`, `s3` or `local`. |
 | `sync_config` | mapping | — | Backend settings; `${NAME}` is replaced from the environment. |
 | `export` | boolean | `false` | Mark a note for `md-doc export` (inheritable from `_meta.yml`). |
@@ -3352,6 +3487,7 @@ Builds every document under `ROOT` (default: the current directory) to the forma
 | `--no-lint` | Skip the pre-flight lint (to build anyway while iterating). |
 | `--dry-run` | Print what would be built without building. |
 | `--force` | Rebuild everything. By default a document is skipped when its outputs are newer than its source, config, theme, templates and the md-doc code itself. |
+| `--review [accept\|reject\|show\|simple\|hybrid]` | What to do with CriticMarkup review marks for this build, overriding `review_markup` and `review_exports` (see [review markup](#markdown-review-markup)). |
 | `-j, --jobs N` | Build up to N documents in parallel (process pool). Default 1. |
 | `-v, --verbose` | Print full tracebacks on errors. |
 
@@ -3378,7 +3514,8 @@ Checks, without invoking WeasyPrint: frontmatter YAML is valid; `outputs` are re
 formats; Jinja2 syntax is valid; `{{ variables }}` (body and frontmatter strings) exist in the
 config cascade (warning); `{% include %}` targets resolve (error); `[[fields]]` exist in the
 `_merge_fields.yml` cascade (warning, when a schema is present); config keys are known and well
-typed; PDF form fields have valid types and unique names. Exits non-zero on errors; warnings do
+typed; PDF form fields have valid types and unique names; CriticMarkup marks are closed, and a
+`status: final` document has none left (warning). Exits non-zero on errors; warnings do
 not affect the exit code.
 
 | Option | Description |
@@ -3664,6 +3801,10 @@ The `md-doc extract` command converts PDF and DOCX files to Markdown snippets, p
 ```bash
 md-doc extract <FILE> [OPTIONS]
 ```
+
+Word tracked changes and comments in a `.docx` come out as [review markup](#markdown-review-markup)
+(`{++added++}`, `{--deleted--}`, `{~~old~>new~~}`, `{==text==}{>>comment<<}`), so a reviewed
+document keeps its edits.
 
 <a id="extracting-minimal-example"></a>
 

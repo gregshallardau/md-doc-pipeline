@@ -118,6 +118,7 @@ PDF-only extras (each optional; full list in `docs/handbook.md#pdf-features`):
 - **Running text** — `header_text` and `footer_*` accept `{title}`, `{chapter}`, `{section}`, `{page}`, `{pages}` (Word too); `header_layout: running` lays logo and text out in one row
 - **Layout** — `<!-- columns: 2 -->…<!-- /columns -->` and `<!-- grid: 3 -->…<!-- /grid -->` blocks; `duplex`, `binding_margin`, `chapter_break: recto`; `print_marks`, `bleed`
 - **Type and size** — `fonts` (embed brand fonts), `hyphenate`, `tabular_numbers`, `pdf_optimize_images`, `pdf_jpeg_quality`, `pdf_image_dpi`
+- **Review marks** — `{++add++}`, `{--delete--}`, `{~~old~>new~~}`, `{==highlight==}{>>comment<<}` in the source; `review_markup: accept` (default) | `reject` | `show` | `simple` | `hybrid`, `review_exports: [clean, simple, hybrid, markup]` for several versions in one build, or `md-doc build --review show` for a review draft (`docs/handbook.md#markdown-review-markup`). Resolve them before marking a document `status: final`
 - **Checks** — `pdf_layout_check: true` warns about stranded headings, content past the margin and blank pages
 
 Values already set in a parent `_meta.yml` don't need to be repeated here. Only set what's different or new for this specific document.
