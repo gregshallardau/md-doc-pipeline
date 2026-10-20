@@ -570,11 +570,10 @@ def install_studio(app, workspace, build_root, builds, write_lock):
             # Rewrite snapshot paths to the real inherited project paths for display.
             from md_doc.config import _find_repo_root
 
-            inspector = json.loads(
-                json.dumps(inspector).replace(
-                    str(directory / "project"), str(_find_repo_root(workspace))
-                )
-            )
+            # Compare JSON-escaped paths: json.dumps doubles Windows backslashes.
+            snapshot_root = json.dumps(str(directory / "project"))[1:-1]
+            real_root = json.dumps(str(_find_repo_root(workspace)))[1:-1]
+            inspector = json.loads(json.dumps(inspector).replace(snapshot_root, real_root))
         except (ValueError, OSError, yaml.YAMLError) as exc:
             shutil.rmtree(directory, ignore_errors=True)
             raise HTTPException(422, str(exc)) from exc
