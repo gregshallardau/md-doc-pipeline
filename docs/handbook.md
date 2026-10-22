@@ -911,6 +911,17 @@ which installs `cairosvg`; without it the code block stays as text).
 | Class (UML) | `classDiagram` |
 | User journey | `journey` |
 | Git graph | `gitGraph` |
+| Quadrant chart | `quadrantChart` |
+| Sankey | `sankey`, `sankey-beta` |
+| Radar | `radar-beta` |
+| Treemap | `treemap-beta` |
+| Packet | `packet`, `packet-beta` |
+| Block | `block`, `block-beta` |
+| Kanban | `kanban` |
+| Architecture | `architecture-beta` |
+| C4 | `C4Context`, `C4Container`, `C4Component`, `C4Dynamic`, `C4Deployment` |
+| Requirement | `requirementDiagram` |
+| ZenUML | `zenuml` |
 
 ````markdown
 ```mermaid
@@ -989,6 +1000,17 @@ read as a set:
 | Class | `class X { ... }` bodies or `X : +member`, visibility `+ - # ~`, static `$` (underlined), abstract `*` (italic), generics `List~int~`, `<<interface>>` and other stereotypes, `direction`, `namespace`, `note for X "..."`, relationships `<\|--` `*--` `o--` `-->` `--` `..>` `..\|>` `..` (either way round) with cardinalities `"1" --> "*"` and `: labels` |
 | User journey | `title`, `section`, `Task: score: Actor, Actor` (score 1-5 drawn as a satisfaction curve in good-to-bad status colours, actors as dots with a legend) |
 | Git graph | `commit` (`id`, `tag`, `type: HIGHLIGHT \| REVERSE`, `msg`), `branch` (`order`), `checkout` / `switch`, `merge` (`id`, `tag`), `cherry-pick id: "..."`, `gitGraph TB:` for a vertical graph |
+| Quadrant | `title`, `x-axis Low --> High`, `y-axis`, `quadrant-1`..`4`, points `Name: [x, y]` with `radius`, `color`, `stroke-color`, `stroke-width` or `:::class` + `classDef`; labels move to stay clear of each other |
+| Sankey | CSV rows `source,target,value` (quote names containing commas); config `sankey`: `showValues`, `nodeAlignment`, `linkColor` (`source`, `target` or a hex colour), `nodeWidth`, `nodePadding`, `nodeColors` |
+| Radar | `title`, `axis id["Label"], ...`, `curve id["Label"]{1, 2, 3}` or `{axis: value, ...}`, `max`, `min`, `ticks`, `graticule circle \| polygon`, `showLegend` |
+| Treemap | quoted section names and `"Leaf": value` lines, nested by indentation; config `treemap.valueFormat` (`,`, `$`, `$,.2f`, `.1%`) |
+| Packet | `start-end: "Field"`, `bit: "Flag"`, `+bits: "Field"`, `title`; config `packet`: `bitsPerRow`, `showBits`, `bitOrder: descending` |
+| Block | `columns N`, `id:span`, `space` / `space:N`, flowchart node shapes, nested `block:id:span ... end`, block arrows `id<["label"]>(right \| left \| up \| down \| x \| y)`, edges with labels, `style`, `classDef`, `class` |
+| Kanban | columns `id[Title]` (or bare titles), indented tasks `id[Text]@{ ticket: ..., assigned: ..., priority: 'Very High' \| 'High' \| 'Low' \| 'Very Low' }` |
+| Architecture | `group id(icon)[Title] in parent`, `service id(icon)[Title] in group`, `junction id`, edges `a:R --> L:b` (sides `L R T B`, `<`/`>` arrows, `{group}`), `align row \| column`; icons `cloud`, `database`, `disk`, `internet`, `server` (other icon names show a generic tile) |
+| C4 | `Person`, `System`, `Container`, `Component` with `Db` / `Queue` / `_Ext` variants, `Boundary`, `Enterprise_Boundary`, `System_Boundary`, `Container_Boundary`, `Deployment_Node` / `Node` blocks, `Rel`, `BiRel`, `Rel_U/D/L/R`, `Rel_Back`, `RelIndex`, `$named` arguments, `UpdateLayoutConfig($c4ShapeInRow, $c4BoundaryInRow)`; colours follow the C4 roles in your brand primary, grey for external |
+| Requirement | `requirement`, `functionalRequirement`, `interfaceRequirement`, `performanceRequirement`, `physicalRequirement`, `designConstraint` and `element` blocks; `a - satisfies -> b` and `b <- satisfies - a` with `contains`, `copies`, `derives`, `satisfies`, `verifies`, `refines`, `traces` |
+| ZenUML | drawn as a sequence diagram: `@Actor` / `@Database` annotators, `A as Alice`, `A->B: msg`, sync calls `A.method(args) { ... }`, `x = A.method()`, `return`, `@return`, `new A()`, `if` / `else if` / `else`, `while` / `for` / `loop`, `opt`, `par`, `try` / `catch` / `finally` |
 
 **Themes, dark mode and titles.** A diagram can carry Mermaid's own configuration, either as
 `%%{init: {...}}%%` or as a front-matter `config:` block:
@@ -1016,9 +1038,10 @@ flowchart LR
   `primaryTextColor` / `textColor`, `lineColor`, `fontFamily`, `background` and `darkMode`.
 - A front-matter `title` is drawn above any diagram.
 
-Diagram types that have no renderer here (`quadrantChart`, `sankey`, `block`, `packet`,
-`kanban`, `architecture`, `requirementDiagram`, `C4*`, `zenuml`, `radar`, `treemap`) are left as
-an ordinary code block, with a warning in the build log, rather than drawn incorrectly.
+Every Mermaid diagram type documented up to the 11.x releases is drawn. The newest additions
+(`venn`, `wardley`, `ishikawa`, `cynefin`, `usecase`, `swimlanes`, `treeView`, `railroad`,
+`eventmodeling`, `agentflow`) are left as an ordinary code block, with a warning in the build
+log, rather than drawn incorrectly.
 
 <a id="markdown-values-and-placeholders"></a>
 

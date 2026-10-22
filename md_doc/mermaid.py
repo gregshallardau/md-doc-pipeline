@@ -330,6 +330,165 @@ class GitGraph:
     direction: str = "LR"
 
 
+@dataclass
+class QuadrantChart:
+    title: str = ""
+    x_low: str = ""
+    x_high: str = ""
+    y_low: str = ""
+    y_high: str = ""
+    quadrants: list[str] = field(default_factory=lambda: ["", "", "", ""])
+    points: list[tuple[str, float, float, dict[str, str], str]] = field(default_factory=list)
+
+
+@dataclass
+class Sankey:
+    links: list[tuple[str, str, float]] = field(default_factory=list)
+
+
+@dataclass
+class Radar:
+    title: str = ""
+    axes: list[tuple[str, str]] = field(default_factory=list)  # (id, label)
+    curves: list[tuple[str, list[float]]] = field(default_factory=list)  # (label, values)
+    max_val: float | None = None
+    min_val: float = 0.0
+    ticks: int = 5
+    graticule: str = "circle"
+    show_legend: bool = True
+
+
+@dataclass
+class TreeItem:
+    name: str
+    value: float | None = None
+    children: list["TreeItem"] = field(default_factory=list)
+
+
+@dataclass
+class Packet:
+    title: str = ""
+    fields: list[tuple[int, int, str]] = field(default_factory=list)  # (start, end, label)
+
+
+@dataclass
+class BlockItem:
+    id: str
+    label: str = ""
+    kind: str = "node"  # node | space | arrow | group
+    span: int = 1
+    shape: str = "rect"
+    children: list["BlockItem"] = field(default_factory=list)
+    columns: int = 0  # 0 = one row (auto)
+    arrow: list[str] = field(default_factory=list)  # block-arrow directions
+    classes: list[str] = field(default_factory=list)
+    css: dict[str, str] = field(default_factory=dict)
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 0.0
+    h: float = 0.0
+
+
+@dataclass
+class BlockDiagram:
+    root: BlockItem = field(default_factory=lambda: BlockItem("", kind="group"))
+    edges: list[tuple[str, str, str, str]] = field(default_factory=list)  # src, dst, label, head
+
+
+@dataclass
+class KanbanItem:
+    text: str
+    meta: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class KanbanColumn:
+    title: str
+    items: list[KanbanItem] = field(default_factory=list)
+
+
+@dataclass
+class ArchItem:
+    id: str
+    label: str = ""
+    icon: str = ""
+    parent: str = ""
+    junction: bool = False
+
+
+@dataclass
+class ArchEdge:
+    a: str
+    side_a: str
+    b: str
+    side_b: str
+    arrow_a: bool = False
+    arrow_b: bool = False
+
+
+@dataclass
+class Architecture:
+    groups: dict[str, ArchItem] = field(default_factory=dict)
+    services: dict[str, ArchItem] = field(default_factory=dict)
+    edges: list[ArchEdge] = field(default_factory=list)
+    aligns: list[tuple[str, list[str]]] = field(default_factory=list)
+
+
+@dataclass
+class C4Element:
+    alias: str
+    label: str
+    level: str  # person | system | container | component
+    ext: bool = False
+    shape: str = "box"  # box | db | queue
+    techn: str = ""
+    descr: str = ""
+
+
+@dataclass
+class C4Boundary:
+    alias: str
+    label: str
+    type: str = ""
+    kind: str = "boundary"  # boundary | deployment
+    elements: list[C4Element] = field(default_factory=list)
+    boundaries: list["C4Boundary"] = field(default_factory=list)
+
+
+@dataclass
+class C4Rel:
+    src: str
+    dst: str
+    label: str = ""
+    techn: str = ""
+    bi: bool = False
+
+
+@dataclass
+class C4Diagram:
+    kind: str = "C4Context"
+    title: str = ""
+    root: C4Boundary = field(default_factory=lambda: C4Boundary("", ""))
+    elements: dict[str, C4Element] = field(default_factory=dict)
+    rels: list[C4Rel] = field(default_factory=list)
+    shape_in_row: int = 4
+    boundary_in_row: int = 2
+
+
+@dataclass
+class ReqNode:
+    name: str
+    kind: str  # display type, e.g. "Functional Requirement" or "Element"
+    fields: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class RequirementDiagram:
+    nodes: dict[str, ReqNode] = field(default_factory=dict)
+    relations: list[tuple[str, str, str]] = field(default_factory=list)  # src, dst, type
+    direction: str = "TD"
+
+
 # ---------------------------------------------------------------------------
 # Default theme (matches _pdf-theme.css palette)
 # ---------------------------------------------------------------------------
@@ -403,10 +562,17 @@ _DARK_SURFACE = "#0d1117"
 
 _ACTIVE_FONT: ContextVar[str] = ContextVar("mermaid_font", default="")
 _ACTIVE_SURFACE: ContextVar[str] = ContextVar("mermaid_surface", default="")
+_ACTIVE_CONFIG: ContextVar[dict] = ContextVar("mermaid_config", default={})  # noqa: B039
 _REGISTERED_FONTS: dict[str, dict[int, Path]] = {}  # family (lower) -> weight -> file
 _FONT_FILE_CACHE: dict[tuple[str, int], Path | None] = {}
 _METRICS_CACHE: dict[Path, "_FontMetrics | None"] = {}
 _FC_ADDED: set[Path] = set()
+_FONT_GENERATION = [0]  # bumped whenever a new font file is registered
+
+
+def font_generation() -> int:
+    """Changes whenever :func:`register_fonts` adds a font (rasterisers drop caches then)."""
+    return _FONT_GENERATION[0]
 
 
 class _FontMetrics:
@@ -450,6 +616,7 @@ def register_fonts(faces: Iterable[tuple[str, str | Path, object]]) -> None:
         _REGISTERED_FONTS.setdefault(family.strip().lower(), {})[_weight_num(weight)] = file
         if file not in _FC_ADDED:
             _FC_ADDED.add(file)
+            _FONT_GENERATION[0] += 1
             try:
                 lib = ctypes.util.find_library("fontconfig")
                 if lib:
@@ -4590,6 +4757,2008 @@ def render_git_svg(gg: GitGraph, theme: dict[str, str] | None = None) -> str:
     return _svg_root(major_end + 30, minor_end, parts, t["font"])
 
 
+def _config_section(name: str) -> dict:
+    """The ``config.<name>`` block of the diagram being rendered (empty if none)."""
+    section = _ACTIVE_CONFIG.get().get(name)
+    return section if isinstance(section, dict) else {}
+
+
+def _unquote(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Quadrant chart
+# ---------------------------------------------------------------------------
+
+
+def parse_quadrant(source: str) -> QuadrantChart:
+    """Parse a Mermaid quadrantChart."""
+    qc = QuadrantChart()
+    classes: dict[str, dict[str, str]] = {}
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^quadrantChart\b", line, re.I):
+            continue
+        m = re.match(r"^title\s+(.+)$", line, re.I)
+        if m:
+            qc.title = _unquote(m.group(1))
+            continue
+        m = re.match(r"^([xy])-axis\s+(.+?)(?:\s*-->\s*(.+))?$", line, re.I)
+        if m:
+            low, high = _unquote(m.group(2)), _unquote(m.group(3) or "")
+            if m.group(1).lower() == "x":
+                qc.x_low, qc.x_high = low, high
+            else:
+                qc.y_low, qc.y_high = low, high
+            continue
+        m = re.match(r"^quadrant-([1-4])\s+(.+)$", line, re.I)
+        if m:
+            qc.quadrants[int(m.group(1)) - 1] = _unquote(m.group(2))
+            continue
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            classes[m.group(1)] = _parse_css(m.group(2).replace(" :", ":"))
+            continue
+        m = re.match(
+            r"^(.+?)(?::::(\w+))?\s*:\s*\[\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\]\s*(.*)$", line
+        )
+        if m:
+            style = dict(classes.get(m.group(2) or "", {}))
+            style.update(_parse_css(m.group(5)))
+            qc.points.append(
+                (
+                    _unquote(m.group(1)),
+                    float(m.group(3)),
+                    float(m.group(4)),
+                    style,
+                    m.group(2) or "",
+                )
+            )
+    # classDefs may follow the points that use them
+    qc.points = [
+        (name, x, y, {**classes.get(cls, {}), **style} if cls else style, cls)
+        for name, x, y, style, cls in qc.points
+    ]
+    return qc
+
+
+def render_quadrant_svg(qc: QuadrantChart, theme: dict[str, str] | None = None) -> str:
+    """Render a quadrant chart: four tinted quadrants, axis labels and labelled points."""
+    t = _tokens(theme)
+    conf = _config_section("quadrantChart")
+    parts, top = _chart_title(qc.title, t)
+    size_w = float(conf.get("chartWidth", 380))
+    size_h = float(conf.get("chartHeight", 380))
+    axis_pad = 26.0
+    x0, y0 = axis_pad, top + 4
+    hw, hh = size_w / 2, size_h / 2
+    tints = [
+        _tint(t["primary"], 0.8, t),  # 1: top right
+        _tint(t["primary"], 0.89, t),  # 2: top left
+        _tint(t["primary"], 0.95, t),  # 3: bottom left
+        _tint(t["primary"], 0.89, t),  # 4: bottom right
+    ]
+    boxes = [(x0 + hw, y0), (x0, y0), (x0, y0 + hh), (x0 + hw, y0 + hh)]
+    for (bx, by), fill in zip(boxes, tints):
+        parts.append(f'<rect x="{bx:g}" y="{by:g}" width="{hw:g}" height="{hh:g}" fill="{fill}"/>')
+    # Surface gap between the quadrants
+    parts.append(
+        f'<path d="M {x0 + hw:g},{y0:g} V {y0 + size_h:g} M {x0:g},{y0 + hh:g} H {x0 + size_w:g}" '
+        f'stroke="{t["surface"]}" stroke-width="2"/>'
+    )
+    for (bx, by), text in zip(boxes, qc.quadrants):
+        if text:
+            parts.append(_svg_text(bx + hw / 2, by + 20, text, t, _FS, t["ink2"], 600, "middle"))
+
+    # Axis labels: x under each half, y beside each half (rotated)
+    for text, cx in ((qc.x_low, x0 + hw / 2), (qc.x_high, x0 + hw * 1.5)):
+        if text:
+            parts.append(
+                _svg_text(cx, y0 + size_h + 18, text, t, _FS_SM, t["ink2"], anchor="middle")
+            )
+    for text, cy in ((qc.y_low, y0 + hh * 1.5), (qc.y_high, y0 + hh / 2)):
+        if text:
+            parts.append(
+                _svg_text(
+                    0,
+                    0,
+                    text,
+                    t,
+                    _FS_SM,
+                    t["ink2"],
+                    anchor="middle",
+                    extra=f' transform="translate({axis_pad - 10:g},{cy:g}) rotate(-90)"',
+                )
+            )
+
+    placed: list[tuple[float, float, float, float]] = []
+
+    def clear(box: tuple[float, float, float, float]) -> bool:
+        bx0, by0, bx1, by1 = box
+        inside = bx0 >= x0 and bx1 <= x0 + size_w and by0 >= y0 and by1 <= y0 + size_h
+        return inside and all(
+            bx1 <= c0 or bx0 >= c1 or by1 <= d0 or by0 >= d1 for c0, d0, c1, d1 in placed
+        )
+
+    marks = []
+    for name, px, py, style, _cls in qc.points:
+        cx = x0 + max(0.0, min(1.0, px)) * size_w
+        cy = y0 + (1 - max(0.0, min(1.0, py))) * size_h
+        r = float(re.sub(r"[^\d.]", "", str(style.get("radius", "5"))) or 5)
+        marks.append((name, cx, cy, r, style))
+        placed.append((cx - r, cy - r, cx + r, cy + r))  # labels avoid every dot
+    for name, cx, cy, r, style in marks:
+        fill = style.get("color", t["term_fill"])
+        if fill and not fill.startswith("#") and re.fullmatch(r"[0-9a-fA-F]{6}", fill):
+            fill = "#" + fill
+        ring = style.get("stroke-color", t["surface"])
+        ring_w = re.sub(r"[^\d.]", "", str(style.get("stroke-width", "2"))) or "2"
+        parts.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:g}" fill="{fill}" stroke="{ring}" '
+            f'stroke-width="{ring_w}"/>'
+        )
+        w = _text_w(name, 11)
+        candidates = [
+            (cx + r + 5, cy + 4, "start", (cx + r + 3, cy - 8, cx + r + 7 + w, cy + 6)),
+            (cx - r - 5, cy + 4, "end", (cx - r - 7 - w, cy - 8, cx - r - 3, cy + 6)),
+            (cx, cy - r - 6, "middle", (cx - w / 2 - 2, cy - r - 18, cx + w / 2 + 2, cy - r - 3)),
+            (cx, cy + r + 14, "middle", (cx - w / 2 - 2, cy + r + 2, cx + w / 2 + 2, cy + r + 17)),
+        ]
+        choice = next((c for c in candidates if clear(c[3])), candidates[0])
+        placed.append(choice[3])
+        parts.append(_svg_text(choice[0], choice[1], name, t, 11, t["ink"], anchor=choice[2]))
+    return _svg_root(x0 + size_w + 6, y0 + size_h + 28, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Sankey
+# ---------------------------------------------------------------------------
+
+
+def parse_sankey(source: str) -> Sankey:
+    """Parse ``sankey`` CSV rows (source,target,value; RFC 4180 quoting)."""
+    import csv
+
+    sk = Sankey()
+    rows = [
+        line
+        for line in source.strip().splitlines()
+        if line.strip()
+        and not line.strip().startswith("%%")
+        and not re.match(r"^\s*sankey(-beta)?\s*$", line, re.I)
+    ]
+    for rec in csv.reader(rows):
+        if len(rec) < 3:
+            continue
+        try:
+            value = float(rec[2])
+        except ValueError:
+            continue
+        sk.links.append((rec[0].strip(), rec[1].strip(), value))
+    return sk
+
+
+def render_sankey_svg(sk: Sankey, theme: dict[str, str] | None = None) -> str:
+    """Render a sankey: proportional nodes in columns joined by flow bands."""
+    t = _tokens(theme)
+    conf = _config_section("sankey")
+    if not sk.links:
+        return _svg_root(120, 40, _svg_text(0, 20, "No flows", t, color=t["ink2"]), t["font"])
+    nodes: list[str] = []
+    for a, b, _ in sk.links:
+        for n in (a, b):
+            if n not in nodes:
+                nodes.append(n)
+    outs: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    ins: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for a, b, v in sk.links:
+        outs[a].append((b, v))
+        ins[b].append((a, v))
+    # Columns by longest path from a source
+    layer: dict[str, int] = {n: 0 for n in nodes}
+    for _ in range(len(nodes)):
+        changed = False
+        for a, b, _v in sk.links:
+            if layer[b] < layer[a] + 1:
+                layer[b] = layer[a] + 1
+                changed = True
+        if not changed:
+            break
+    last = max(layer.values())
+    align = str(conf.get("nodeAlignment", "justify"))
+    if align in ("justify", "right"):
+        for n in nodes:
+            if not outs[n]:
+                layer[n] = last  # sinks line up on the right
+    value = {n: max(sum(v for _, v in outs[n]), sum(v for _, v in ins[n])) for n in nodes}
+    columns: dict[int, list[str]] = defaultdict(list)
+    for n in nodes:
+        columns[layer[n]].append(n)
+
+    node_w = float(conf.get("nodeWidth", 10))
+    pad = float(conf.get("nodePadding", 12))
+    height = 340.0
+    show_values = conf.get("showValues", True) is not False
+    ky = min(
+        (height - pad * (len(col) - 1)) / max(sum(value[n] for n in col), 1e-9)
+        for col in columns.values()
+    )
+    label_w = max(_text_w(n, 11.5) for n in nodes) + 12
+    col_gap = max(110.0, min(220.0, (600 - label_w) / max(last, 1)))
+    x_of = {c: c * col_gap for c in columns}
+
+    pos: dict[str, list[float]] = {}  # node -> [x, y, h]
+    for c in sorted(columns):
+        col = columns[c]
+        if c > 0:  # order by the weighted centre of incoming flows
+
+            def centre(n: str) -> float:
+                srcs = [(pos[a][1] + pos[a][2] / 2, v) for a, v in ins[n] if a in pos]
+                return (
+                    sum(y * v for y, v in srcs) / max(sum(v for _, v in srcs), 1e-9)
+                    if srcs
+                    else 0.0
+                )
+
+            col.sort(key=centre)
+        total = sum(value[n] * ky for n in col) + pad * (len(col) - 1)
+        y = (height - total) / 2
+        for n in col:
+            h = max(value[n] * ky, 2.0)
+            pos[n] = [x_of[c], y, h]
+            y += h + pad
+
+    palette = _palette(t)
+    node_colors = conf.get("nodeColors")
+    custom: dict = node_colors if isinstance(node_colors, dict) else {}
+    color = {n: str(custom.get(n) or palette[i % len(palette)]) for i, n in enumerate(nodes)}
+    link_mode = str(conf.get("linkColor", "source"))
+
+    parts: list[str] = []
+    out_off = {n: 0.0 for n in nodes}
+    in_off = {n: 0.0 for n in nodes}
+    order = sorted(sk.links, key=lambda link: (pos[link[0]][1], pos[link[1]][1]))
+    for a, b, v in order:
+        w = v * ky
+        x0 = pos[a][0] + node_w
+        x1 = pos[b][0]
+        y0 = pos[a][1] + out_off[a]
+        y1 = pos[b][1] + in_off[b]
+        out_off[a] += w
+        in_off[b] += w
+        xm = (x0 + x1) / 2
+        fill = (
+            color[b]
+            if link_mode == "target"
+            else link_mode if link_mode.startswith("#") else color[a]
+        )
+        parts.append(
+            f'<path d="M {x0:.1f},{y0:.1f} C {xm:.1f},{y0:.1f} {xm:.1f},{y1:.1f} {x1:.1f},{y1:.1f} '
+            f'L {x1:.1f},{y1 + w:.1f} C {xm:.1f},{y1 + w:.1f} {xm:.1f},{y0 + w:.1f} {x0:.1f},{y0 + w:.1f} Z" '
+            f'fill="{fill}" fill-opacity="0.32"/>'
+        )
+    for n in nodes:
+        x, y, h = pos[n]
+        parts.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{node_w:g}" height="{h:.1f}" rx="2" fill="{color[n]}"/>'
+        )
+        on_right = layer[n] < last
+        tx = x + node_w + 6 if on_right else x - 6
+        anchor = "start" if on_right else "end"
+        parts.append(
+            _svg_text(tx, y + h / 2 + (0 if show_values else 4), n, t, 11.5, anchor=anchor)
+        )
+        if show_values:
+            parts.append(
+                _svg_text(
+                    tx, y + h / 2 + 13, _fmt_num(value[n]), t, _FS_SM, t["ink2"], anchor=anchor
+                )
+            )
+    # Labels sit right of their node, except the last column's, which sit to its left
+    width = x_of[last] + node_w
+    for n in nodes:
+        if layer[n] < last:
+            width = max(width, pos[n][0] + node_w + 6 + _text_w(n, 11.5))
+    return _svg_root(width + 6, height + 8, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Radar
+# ---------------------------------------------------------------------------
+
+
+def _ids_with_labels(text: str) -> list[tuple[str, str]]:
+    return [
+        (m.group(1), m.group(2) or m.group(1))
+        for m in re.finditer(r'(\w+)(?:\s*\[\s*"([^"]*)"\s*\])?', text)
+    ]
+
+
+def parse_radar(source: str) -> Radar:
+    """Parse a Mermaid radar-beta chart."""
+    rd = Radar()
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^radar(-beta)?\s*$", line, re.I):
+            continue
+        m = re.match(r"^title\s+(.+)$", line, re.I)
+        if m:
+            rd.title = _unquote(m.group(1))
+            continue
+        m = re.match(r"^axis\s+(.+)$", line, re.I)
+        if m:
+            rd.axes += _ids_with_labels(m.group(1))
+            continue
+        m = re.match(r"^curve\s+(.+)$", line, re.I)
+        if m:
+            for cm in re.finditer(r'(\w+)(?:\s*\[\s*"([^"]*)"\s*\])?\s*\{([^}]*)\}', m.group(1)):
+                body = cm.group(3)
+                if ":" in body:
+                    pairs = dict(
+                        (k.strip(), float(v))
+                        for k, v in (p.split(":", 1) for p in body.split(",") if ":" in p)
+                    )
+                    values = [pairs.get(aid, 0.0) for aid, _ in rd.axes]
+                else:
+                    values = [float(v) for v in body.split(",") if v.strip()]
+                rd.curves.append((cm.group(2) or cm.group(1), values))
+            continue
+        m = re.match(r"^(max|min|ticks)\s+(-?[\d.]+)$", line, re.I)
+        if m:
+            key, num = m.group(1).lower(), float(m.group(2))
+            if key == "max":
+                rd.max_val = num
+            elif key == "min":
+                rd.min_val = num
+            else:
+                rd.ticks = max(1, int(num))
+            continue
+        m = re.match(r"^graticule\s+(circle|polygon)$", line, re.I)
+        if m:
+            rd.graticule = m.group(1).lower()
+            continue
+        m = re.match(r"^showLegend\s+(true|false)$", line, re.I)
+        if m:
+            rd.show_legend = m.group(1).lower() == "true"
+    return rd
+
+
+def render_radar_svg(rd: Radar, theme: dict[str, str] | None = None) -> str:
+    """Render a radar chart: graticule, axes, translucent curves and a legend."""
+    t = _tokens(theme)
+    n = len(rd.axes)
+    if n < 3 or not rd.curves:
+        return _svg_root(
+            160, 40, _svg_text(0, 20, "Needs 3+ axes and a curve", t, color=t["ink2"]), t["font"]
+        )
+    parts, top = _chart_title(rd.title, t)
+    hi = rd.max_val if rd.max_val is not None else max(max(v) for _, v in rd.curves if v)
+    lo = rd.min_val
+    r = 120.0
+    label_w = max(_text_w(lbl, 11.5) for _, lbl in rd.axes)
+    cx, cy = r + label_w + 14, top + r + 22
+
+    def point(i: int, value: float) -> tuple[float, float]:
+        a = -math.pi / 2 + 2 * math.pi * i / n
+        f = (value - lo) / ((hi - lo) or 1)
+        return cx + r * f * math.cos(a), cy + r * f * math.sin(a)
+
+    for k in range(1, rd.ticks + 1):
+        level = lo + (hi - lo) * k / rd.ticks
+        if rd.graticule == "circle":
+            parts.append(
+                f'<circle cx="{cx:g}" cy="{cy:g}" r="{r * k / rd.ticks:.1f}" fill="none" '
+                f'stroke="{t["grid"]}" stroke-width="1"/>'
+            )
+        else:
+            ring = " ".join(f"{x:.1f},{y:.1f}" for x, y in (point(i, level) for i in range(n)))
+            parts.append(
+                f'<polygon points="{ring}" fill="none" stroke="{t["grid"]}" stroke-width="1"/>'
+            )
+        tx, ty = point(0, level)
+        parts.append(_svg_text(tx + 4, ty + 3, _fmt_num(level), t, 9, t["chrome"]))
+    for i, (_aid, label) in enumerate(rd.axes):
+        ex, ey = point(i, hi)
+        parts.append(
+            f'<line x1="{cx:g}" y1="{cy:g}" x2="{ex:.1f}" y2="{ey:.1f}" stroke="{t["grid"]}" stroke-width="1"/>'
+        )
+        lx, ly = point(i, hi + (hi - lo) * 0.1)
+        anchor = "middle" if abs(lx - cx) < 4 else "start" if lx > cx else "end"
+        parts.append(_svg_text(lx, ly + 4, label, t, 11.5, t["ink2"], anchor=anchor))
+    palette = _palette(t)
+    for k, (_label, values) in enumerate(rd.curves):
+        color = palette[k % len(palette)]
+        pts = [point(i, values[i] if i < len(values) else lo) for i in range(n)]
+        poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+        parts.append(
+            f'<polygon points="{poly}" fill="{color}" fill-opacity="0.12" stroke="{color}" '
+            f'stroke-width="2" stroke-linejoin="round"/>'
+        )
+        for x, y in pts:
+            parts.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{color}" stroke="{t["surface"]}" stroke-width="1.5"/>'
+            )
+    width = cx + r + label_w + 14
+    height = cy + r + 26
+    if rd.show_legend and len(rd.curves) > 1:
+        lx, ly = 0.0, height + 4
+        for k, (label, _v) in enumerate(rd.curves):
+            color = palette[k % len(palette)]
+            parts.append(
+                f'<rect x="{lx:g}" y="{ly - 9:g}" width="10" height="10" rx="2.5" fill="{color}"/>'
+            )
+            parts.append(_svg_text(lx + 16, ly, label, t, _FS_SM, t["ink2"]))
+            lx += 16 + _text_w(label, _FS_SM) + 18
+        height += 22
+    return _svg_root(width, height, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Treemap
+# ---------------------------------------------------------------------------
+
+
+def parse_treemap(source: str) -> TreeItem:
+    """Parse a treemap-beta hierarchy (indentation; leaves carry ``: value``)."""
+    root = TreeItem("")
+    stack: list[tuple[int, TreeItem]] = [(-1, root)]
+    for raw_line in source.splitlines():
+        if not raw_line.strip() or raw_line.strip().startswith("%%"):
+            continue
+        stripped = raw_line.strip()
+        if re.match(r"^treemap(-beta)?\s*$", stripped, re.I) or stripped.startswith("classDef "):
+            continue
+        indent = len(raw_line.expandtabs(4)) - len(raw_line.expandtabs(4).lstrip())
+        m = re.match(r'^"([^"]*)"(?::::\w+)?\s*(?::\s*(-?[\d.]+))?(?::::\w+)?\s*$', stripped)
+        if not m:
+            continue
+        item = TreeItem(m.group(1), float(m.group(2)) if m.group(2) else None)
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack[-1][1].children.append(item)
+        stack.append((indent, item))
+    return root
+
+
+def _tree_total(item: TreeItem) -> float:
+    if item.children:
+        return sum(_tree_total(c) for c in item.children)
+    return max(item.value or 0.0, 0.0)
+
+
+def _squarify(
+    values: list[float], x: float, y: float, w: float, h: float
+) -> list[tuple[float, float, float, float]]:
+    """Squarified treemap layout of ``values`` (already sorted descending) in a rectangle."""
+    rects: list[tuple[float, float, float, float]] = []
+    total = sum(values)
+    if total <= 0 or w <= 0 or h <= 0:
+        return [(x, y, 0.0, 0.0) for _ in values]
+    scale = w * h / total
+    areas = [v * scale for v in values]
+
+    def worst(row: list[float], side: float) -> float:
+        s = sum(row)
+        return (
+            max(max(side * side * a / (s * s), (s * s) / (side * side * a)) for a in row)
+            if s
+            else 1e9
+        )
+
+    i = 0
+    while i < len(areas):
+        side = min(w, h)
+        row = [areas[i]]
+        i += 1
+        while i < len(areas) and worst(row + [areas[i]], side) <= worst(row, side):
+            row.append(areas[i])
+            i += 1
+        s = sum(row)
+        if w >= h:  # lay the row as a column on the left
+            cw = s / h
+            yy = y
+            for a in row:
+                rects.append((x, yy, cw, a / cw))
+                yy += a / cw
+            x, w = x + cw, w - cw
+        else:
+            rh = s / w
+            xx = x
+            for a in row:
+                rects.append((xx, y, a / rh, rh))
+                xx += a / rh
+            y, h = y + rh, h - rh
+    return rects
+
+
+def render_treemap_svg(root: TreeItem, theme: dict[str, str] | None = None) -> str:
+    """Render a squarified treemap: groups by colour, leaves sized by value."""
+    t = _tokens(theme)
+    conf = _config_section("treemap")
+    if not root.children or _tree_total(root) <= 0:
+        return _svg_root(120, 40, _svg_text(0, 20, "No values", t, color=t["ink2"]), t["font"])
+    width, height = 600.0, 360.0
+    palette = _palette(t)
+    fmt = str(conf.get("valueFormat", ","))
+    parts: list[str] = []
+
+    def fmt_value(v: float) -> str:
+        if "%" in fmt:
+            return f"{v * 100:.1f}%" if ".1" in fmt else f"{v * 100:.0f}%"
+        prefix = "$" if "$" in fmt else ""
+        if ".2f" in fmt:
+            return f"{prefix}{v:,.2f}"
+        return f"{prefix}{v:,.0f}" if float(v).is_integer() or "," in fmt else f"{prefix}{v:g}"
+
+    def draw(
+        items: list[TreeItem], x: float, y: float, w: float, h: float, depth: int, color: str | None
+    ) -> None:
+        items = sorted((it for it in items if _tree_total(it) > 0), key=_tree_total, reverse=True)
+        rects = _squarify([_tree_total(it) for it in items], x, y, w, h)
+        for k, (item, (rx, ry, rw, rh)) in enumerate(zip(items, rects)):
+            base = color or palette[k % len(palette)]
+            gap = 1.5
+            bx, by, bw, bh = rx + gap, ry + gap, max(rw - 2 * gap, 0), max(rh - 2 * gap, 0)
+            if item.children:
+                head = 20.0 if bh > 34 else 0.0
+                parts.append(
+                    f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="4" '
+                    f'fill="{_tint(base, 0.86 if depth == 0 else 0.78, t)}"/>'
+                )
+                if head and bw > _text_w(item.name, 11, 600) + 12:
+                    parts.append(_svg_text(bx + 7, by + 14, item.name, t, 11, t["ink"], 600))
+                draw(item.children, bx + 3, by + head + 1, bw - 6, bh - head - 4, depth + 1, base)
+            else:
+                fill = _tint(base, 0.55 if depth == 0 else 0.62, t)
+                parts.append(
+                    f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="3" fill="{fill}"/>'
+                )
+                ink = _text_on(fill, t)
+                name_fits = bw > _text_w(item.name, 11) + 12 and bh > 20
+                if name_fits:
+                    parts.append(_svg_text(bx + 7, by + 16, item.name, t, 11, ink, 600))
+                    if bh > 36:
+                        parts.append(
+                            _svg_text(bx + 7, by + 31, fmt_value(item.value or 0.0), t, _FS_SM, ink)
+                        )
+
+    draw(root.children, 0, 0, width, height, 0, None)
+    return _svg_root(width, height, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Packet
+# ---------------------------------------------------------------------------
+
+
+def parse_packet(source: str) -> Packet:
+    """Parse a packet diagram: ``start-end: "label"``, ``start: "label"`` or ``+bits: "label"``."""
+    pk = Packet()
+    nxt = 0
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^packet(-beta)?\s*$", line, re.I):
+            continue
+        m = re.match(r"^title\s+(.+)$", line, re.I)
+        if m:
+            pk.title = _unquote(m.group(1))
+            continue
+        m = re.match(r'^(?:(\d+)(?:\s*-\s*(\d+))?|\+(\d+))\s*:\s*"([^"]*)"', line)
+        if m:
+            if m.group(3):
+                start = nxt
+                end = start + int(m.group(3)) - 1
+            else:
+                start = int(m.group(1))
+                end = int(m.group(2)) if m.group(2) else start
+            pk.fields.append((start, end, m.group(4)))
+            nxt = end + 1
+    return pk
+
+
+def render_packet_svg(pk: Packet, theme: dict[str, str] | None = None) -> str:
+    """Render a packet layout: fixed-width bit rows with labelled fields."""
+    t = _tokens(theme)
+    conf = _config_section("packet")
+    if not pk.fields:
+        return _svg_root(120, 40, _svg_text(0, 20, "No fields", t, color=t["ink2"]), t["font"])
+    per_row = int(conf.get("bitsPerRow", 32))
+    show_bits = conf.get("showBits", True) is not False
+    descending = str(conf.get("bitOrder", "ascending")).lower() == "descending"
+    bit_w = min(18.0, 600.0 / per_row)
+    row_h = 34.0
+    bits_h = 14.0 if show_bits else 0.0
+    parts, top = _chart_title(pk.title, t)
+    last_bit = max(end for _, end, _ in pk.fields)
+    rows = last_bit // per_row + 1
+
+    def bx(bit: int) -> float:
+        col = bit % per_row
+        if descending:
+            col = per_row - 1 - col
+        return col * bit_w
+
+    for start, end, label in pk.fields:
+        bit = start
+        while bit <= end:
+            row = bit // per_row
+            seg_end = min(end, (row + 1) * per_row - 1)
+            a, b = bx(bit), bx(seg_end)
+            x0, x1 = min(a, b), max(a, b) + bit_w
+            y = top + row * (row_h + bits_h) + bits_h
+            parts.append(
+                f'<rect x="{x0 + 1:g}" y="{y:g}" width="{x1 - x0 - 2:g}" height="{row_h:g}" rx="3" '
+                f'fill="{t["node_fill"]}" stroke="{t["node_stroke"]}" stroke-width="1"/>'
+            )
+            text = label if bit == start else f"{label} (cont.)"
+            room = x1 - x0 - 8
+            if _text_w(text, 11) > room and _text_w(text, 9.5) <= row_h - 6:
+                # Narrow field: run the label up the field instead of clipping it
+                mx, my = (x0 + x1) / 2 + 3.5, y + row_h / 2
+                rotate = f' transform="translate({mx:g},{my:g}) rotate(-90)"'
+                parts.append(_svg_text(0, 0, text, t, 9.5, anchor="middle", extra=rotate))
+                text = ""
+            while text and _text_w(text, 11) > room:
+                text = text[:-2] + "…" if len(text) > 2 else ""
+            if text:
+                parts.append(
+                    _svg_text((x0 + x1) / 2, y + row_h / 2 + 4, text, t, 11, anchor="middle")
+                )
+            if show_bits:
+                parts.append(
+                    _svg_text(
+                        min(a, b) + 2 if not descending else max(a, b) + bit_w - 2,
+                        y - 3,
+                        str(bit),
+                        t,
+                        8.5,
+                        t["chrome"],
+                        anchor="start" if not descending else "end",
+                    )
+                )
+                if seg_end != bit:
+                    parts.append(
+                        _svg_text(
+                            max(a, b) + bit_w - 2 if not descending else min(a, b) + 2,
+                            y - 3,
+                            str(seg_end),
+                            t,
+                            8.5,
+                            t["chrome"],
+                            anchor="end" if not descending else "start",
+                        )
+                    )
+            bit = seg_end + 1
+    return _svg_root(per_row * bit_w, top + rows * (row_h + bits_h) + 2, parts, t["font"])
+
+
+_BLOCK_ARROW_DIRS = {"right", "left", "up", "down", "x", "y"}
+
+
+def _split_tokens(line: str) -> list[str]:
+    """Split a block line on whitespace outside brackets and quotes."""
+    masked = _mask(line)
+    tokens, start = [], None
+    for i, ch in enumerate(masked):
+        if ch.isspace():
+            if start is not None:
+                tokens.append(line[start:i])
+                start = None
+        elif start is None:
+            start = i
+    if start is not None:
+        tokens.append(line[start:])
+    return tokens
+
+
+def parse_block(source: str) -> BlockDiagram:
+    """Parse a Mermaid block diagram into nested grid containers."""
+    bd = BlockDiagram()
+    stack = [bd.root]
+    styles: dict[str, dict[str, str]] = defaultdict(dict)
+    class_defs: dict[str, dict[str, str]] = {}
+    class_assign: list[tuple[list[str], list[str]]] = []
+    seen: dict[str, BlockItem] = {}
+
+    def node_item(token: str) -> BlockItem | None:
+        span = 1
+        m = re.match(r"^(.*?):(\d+)$", token)
+        if m and not token.endswith("]") and not token.endswith(")") and not token.endswith("}"):
+            token, span = m.group(1), int(m.group(2))
+        am = re.match(r'^(\w[\w-]*)(?:<\[\s*"?([^"\]]*)"?\s*\]>)?\(\s*([a-z, ]+)\s*\)$', token)
+        if am and all(d.strip() in _BLOCK_ARROW_DIRS for d in am.group(3).split(",")):
+            dirs = [d.strip() for d in am.group(3).split(",")]
+            return BlockItem(am.group(1), (am.group(2) or "").strip(), "arrow", span, arrow=dirs)
+        if token.startswith("space"):
+            sm = re.match(r"^space(?::(\d+))?$", token)
+            if sm:
+                return BlockItem("", "", "space", int(sm.group(1) or span))
+        probe = Flowchart()
+        nid = _ensure_node(probe, token)
+        if nid not in probe.nodes:
+            return None
+        n = probe.nodes[nid]
+        return BlockItem(nid, n.label, "node", span, shape=n.shape, classes=list(n.classes))
+
+    header_seen = False
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip().rstrip(";")
+        if not line or line.startswith("%%"):
+            continue
+        if not header_seen:
+            header_seen = True
+            if re.match(r"^block(-beta)?\s*$", line, re.I):
+                continue  # the diagram keyword, not an anonymous nested block
+        m = re.match(r"^columns\s+(\d+|auto)$", line, re.I)
+        if m:
+            stack[-1].columns = 0 if m.group(1).lower() == "auto" else int(m.group(1))
+            continue
+        m = re.match(r'^block(?::(\w[\w-]*))?(?:\["([^"]*)"\])?(?::(\d+))?$', line)
+        if m:
+            group = BlockItem(m.group(1) or "", m.group(2) or "", "group", int(m.group(3) or 1))
+            if group.id:
+                seen[group.id] = group  # edges may target a whole group
+            stack[-1].children.append(group)
+            stack.append(group)
+            continue
+        if line == "end":
+            if len(stack) > 1:
+                stack.pop()
+            continue
+        m = re.match(r"^style\s+(\S+)\s+(.+)$", line)
+        if m:
+            for nid in m.group(1).split(","):
+                styles[nid.strip()].update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            class_defs[m.group(1)] = _parse_css(m.group(2))
+            continue
+        m = re.match(r"^class\s+(\S+)\s+(\S+)$", line)
+        if m:
+            class_assign.append((m.group(1).split(","), m.group(2).split(",")))
+            continue
+        if any(True for _ in _EDGE_RE.finditer(_mask(line))):
+            probe = Flowchart()
+            _parse_edge_line(probe, line)
+            for nid, n in probe.nodes.items():
+                if nid in seen:
+                    if n.label != nid and seen[nid].kind == "node":
+                        seen[nid].label, seen[nid].shape = n.label, n.shape
+                else:
+                    item = BlockItem(nid, n.label, "node", 1, shape=n.shape)
+                    seen[nid] = item
+                    stack[-1].children.append(item)
+            for e in probe.edges:
+                bd.edges.append((e.src, e.dst, e.label, e.head))
+            continue
+        for token in _split_tokens(line):
+            parsed = node_item(token)
+            if parsed is None:
+                continue
+            item = parsed
+            if item.kind == "node" and item.id in seen:
+                prev = seen[item.id]
+                if item.label != item.id:
+                    prev.label, prev.shape = item.label, item.shape
+                continue
+            if item.id and item.kind in ("node", "arrow"):
+                seen[item.id] = item
+            stack[-1].children.append(item)
+
+    assigned: dict[str, list[str]] = defaultdict(list)
+    for ids, names in class_assign:
+        for nid in ids:
+            assigned[nid.strip()].extend(names)
+    for nid, item in seen.items():
+        css: dict[str, str] = {}
+        for name in [*item.classes, *assigned.get(nid, [])]:
+            css.update(class_defs.get(name, {}))
+        css.update(styles.get(nid, {}))
+        item.css = css
+    return bd
+
+
+def _block_min_size(item: BlockItem) -> tuple[float, float]:
+    if item.kind == "space":
+        return 0.0, 40.0
+    if item.kind == "arrow":
+        return 64.0, 44.0
+    if item.kind == "group":
+        return _layout_block_group(item, measure_only=True)
+    lines = re.split(r"<br\s*/?>|\n", item.label)
+    w = max(_text_w(x, _FS, 500) for x in lines) + 32
+    h = len(lines) * _FS * 1.3 + 22
+    if item.shape == "circle":
+        w = h = max(w, h)
+    elif item.shape == "diamond":
+        w, h = w * 1.4, h * 1.4
+    elif item.shape in (
+        "hexagon",
+        "parallelogram",
+        "parallelogram_alt",
+        "trapezoid",
+        "trapezoid_alt",
+        "flag",
+    ):
+        w += 28
+    return max(w, 72.0), max(h, 40.0)
+
+
+def _layout_block_group(group: BlockItem, measure_only: bool = False) -> tuple[float, float]:
+    """Grid-place a container's children; returns its (width, height)."""
+    gap, pad = 12.0, 12.0 if group.id or group.label or group.kind == "group" else 0.0
+    head = 16.0 if group.label else 0.0
+    kids = group.children
+    columns = group.columns or max(1, sum(k.span for k in kids))
+    sizes = [_block_min_size(k) for k in kids]
+    cell_w = max([(w - gap * (k.span - 1)) / k.span for k, (w, _) in zip(kids, sizes)] + [40.0])
+    rows: list[list[int]] = [[]]
+    used = 0
+    for i, k in enumerate(kids):
+        span = min(k.span, columns)
+        if used + span > columns:
+            rows.append([])
+            used = 0
+        rows[-1].append(i)
+        used += span
+    row_h = [max([sizes[i][1] for i in r] + [0.0]) for r in rows]
+    width = columns * cell_w + gap * (columns - 1) + 2 * pad
+    height = sum(row_h) + gap * max(len(rows) - 1, 0) + 2 * pad + head
+    if measure_only:
+        return width, height
+    y = pad + head
+    for r, h in zip(rows, row_h):
+        col = 0
+        for i in r:
+            k = kids[i]
+            span = min(k.span, columns)
+            k.x = group.x + pad + col * (cell_w + gap)
+            k.w = span * cell_w + gap * (span - 1)
+            k.y = group.y + y
+            k.h = h
+            if k.kind == "group":
+                gw, gh = _layout_block_group(k, measure_only=True)
+                k.h = max(h, gh)
+                _layout_block_group(k)
+            col += span
+        y += h + gap
+    return width, height
+
+
+def render_block_svg(bd: BlockDiagram, theme: dict[str, str] | None = None) -> str:
+    """Render a block diagram on its column grid."""
+    t = _tokens(theme)
+    if not bd.root.children:
+        return _svg_root(120, 40, _svg_text(0, 20, "No blocks", t, color=t["ink2"]), t["font"])
+    bd.root.x = bd.root.y = 0.0
+    width, height = _layout_block_group(bd.root)
+    by_id: dict[str, BlockItem] = {}
+    frames: list[str] = []
+    parts: list[str] = []
+
+    def walk(item: BlockItem, depth: int) -> None:
+        for k in item.children:
+            if k.id:
+                by_id[k.id] = k
+            if k.kind == "group":
+                frames.append(
+                    f'<rect x="{k.x:g}" y="{k.y:g}" width="{k.w:g}" height="{k.h:g}" rx="8" '
+                    f'fill="{_tint(t["primary"], 0.97 - depth * 0.02, t)}" stroke="{t["subgraph_stroke"]}" stroke-width="1"/>'
+                )
+                if k.label:
+                    frames.append(_svg_text(k.x + 10, k.y + 15, k.label, t, _FS_SM, t["ink2"], 600))
+                walk(k, depth + 1)
+            elif k.kind == "arrow":
+                parts.append(_block_arrow(k, t))
+            elif k.kind == "node":
+                w, h = _block_min_size(k)
+                h = min(h, k.h) if k.shape != "circle" else min(k.w, k.h)
+                node = Node(
+                    k.id, k.label, k.shape, x=k.x, y=k.y + (k.h - h) / 2, w=k.w, h=h, css=k.css
+                )
+                if k.shape == "circle":
+                    d = min(k.w, k.h)
+                    node.x, node.w, node.h = k.x + (k.w - d) / 2, d, d
+                    node.y = k.y + (k.h - d) / 2
+                k.x, k.y, k.w, k.h = node.x, node.y, node.w, node.h
+                parts.append(_render_node(node, t))
+
+    walk(bd.root, 0)
+    edge_parts = []
+    for src, dst, label, head in bd.edges:
+        a, b = by_id.get(src), by_id.get(dst)
+        if a is None or b is None:
+            continue
+        na = Node(a.id, "", "rect", x=a.x, y=a.y, w=a.w, h=a.h)
+        nb = Node(b.id, "", "rect", x=b.x, y=b.y, w=b.w, h=b.h)
+        dx = (b.x + b.w / 2) - (a.x + a.w / 2)
+        dy = (b.y + b.h / 2) - (a.y + a.h / 2)
+        edge = Edge(src, dst, label, "solid", head)
+        edge_parts.append(
+            _render_edge(na, nb, label, "LR" if abs(dx) >= abs(dy) else "TD", t, edge=edge)
+        )
+    # Frames at the back, then edges, then blocks on top
+    return _svg_root(width, height, [_make_arrow_defs(t), *frames, *edge_parts, *parts], t["font"])
+
+
+def _block_arrow(k: BlockItem, t: dict[str, str]) -> str:
+    """A fat block arrow (right/left/up/down, or two-headed x/y) filling its cell."""
+    cx, cy = k.x + k.w / 2, k.y + k.h / 2
+    horizontal = any(d in ("right", "left", "x") for d in k.arrow)
+    length = (k.w if horizontal else k.h) - 8
+    thick = 16.0
+    head = 14.0
+    dirs = set(k.arrow)
+    both = "x" in dirs or "y" in dirs
+    fwd = both or dirs & {"right", "down"}
+    back = both or dirs & {"left", "up"}
+    a, b = -length / 2, length / 2
+    pts = []
+    # Build along +axis, then map to the right orientation
+    shaft_a = a + (head if back else 0)
+    shaft_b = b - (head if fwd else 0)
+    pts += [(shaft_a, -thick / 2), (shaft_b, -thick / 2)]
+    if fwd:
+        pts += [(shaft_b, -thick / 2 - 7), (b, 0.0), (shaft_b, thick / 2 + 7)]
+    pts += [(shaft_b, thick / 2), (shaft_a, thick / 2)]
+    if back:
+        pts += [(shaft_a, thick / 2 + 7), (a, 0.0), (shaft_a, -thick / 2 - 7)]
+    mapped = [(cx + u, cy + v) if horizontal else (cx + v, cy + u) for u, v in pts]
+    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in mapped)
+    out = (
+        f'<polygon points="{poly}" fill="{t["node_fill"]}" stroke="{t["node_stroke"]}" '
+        f'stroke-width="1.25" stroke-linejoin="round"/>'
+    )
+    if k.label:
+        out += _svg_text(cx, cy + 3.5, k.label, t, 10, t["ink2"], anchor="middle")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Kanban
+# ---------------------------------------------------------------------------
+
+_PRIORITY_COLORS = {
+    "very high": "#d03b3b",
+    "high": "#ec835a",
+    "low": "#5cb85c",
+    "very low": "#8c959f",
+}
+
+
+def parse_kanban(source: str) -> list[KanbanColumn]:
+    """Parse a kanban board: column lines, indented task lines with optional @{ metadata }."""
+    columns: list[KanbanColumn] = []
+    col_indent: int | None = None
+    for raw_line in source.splitlines():
+        if not raw_line.strip() or raw_line.strip().startswith("%%"):
+            continue
+        stripped = raw_line.strip()
+        if re.match(r"^kanban\s*$", stripped, re.I):
+            continue
+        indent = len(raw_line.expandtabs(4)) - len(raw_line.expandtabs(4).lstrip())
+        meta: dict[str, str] = {}
+        mm = re.search(r"@\{(.*)\}\s*$", stripped)
+        if mm:
+            stripped = stripped[: mm.start()].strip()
+            for key, value in re.findall(r"(\w+)\s*:\s*('[^']*'|\"[^\"]*\"|[^,]+)", mm.group(1)):
+                meta[key.lower()] = _unquote(value.strip())
+        tm = re.match(r"^(?:[\w-]+)?\[(.*)\]$", stripped)
+        text = _unquote(tm.group(1)) if tm else stripped
+        if col_indent is None or indent <= col_indent:
+            col_indent = indent if col_indent is None else col_indent
+            columns.append(KanbanColumn(text))
+        elif columns:
+            columns[-1].items.append(KanbanItem(text, meta))
+    return columns
+
+
+def render_kanban_svg(columns: list[KanbanColumn], theme: dict[str, str] | None = None) -> str:
+    """Render a kanban board: columns of cards with ticket, assignee and priority."""
+    t = _tokens(theme)
+    if not columns:
+        return _svg_root(120, 40, _svg_text(0, 20, "No columns", t, color=t["ink2"]), t["font"])
+    column_px = float(t.get("column_px") or 640)
+    gap = 10.0
+    col_w = max(132.0, min(196.0, (column_px - gap * (len(columns) - 1)) / len(columns)))
+    parts: list[str] = []
+    bottoms = []
+    for c, col in enumerate(columns):
+        x = c * (col_w + gap)
+        y = 40.0
+        cards = []
+        for item in col.items:
+            lines = _wrap_lines(item.text, col_w - 30, 11.5)
+            footer = bool(item.meta.get("ticket") or item.meta.get("assigned"))
+            h = 14 + 15 * len(lines) + (20 if footer else 0) + 2
+            cards.append((item, lines, footer, y, h))
+            y += h + 8
+        bottom = y + 4
+        bottoms.append(bottom)
+        parts.append(
+            f'<rect x="{x:g}" y="0" width="{col_w:g}" height="{bottom:g}" rx="8" '
+            f'fill="{_tint(t["primary"], 0.965, t)}"/>'
+        )
+        count = str(len(col.items))
+        cw = _text_w(count, 10, 600) + 12
+        title = col.title
+        while len(title) > 1 and _text_w(title, _FS, 600) > col_w - cw - 30:
+            title = title[:-2].rstrip() + "…"
+        parts.append(_svg_text(x + 12, 22, title, t, _FS, t["ink"], 600))
+        parts.append(
+            f'<rect x="{x + col_w - cw - 10:g}" y="11" width="{cw:g}" height="16" rx="8" '
+            f'fill="{_tint(t["primary"], 0.85, t)}"/>'
+        )
+        parts.append(
+            _svg_text(x + col_w - cw / 2 - 10, 22.5, count, t, 10, t["ink2"], 600, "middle")
+        )
+        for item, lines, footer, cy, h in cards:
+            cx = x + 8
+            w = col_w - 16
+            parts.append(
+                f'<rect x="{cx:g}" y="{cy + 1.5:g}" width="{w:g}" height="{h:g}" rx="6" fill="#0b1f33" '
+                f'fill-opacity="{t["shadow"]}"/>'
+            )
+            parts.append(
+                f'<rect x="{cx:g}" y="{cy:g}" width="{w:g}" height="{h:g}" rx="6" fill="{t["card"]}" '
+                f'stroke="{_tint(t["primary"], 0.8, t)}" stroke-width="1"/>'
+            )
+            prio = _PRIORITY_COLORS.get(item.meta.get("priority", "").lower())
+            if prio:
+                parts.append(
+                    f'<path d="M {cx + 3:g},{cy + 6:g} V {cy + h - 6:g}" stroke="{prio}" '
+                    f'stroke-width="3" stroke-linecap="round"/>'
+                )
+            for li, text in enumerate(lines):
+                parts.append(_svg_text(cx + 12, cy + 19 + li * 15, text, t, 11.5))
+            if footer:
+                fy = cy + h - 9
+                if item.meta.get("ticket"):
+                    parts.append(_svg_text(cx + 12, fy, item.meta["ticket"], t, 10, t["ink2"], 600))
+                who = item.meta.get("assigned", "")
+                if who:
+                    initials = "".join(p[0] for p in re.split(r"[\s._-]+", who) if p)[:2].upper()
+                    parts.append(
+                        f'<circle cx="{cx + w - 14:g}" cy="{fy - 4:g}" r="8" fill="{_tint(t["primary"], 0.75, t)}"/>'
+                    )
+                    parts.append(
+                        _svg_text(cx + w - 14, fy - 0.5, initials, t, 8.5, t["ink"], 700, "middle")
+                    )
+                    name_w = _text_w(who, 10)
+                    if name_w < w - 70:
+                        parts.append(
+                            _svg_text(cx + w - 26, fy, who, t, 10, t["ink2"], anchor="end")
+                        )
+    width = len(columns) * col_w + gap * (len(columns) - 1)
+    return _svg_root(width, max(bottoms), parts, t["font"])
+
+
+def _wrap_lines(text: str, max_w: float, size: float) -> list[str]:
+    """Word wrap without a line limit."""
+    words, lines, cur = text.split(), [], ""
+    for word in words:
+        trial = f"{cur} {word}".strip()
+        if cur and _text_w(trial, size) > max_w:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+
+# ---------------------------------------------------------------------------
+# Architecture
+# ---------------------------------------------------------------------------
+
+
+def parse_architecture(source: str) -> Architecture:
+    """Parse an architecture-beta diagram."""
+    ad = Architecture()
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^architecture(-beta)?\s*$", line, re.I):
+            continue
+        m = re.match(
+            r'^(group|service)\s+([\w-]+)\s*(?:\(([^)]*)\))?\s*(?:\[\s*"?([^\]"]*)"?\s*\])?\s*(?:in\s+([\w-]+))?$',
+            line,
+        )
+        if m:
+            item = ArchItem(
+                m.group(2), m.group(4) or m.group(2), m.group(3) or "", m.group(5) or ""
+            )
+            (ad.groups if m.group(1) == "group" else ad.services)[item.id] = item
+            continue
+        m = re.match(r"^junction\s+([\w-]+)(?:\s+in\s+([\w-]+))?$", line)
+        if m:
+            ad.services[m.group(1)] = ArchItem(m.group(1), "", "", m.group(2) or "", junction=True)
+            continue
+        m = re.match(
+            r"^([\w-]+)(?:\{group\})?\s*:\s*([LRTB])\s*(<)?-(?:-)?(>)?\s*([LRTB])\s*:\s*([\w-]+)(?:\{group\})?$",
+            line,
+        )
+        if m:
+            ad.edges.append(
+                ArchEdge(
+                    m.group(1),
+                    m.group(2),
+                    m.group(6),
+                    m.group(5),
+                    bool(m.group(3)),
+                    bool(m.group(4)),
+                )
+            )
+            continue
+        m = re.match(r"^align\s+(row|column)\s+(.+)$", line)
+        if m:
+            ad.aligns.append((m.group(1), m.group(2).split()))
+    return ad
+
+
+_STEP = {"L": (-1, 0), "R": (1, 0), "T": (0, -1), "B": (0, 1)}
+
+
+def _arch_grid(ad: Architecture) -> dict[str, tuple[int, int]]:
+    """Integer grid positions implied by the edge sides (a:R -- L:b puts b right of a)."""
+    pos: dict[str, tuple[int, int]] = {}
+    taken: set[tuple[int, int]] = set()
+    adj: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+    for e in ad.edges:
+        ax, ay = _STEP[e.side_a]
+        bx, by = _STEP[e.side_b]
+        dx = max(-1, min(1, ax - bx))
+        dy = max(-1, min(1, ay - by))
+        adj[e.a].append((e.b, dx, dy))
+        adj[e.b].append((e.a, -dx, -dy))
+
+    def place(nid: str, x: int, y: int, dx: int, dy: int) -> None:
+        step_x, step_y = (dx, dy) if (dx or dy) else (1, 0)
+        while (x, y) in taken:
+            x, y = x + step_x, y + step_y
+        pos[nid] = (x, y)
+        taken.add((x, y))
+
+    next_col = 0
+    for start in ad.services:
+        if start in pos:
+            continue
+        place(start, next_col, 0, 0, 1)
+        queue = [start]
+        while queue:
+            cur = queue.pop(0)
+            cx, cy = pos[cur]
+            for nb, dx, dy in adj[cur]:
+                if nb in pos or nb not in ad.services:
+                    continue
+                place(nb, cx + dx, cy + dy, dx, dy)
+                queue.append(nb)
+        next_col = max(x for x, _ in pos.values()) + 1
+    for kind, members in ad.aligns:
+        members = [m for m in members if m in pos]
+        if len(members) < 2:
+            continue
+        ax, ay = pos[members[0]]
+        for mid in members[1:]:
+            x, y = pos[mid]
+            pos[mid] = (x, ay) if kind == "row" else (ax, y)
+    # Resolve any overlaps introduced by alignment
+    seen: set[tuple[int, int]] = set()
+    for nid in list(pos):
+        x, y = pos[nid]
+        while (x, y) in seen:
+            x += 1
+        pos[nid] = (x, y)
+        seen.add((x, y))
+    if pos:
+        mx = min(x for x, _ in pos.values())
+        my = min(y for _, y in pos.values())
+        pos = {k: (x - mx, y - my) for k, (x, y) in pos.items()}
+    return pos
+
+
+def _arch_icon(kind: str, cx: float, cy: float, t: dict[str, str]) -> str:
+    """Line icons for the built-in architecture icons (unknown names get a generic tile)."""
+    s, c, f = 40.0, t["term_fill"], t["node_fill"]
+    x0, y0 = cx - s / 2, cy - s / 2
+    tile = (
+        f'<rect x="{x0:g}" y="{y0:g}" width="{s:g}" height="{s:g}" rx="9" fill="{f}" '
+        f'stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
+    )
+    stroke = f'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+    name = kind.split(":")[-1].lower()
+    if name == "cloud":
+        glyph = (
+            f'<path d="M {cx - 10:g},{cy + 7:g} H {cx + 10:g} A 6 6 0 0 0 {cx + 9:g},{cy - 4:g} '
+            f'A 8 8 0 0 0 {cx - 5:g},{cy - 6:g} A 6.5 6.5 0 0 0 {cx - 10:g},{cy + 7:g} Z" {stroke}/>'
+        )
+    elif name == "database":
+        glyph = (
+            f'<ellipse cx="{cx:g}" cy="{cy - 8:g}" rx="10" ry="3.5" {stroke}/>'
+            f'<path d="M {cx - 10:g},{cy - 8:g} V {cy + 8:g} A 10 3.5 0 0 0 {cx + 10:g},{cy + 8:g} V {cy - 8:g} '
+            f'M {cx - 10:g},{cy:g} A 10 3.5 0 0 0 {cx + 10:g},{cy:g}" {stroke}/>'
+        )
+    elif name == "disk":
+        glyph = (
+            f'<rect x="{cx - 10:g}" y="{cy - 10:g}" width="20" height="20" rx="3" {stroke}/>'
+            f'<circle cx="{cx:g}" cy="{cy - 1:g}" r="5" {stroke}/>'
+            f'<circle cx="{cx + 6:g}" cy="{cy + 6:g}" r="1" fill="{c}"/>'
+        )
+    elif name == "internet":
+        glyph = (
+            f'<circle cx="{cx:g}" cy="{cy:g}" r="10" {stroke}/>'
+            f'<path d="M {cx - 10:g},{cy:g} H {cx + 10:g} M {cx:g},{cy - 10:g} '
+            f'A 5 10 0 0 0 {cx:g},{cy + 10:g} A 5 10 0 0 0 {cx:g},{cy - 10:g}" {stroke}/>'
+        )
+    elif name == "server":
+        glyph = (
+            f'<rect x="{cx - 10:g}" y="{cy - 10:g}" width="20" height="8.5" rx="2" {stroke}/>'
+            f'<rect x="{cx - 10:g}" y="{cy + 1.5:g}" width="20" height="8.5" rx="2" {stroke}/>'
+            f'<circle cx="{cx - 5.5:g}" cy="{cy - 5.75:g}" r="1" fill="{c}"/>'
+            f'<circle cx="{cx - 5.5:g}" cy="{cy + 5.75:g}" r="1" fill="{c}"/>'
+        )
+    else:
+        glyph = f'<rect x="{cx - 9:g}" y="{cy - 9:g}" width="18" height="18" rx="4" {stroke}/>'
+    return tile + glyph
+
+
+def render_architecture_svg(ad: Architecture, theme: dict[str, str] | None = None) -> str:
+    """Render an architecture diagram: icon services on a grid, framed groups, sided edges."""
+    t = _tokens(theme)
+    if not ad.services:
+        return _svg_root(120, 40, _svg_text(0, 20, "No services", t, color=t["ink2"]), t["font"])
+    grid = _arch_grid(ad)
+    pitch_x, pitch_y = 150.0, 118.0
+    margin = 34.0
+    centre = {
+        nid: (margin + 40 + x * pitch_x, margin + 30 + y * pitch_y) for nid, (x, y) in grid.items()
+    }
+
+    def anchor(nid: str, side: str) -> tuple[float, float]:
+        x, y = centre[nid]
+        r = 4.0 if ad.services[nid].junction else 20.0
+        dx, dy = _STEP[side]
+        return x + dx * r, y + dy * r
+
+    parts: list[str] = [_make_arrow_defs(t)]
+    # Group frames, outer groups first
+    depth: dict[str, int] = {}
+
+    def group_depth(gid: str) -> int:
+        if gid not in depth:
+            parent = ad.groups[gid].parent
+            depth[gid] = 0 if parent not in ad.groups else group_depth(parent) + 1
+        return depth[gid]
+
+    def members(gid: str) -> list[str]:
+        out = [s for s, item in ad.services.items() if item.parent == gid and s in centre]
+        for sub, item in ad.groups.items():
+            if item.parent == gid:
+                out += members(sub)
+        return out
+
+    for gid in sorted(ad.groups, key=group_depth):
+        ms = members(gid)
+        if not ms:
+            continue
+        inset = group_depth(gid) * 10
+        xs = [centre[m][0] for m in ms]
+        ys = [centre[m][1] for m in ms]
+        x0, y0 = min(xs) - 62 + inset, min(ys) - 50 + inset
+        x1, y1 = max(xs) + 62 - inset, max(ys) + 50 - inset
+        group = ad.groups[gid]
+        parts.append(
+            f'<rect x="{x0:g}" y="{y0:g}" width="{x1 - x0:g}" height="{y1 - y0:g}" rx="10" '
+            f'fill="{_tint(t["primary"], 0.975, t)}" stroke="{t["subgraph_stroke"]}" stroke-width="1" '
+            f'stroke-dasharray="5 4"/>'
+        )
+        if group.icon:
+            parts.append(
+                f'<g transform="translate({x0 + 16:g},{y0 + 14:g}) scale(0.45)">'
+                + _arch_icon(group.icon, 0, 0, t)
+                + "</g>"
+            )
+        parts.append(_svg_text(x0 + 30, y0 + 18, group.label, t, _FS_SM, t["ink2"], 600))
+
+    for e in ad.edges:
+        if e.a not in centre or e.b not in centre:
+            continue
+        p0, p1 = anchor(e.a, e.side_a), anchor(e.b, e.side_b)
+        horizontal_a = e.side_a in "LR"
+        horizontal_b = e.side_b in "LR"
+        if horizontal_a and horizontal_b:
+            mx = (p0[0] + p1[0]) / 2
+            pts = [p0, (mx, p0[1]), (mx, p1[1]), p1]
+        elif not horizontal_a and not horizontal_b:
+            my = (p0[1] + p1[1]) / 2
+            pts = [p0, (p0[0], my), (p1[0], my), p1]
+        elif horizontal_a:
+            pts = [p0, (p1[0], p0[1]), p1]
+        else:
+            pts = [p0, (p0[0], p1[1]), p1]
+        mk = (' marker-end="url(#arr)"' if e.arrow_b else "") + (
+            ' marker-start="url(#arr-s)"' if e.arrow_a else ""
+        )
+        parts.append(
+            f'<path d="{_round_polyline(pts)}" fill="none" stroke="{t["edge"]}" stroke-width="1.5"{mk}/>'
+        )
+
+    for nid, item in ad.services.items():
+        if nid not in centre:
+            continue
+        cx, cy = centre[nid]
+        if item.junction:
+            parts.append(f'<circle cx="{cx:g}" cy="{cy:g}" r="4" fill="{t["edge"]}"/>')
+            continue
+        parts.append(_arch_icon(item.icon or "server", cx, cy, t))
+        for li, text in enumerate(_wrap_lines(item.label, pitch_x - 24, 11.5)[:2]):
+            parts.append(_svg_text(cx, cy + 36 + li * 14, text, t, 11.5, anchor="middle"))
+
+    width = max(x for x, _ in centre.values()) + 40 + 62 + margin
+    height = max(y for _, y in centre.values()) + 50 + margin + 10
+    return _svg_root(width, height, parts, t["font"])
+
+
+def _call_args(text: str) -> tuple[list[str], dict[str, str]]:
+    """Split ``a, "b, c", $key="v"`` into positional and ``$named`` arguments."""
+    args: list[str] = []
+    named: dict[str, str] = {}
+    cur, quote, depth = "", False, 0
+    for ch in text + ",":
+        if ch == '"':
+            quote = not quote
+            cur += ch
+        elif ch in "([" and not quote:
+            depth += 1
+            cur += ch
+        elif ch in ")]" and not quote:
+            depth -= 1
+            cur += ch
+        elif ch == "," and not quote and depth == 0:
+            item = cur.strip()
+            m = re.match(r"^\$(\w+)\s*=\s*(.*)$", item)
+            if m:
+                named[m.group(1).lower()] = _unquote(m.group(2))
+            elif item or args:
+                args.append(_unquote(item))
+            cur = ""
+        else:
+            cur += ch
+    return args, named
+
+
+_C4_ELEMENT_RE = re.compile(
+    r"^(Person|System|SystemDb|SystemQueue|Container|ContainerDb|ContainerQueue|Component|ComponentDb|ComponentQueue)(_Ext)?$"
+)
+_C4_BOUNDARY = {
+    "Boundary",
+    "Enterprise_Boundary",
+    "System_Boundary",
+    "Container_Boundary",
+    "Deployment_Node",
+    "Node",
+    "Node_L",
+    "Node_R",
+}
+
+
+def parse_c4(source: str) -> C4Diagram:
+    """Parse C4Context / C4Container / C4Component / C4Dynamic / C4Deployment."""
+    cd = C4Diagram()
+    stack: list[C4Boundary] = [cd.root]
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%"):
+            continue
+        m = re.match(r"^(C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)\b", line)
+        if m:
+            cd.kind = m.group(1)
+            continue
+        m = re.match(r"^title\s+(.+)$", line)
+        if m:
+            cd.title = _unquote(m.group(1))
+            continue
+        if line == "}":
+            if len(stack) > 1:
+                stack.pop()
+            continue
+        m = re.match(r"^(\w+)\s*\((.*)\)\s*(\{)?\s*$", line)
+        if not m:
+            continue
+        func, (args, named) = m.group(1), _call_args(m.group(2))
+        if func == "UpdateLayoutConfig":
+            for key, attr in (
+                ("c4shapeinrow", "shape_in_row"),
+                ("c4boundaryinrow", "boundary_in_row"),
+            ):
+                value = named.get(key) or (args.pop(0) if args else "")
+                if value.isdigit():
+                    setattr(cd, attr, int(value))
+            continue
+        if func in _C4_BOUNDARY:
+            if not args:
+                continue
+            kind = "deployment" if func.startswith(("Deployment", "Node")) else "boundary"
+            label_type = named.get("type") or (args[2] if len(args) > 2 else "")
+            if not label_type and func != "Boundary":
+                label_type = {
+                    "Enterprise_Boundary": "Enterprise",
+                    "System_Boundary": "System",
+                    "Container_Boundary": "Container",
+                }.get(func, "")
+            boundary = C4Boundary(args[0], args[1] if len(args) > 1 else args[0], label_type, kind)
+            stack[-1].boundaries.append(boundary)
+            if m.group(3):
+                stack.append(boundary)
+            continue
+        em = _C4_ELEMENT_RE.match(func)
+        if em and args:
+            base = em.group(1)
+            level = "person" if base == "Person" else re.sub(r"(Db|Queue)$", "", base).lower()
+            shape = "db" if base.endswith("Db") else "queue" if base.endswith("Queue") else "box"
+            if level in ("container", "component"):
+                techn = named.get("techn") or (args[2] if len(args) > 2 else "")
+                descr = named.get("descr") or (args[3] if len(args) > 3 else "")
+            else:
+                techn = ""
+                descr = named.get("descr") or (args[2] if len(args) > 2 else "")
+            element = C4Element(
+                args[0],
+                args[1] if len(args) > 1 else args[0],
+                level,
+                bool(em.group(2)),
+                shape,
+                techn,
+                descr,
+            )
+            stack[-1].elements.append(element)
+            cd.elements[element.alias] = element
+            continue
+        rm = re.match(
+            r"^(BiRel|Rel|RelIndex|Rel_(?:U|Up|D|Down|L|Left|R|Right|Back|Neighbor))$", func
+        )
+        if rm and len(args) >= 2:
+            if func == "RelIndex":
+                args = args[1:]
+            src, dst = args[0], args[1]
+            if func == "Rel_Back":
+                src, dst = dst, src
+            cd.rels.append(
+                C4Rel(
+                    src,
+                    dst,
+                    args[2] if len(args) > 2 else "",
+                    named.get("techn") or (args[3] if len(args) > 3 else ""),
+                    func == "BiRel",
+                )
+            )
+    return cd
+
+
+def _c4_colors(level: str, ext: bool, t: dict[str, str]) -> tuple[str, str]:
+    """(fill, stroke) for a C4 element: darker = closer to people, grey = external."""
+    if ext:
+        fill = {
+            "person": "#686868",
+            "system": "#8a8a8a",
+            "container": "#a3a3a3",
+            "component": "#b8b8b8",
+        }[level]
+    else:
+        primary = t["primary"]
+        fill = {
+            "person": _mix(primary, "#000000", 0.28),
+            "system": primary,
+            "container": _mix(primary, "#ffffff", 0.22),
+            "component": _mix(primary, "#ffffff", 0.42),
+        }[level]
+    return fill, _mix(fill, "#000000", 0.15)
+
+
+def _c4_card_size(el: C4Element) -> tuple[float, float, list[str], list[str]]:
+    w = 196.0
+    label = _wrap_lines(el.label, w - 24, 12.5)
+    descr = _wrap_lines(el.descr, w - 24, 10.5) if el.descr else []
+    h = 14 + 16 * len(label) + 15 + 14 * len(descr) + 12
+    if el.level == "person":
+        h += 16
+    return w, max(h, 76.0), label, descr
+
+
+def render_c4_svg(cd: C4Diagram, theme: dict[str, str] | None = None) -> str:
+    """Render a C4 diagram: role-coloured cards packed in rows inside dashed boundaries."""
+    t = _tokens(theme)
+    if not cd.elements:
+        return _svg_root(120, 40, _svg_text(0, 20, "No elements", t, color=t["ink2"]), t["font"])
+    gap, row_gap, pad, head = 34.0, 64.0, 16.0, 34.0
+    boxes: dict[str, tuple[float, float, float, float]] = {}
+    frames: list[tuple[C4Boundary, float, float, float, float]] = []
+
+    def measure(b: C4Boundary) -> tuple[float, float]:
+        return place(b, 0.0, 0.0, dry=True)
+
+    def place(b: C4Boundary, x: float, y: float, dry: bool = False) -> tuple[float, float]:
+        top = head if b is not cd.root else 0.0
+        inner = pad if b is not cd.root else 0.0
+        cy = y + top + inner
+        width = 0.0
+        for start in range(0, len(b.elements), cd.shape_in_row):
+            row = b.elements[start : start + cd.shape_in_row]
+            sizes = [_c4_card_size(el) for el in row]
+            row_h = max(s[1] for s in sizes)
+            cx = x + inner
+            for el, (w, h, _, _) in zip(row, sizes):
+                if not dry:
+                    boxes[el.alias] = (cx, cy + (row_h - h) / 2, w, h)
+                cx += w + gap
+            width = max(width, cx - gap - x - inner)
+            cy += row_h + row_gap
+        for start in range(0, len(b.boundaries), cd.boundary_in_row):
+            row_b = b.boundaries[start : start + cd.boundary_in_row]
+            sizes_b = [measure(sub) for sub in row_b]
+            row_h = max(s[1] for s in sizes_b)
+            cx = x + inner
+            for sub, (w, h) in zip(row_b, sizes_b):
+                if not dry:
+                    place(sub, cx, cy)
+                    frames.append((sub, cx, cy, w, h))
+                cx += w + gap
+            width = max(width, cx - gap - x - inner)
+            cy += row_h + row_gap
+        if b is not cd.root:
+            width = max(width, _text_w(b.label, 12, 600) + 24)
+        return width + 2 * inner, cy - row_gap - y + inner
+
+    title_parts, title_h = _chart_title(cd.title, t)
+    total_w, total_h = place(cd.root, 0.0, 0.0)
+    parts: list[str] = [
+        "<defs>",
+        f'<marker id="c4-arr" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="8" '
+        f'refY="3.5" orient="auto"><polygon points="0 0.5, 8 3.5, 0 6.5" fill="{t["ink2"]}"/></marker>',
+        f'<marker id="c4-arr-s" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" refX="1" '
+        f'refY="3.5" orient="auto"><polygon points="9 0.5, 1 3.5, 9 6.5" fill="{t["ink2"]}"/></marker>',
+        "</defs>",
+        *title_parts,
+        f'<g transform="translate(0,{title_h:g})">',
+    ]
+    for b, x, y, w, h in frames:
+        dash = "6 4" if b.kind == "boundary" else "none"
+        parts.append(
+            f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="8" fill="none" '
+            f'stroke="{t["chrome"]}" stroke-width="1.25" stroke-dasharray="{dash}"/>'
+        )
+        parts.append(_svg_text(x + 12, y + 18, b.label, t, 12, t["ink"], 600))
+        if b.type:
+            parts.append(_svg_text(x + 12, y + 30, f"[{b.type}]", t, 10, t["ink2"]))
+
+    def clip(box: tuple[float, float, float, float], tx: float, ty: float) -> tuple[float, float]:
+        x, y, w, h = box
+        cx, cy = x + w / 2, y + h / 2
+        dx, dy = tx - cx, ty - cy
+        if dx == 0 and dy == 0:
+            return cx, cy
+        scale = min(w / 2 / abs(dx) if dx else 1e9, h / 2 / abs(dy) if dy else 1e9)
+        return cx + dx * scale, cy + dy * scale
+
+    labels: list[str] = []  # relation labels go on top of the cards
+    taken_labels: list[tuple[float, float, float, float]] = []
+    for rel in cd.rels:
+        box_a, box_b = boxes.get(rel.src), boxes.get(rel.dst)
+        if box_a is None or box_b is None:
+            continue
+        ac = (box_a[0] + box_a[2] / 2, box_a[1] + box_a[3] / 2)
+        bc = (box_b[0] + box_b[2] / 2, box_b[1] + box_b[3] / 2)
+        p0, p1 = clip(box_a, *bc), clip(box_b, *ac)
+        mk = ' marker-end="url(#c4-arr)"' + (' marker-start="url(#c4-arr-s)"' if rel.bi else "")
+        parts.append(
+            f'<line x1="{p0[0]:.1f}" y1="{p0[1]:.1f}" x2="{p1[0]:.1f}" y2="{p1[1]:.1f}" '
+            f'stroke="{t["ink2"]}" stroke-width="1.25" stroke-dasharray="5 3"{mk}/>'
+        )
+        mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+        lines = _wrap_lines(rel.label, 140, _FS_SM) if rel.label else []
+        if rel.techn:
+            lines.append(f"[{rel.techn}]")
+        if lines:
+            lw = max(_text_w(x, _FS_SM) for x in lines) + 10
+            lh = 14 * len(lines) + 4
+            # Slide the label along its line until it clears every card (and earlier labels)
+            for f in sorted((i / 40 for i in range(4, 37)), key=lambda v: abs(v - 0.5)):
+                cx_ = p0[0] + (p1[0] - p0[0]) * f
+                cy_ = p0[1] + (p1[1] - p0[1]) * f
+                box = (cx_ - lw / 2, cy_ - lh / 2, cx_ + lw / 2, cy_ + lh / 2)
+                hits = any(
+                    box[0] < bx + bw and box[2] > bx and box[1] < by + bh and box[3] > by
+                    for bx, by, bw, bh in boxes.values()
+                ) or any(
+                    box[0] < c2 and box[2] > c0 and box[1] < d2 and box[3] > d0
+                    for c0, d0, c2, d2 in taken_labels
+                )
+                if not hits:
+                    mx, my = cx_, cy_
+                    break
+            taken_labels.append((mx - lw / 2, my - lh / 2, mx + lw / 2, my + lh / 2))
+            labels.append(
+                f'<rect x="{mx - lw / 2:g}" y="{my - lh / 2:g}" width="{lw:g}" height="{lh:g}" rx="3" '
+                f'fill="{t["surface"]}"/>'
+            )
+            for i, text in enumerate(lines):
+                italic = (
+                    ' font-style="italic"'
+                    if text.startswith("[") and rel.techn and i == len(lines) - 1
+                    else ""
+                )
+                labels.append(
+                    _svg_text(
+                        mx,
+                        my - lh / 2 + 13 + i * 14,
+                        text,
+                        t,
+                        _FS_SM,
+                        t["ink2"],
+                        anchor="middle",
+                        extra=italic,
+                    )
+                )
+
+    for alias, (x, y, w, h) in boxes.items():
+        el = cd.elements[alias]
+        fill, stroke = _c4_colors(el.level, el.ext, t)
+        ink = _text_on(fill, t)
+        _, _, label, descr = _c4_card_size(el)
+        top = y
+        if el.shape == "db":
+            parts.append(
+                f'<path d="M {x:g},{y + 8:g} V {y + h - 8:g} A {w / 2:g} 8 0 0 0 {x + w:g},{y + h - 8:g} '
+                f'V {y + 8:g} A {w / 2:g} 8 0 0 0 {x:g},{y + 8:g} A {w / 2:g} 8 0 0 0 {x + w:g},{y + 8:g}" '
+                f'fill="{fill}" stroke="{stroke}" stroke-width="1"/>'
+            )
+            top += 10
+        elif el.shape == "queue":
+            parts.append(
+                f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{min(h / 2, 22):g}" '
+                f'fill="{fill}" stroke="{stroke}" stroke-width="1"/>'
+            )
+        else:
+            parts.append(
+                f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="10" fill="{fill}" '
+                f'stroke="{stroke}" stroke-width="1"/>'
+            )
+        if el.level == "person":
+            parts.append(
+                f'<circle cx="{x + w / 2:g}" cy="{y + 2:g}" r="15" fill="{fill}" stroke="{stroke}" stroke-width="1"/>'
+            )
+            top += 16
+        ty = top + 24
+        for text in label:
+            parts.append(_svg_text(x + w / 2, ty, text, t, 12.5, ink, 600, "middle"))
+            ty += 16
+        kind = {
+            "person": "Person",
+            "system": "Software System",
+            "container": "Container",
+            "component": "Component",
+        }[el.level]
+        if el.ext:
+            kind = f"External {kind.lower()}" if el.level != "person" else "External person"
+        tag = f"[{kind}: {el.techn}]" if el.techn else f"[{kind}]"
+        parts.append(
+            _svg_text(x + w / 2, ty, tag, t, 10, ink, anchor="middle", extra=' fill-opacity="0.85"')
+        )
+        ty += 17
+        for text in descr:
+            parts.append(_svg_text(x + w / 2, ty, text, t, 10.5, ink, anchor="middle"))
+            ty += 14
+    parts += labels
+    parts.append("</g>")
+    width = max(total_w, _text_w(cd.title, _FS_TITLE, 600)) + 4
+    return _svg_root(width, total_h + title_h + 18, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Requirement diagram
+# ---------------------------------------------------------------------------
+
+_REQ_TYPES = {
+    "requirement": "Requirement",
+    "functionalrequirement": "Functional Requirement",
+    "interfacerequirement": "Interface Requirement",
+    "performancerequirement": "Performance Requirement",
+    "physicalrequirement": "Physical Requirement",
+    "designconstraint": "Design Constraint",
+    "element": "Element",
+}
+
+
+def parse_requirement(source: str) -> RequirementDiagram:
+    """Parse a requirementDiagram: requirement/element blocks and typed relationships."""
+    rd = RequirementDiagram()
+    current: ReqNode | None = None
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^requirementDiagram\b", line, re.I):
+            continue
+        if current is not None:
+            if line.startswith("}"):
+                current = None
+                continue
+            m = re.match(r"^(\w+)\s*:\s*(.*)$", line)
+            if m:
+                current.fields.append((m.group(1).lower(), _unquote(m.group(2))))
+            continue
+        m = re.match(r"^direction\s+(TB|TD|BT|LR|RL)$", line, re.I)
+        if m:
+            rd.direction = m.group(1).upper()
+            continue
+        m = re.match(r'^(\w+)\s+("[^"]+"|[\w.-]+)\s*\{\s*$', line)
+        if m and m.group(1).lower() in _REQ_TYPES:
+            name = _unquote(m.group(2)).strip("_*")
+            current = ReqNode(name, _REQ_TYPES[m.group(1).lower()])
+            rd.nodes[name] = current
+            continue
+        m = re.match(r'^("[^"]+"|[\w.-]+)\s*-\s*(\w+)\s*->\s*("[^"]+"|[\w.-]+)$', line)
+        if m:
+            rd.relations.append(
+                (
+                    _unquote(m.group(1)).strip("_*"),
+                    _unquote(m.group(3)).strip("_*"),
+                    m.group(2).lower(),
+                )
+            )
+            continue
+        m = re.match(r'^("[^"]+"|[\w.-]+)\s*<-\s*(\w+)\s*-\s*("[^"]+"|[\w.-]+)$', line)
+        if m:
+            rd.relations.append(
+                (
+                    _unquote(m.group(3)).strip("_*"),
+                    _unquote(m.group(1)).strip("_*"),
+                    m.group(2).lower(),
+                )
+            )
+    return rd
+
+
+def render_requirement_svg(rd: RequirementDiagram, theme: dict[str, str] | None = None) -> str:
+    """Render requirement and element cards with labelled relationships."""
+    t = _tokens(theme)
+    if not rd.nodes:
+        return _svg_root(
+            120, 40, _svg_text(0, 20, "No requirements", t, color=t["ink2"]), t["font"]
+        )
+    names = {
+        "id": "ID",
+        "text": "Text",
+        "risk": "Risk",
+        "verifymethod": "Verification",
+        "type": "Type",
+        "docref": "Doc ref",
+    }
+    cards: dict[str, tuple[float, float, list[tuple[str, list[str]]]]] = {}
+    for name, node in rd.nodes.items():
+        w = max(_text_w(name, _FS, 600) + 28, _text_w(f"«{node.kind}»", _FS_SM) + 28, 190.0)
+        rows = []
+        for key, value in node.fields:
+            label = names.get(key, key.title())
+            text = value.title() if key in ("risk", "verifymethod") else value
+            rows.append((label, _wrap_lines(text, w - 24 - _text_w(label + ": ", 11, 600), 11)))
+        h = 46.0 + sum(15 * len(v) + 3 for _, v in rows) + 8
+        cards[name] = (w, h, rows)
+
+    fc = Flowchart(direction={"TB": "TD", "BT": "TD"}.get(rd.direction, rd.direction or "TD"))
+    for name, (w, h, _) in cards.items():
+        fc.nodes[name] = Node(name, "", "fixed", w=w, h=h)
+    for a, b, kind in rd.relations:
+        if a in fc.nodes and b in fc.nodes:
+            fc.edges.append(Edge(a, b, f"«{kind}»"))
+    layout(fc, t)
+    _fit_to_column(fc, t, wrap=False)
+    ox, oy, width, height = _flow_extent(fc, pad=12.0)
+    parts = [_make_arrow_defs(t), f'<g transform="translate({-ox:g},{-oy:g})">']
+    ports = _assign_ports(fc)
+    for i, e in enumerate(fc.edges):
+        edge = Edge(e.src, e.dst, e.label, "dotted" if e.label != "«contains»" else "solid")
+        parts.append(
+            _render_edge(
+                fc.nodes[e.src],
+                fc.nodes[e.dst],
+                e.label,
+                fc.direction,
+                t,
+                edge.style,
+                0.0,
+                fc.waypoints.get(i),
+                ports.get((i, "out")),
+                ports.get((i, "in")),
+                edge,
+            )
+        )
+    for name, node in rd.nodes.items():
+        n = fc.nodes[name]
+        w, h, rows = cards[name]
+        is_element = node.kind == "Element"
+        head_fill = t["diamond_fill"] if is_element else t["node_fill"]
+        stroke = t["diamond_stroke"] if is_element else t["node_stroke"]
+        parts.append(
+            f'<rect x="{n.x:g}" y="{n.y + 1.5:g}" width="{w:g}" height="{h:g}" rx="6" fill="#0b1f33" '
+            f'fill-opacity="{t["shadow"]}"/>'
+        )
+        parts.append(
+            f'<rect x="{n.x:g}" y="{n.y:g}" width="{w:g}" height="{h:g}" rx="6" fill="{t["card"]}" '
+            f'stroke="{stroke}" stroke-width="1.25"/>'
+        )
+        parts.append(
+            f'<path d="M {n.x:g},{n.y + 40:g} V {n.y + 6:g} Q {n.x:g},{n.y:g} {n.x + 6:g},{n.y:g} '
+            f'H {n.x + w - 6:g} Q {n.x + w:g},{n.y:g} {n.x + w:g},{n.y + 6:g} V {n.y + 40:g} Z" '
+            f'fill="{head_fill}" stroke="{stroke}" stroke-width="1.25"/>'
+        )
+        parts.append(
+            _svg_text(
+                n.x + w / 2, n.y + 16, f"«{node.kind}»", t, _FS_SM, t["ink2"], anchor="middle"
+            )
+        )
+        parts.append(_svg_text(n.x + w / 2, n.y + 32, name, t, _FS, weight=600, anchor="middle"))
+        ty = n.y + 58
+        for label, lines in rows:
+            parts.append(_svg_text(n.x + 12, ty, f"{label}:", t, 11, t["ink2"], 600))
+            lx = n.x + 12 + _text_w(label + ": ", 11, 600)
+            for k, text in enumerate(lines):
+                parts.append(_svg_text(lx, ty + k * 15, text, t, 11))
+            ty += 15 * len(lines) + 3
+    parts.append("</g>")
+    return _svg_root(width, height, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# ZenUML (rendered with the sequence renderer)
+# ---------------------------------------------------------------------------
+
+
+def parse_zenuml(source: str) -> tuple[SequenceDiagram, str]:
+    """Translate ZenUML into a SequenceDiagram (plus its title)."""
+    sd = SequenceDiagram()
+    title = ""
+    callers: list[str] = []  # call stack of the participants currently executing
+    opened: list[tuple[str, str, str]] = []  # what each '{' opened: (kind, participant, reply var)
+    reply_next = False
+    starter = "Client"
+
+    def add(pid: str, label: str = "", actor: bool = False) -> None:
+        if pid not in sd.participants:
+            sd.participants.append(pid)
+        if label:
+            sd.labels[pid] = label
+        if actor:
+            sd.actors.add(pid)
+
+    def message(src: str, dst: str, label: str, arrow: str) -> None:
+        add(src)
+        add(dst)
+        msg = SeqMessage(src, dst, label, arrow)
+        sd.messages.append(msg)
+        sd.events.append(msg)
+
+    def current() -> str:
+        if callers:
+            return callers[-1]
+        add(starter)
+        return starter
+
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip().rstrip(";")
+        if (
+            not line
+            or line.startswith("//")
+            or line.startswith("%%")
+            or re.match(r"^zenuml\s*$", line, re.I)
+        ):
+            continue
+        m = re.match(r"^title\s+(.+)$", line)
+        if m:
+            title = m.group(1).strip()
+            continue
+        if re.match(r"^@(return|reply)\s*$", line):
+            reply_next = True
+            continue
+        # closing braces, possibly followed by else / catch / finally
+        while line.startswith("}"):
+            rest = line[1:].strip()
+            cont = re.match(
+                r"^(?:else\s+if\s*\((.*)\)|(else)|catch(?:\s*\((.*)\))?|(finally))\s*\{$", rest
+            )
+            if cont and opened and opened[-1][0] in ("alt", "critical"):
+                if cont.group(1) is not None:
+                    label = cont.group(1)
+                elif cont.group(2):
+                    label = ""
+                elif cont.group(4):
+                    label = "finally"
+                else:
+                    label = f"catch ({cont.group(3)})" if cont.group(3) else "catch"
+                sd.events.append(SeqBlock("else", label))
+                line = ""
+                break
+            if opened:
+                kind, who, var = opened.pop()
+                if kind == "call":
+                    callee = callers.pop() if callers else who
+                    if var:
+                        message(callee, current(), var, "-->>")
+                else:
+                    sd.events.append(SeqBlock("end"))
+            line = rest
+        if not line:
+            continue
+        m = re.match(r"^@(\w+)\s+(\w+)(?:\s+as\s+(.+))?$", line)
+        if m:
+            add(m.group(2), (m.group(3) or "").strip(), m.group(1).lower() == "actor")
+            continue
+        m = re.match(r"^(\w+)\s+as\s+(.+)$", line)
+        if m:
+            add(m.group(1), m.group(2).strip())
+            continue
+        if re.match(r"^\w+$", line) and line not in ("opt", "par", "try"):
+            add(line)
+            continue
+        m = re.match(r"^(if|while|for|forEach|foreach|loop)\s*\((.*)\)\s*\{$", line)
+        if m:
+            kind = "alt" if m.group(1) == "if" else "loop"
+            sd.events.append(SeqBlock(kind, m.group(2).strip()))
+            opened.append((kind, "", ""))
+            continue
+        m = re.match(r"^(opt|par|try)\s*\{$", line)
+        if m:
+            kind = {"opt": "opt", "par": "par", "try": "critical"}[m.group(1)]
+            sd.events.append(SeqBlock(kind, "try" if m.group(1) == "try" else ""))
+            opened.append((kind, "", ""))
+            continue
+        m = re.match(r"^return\s+(.+)$", line)
+        if m and callers:
+            target = callers[-2] if len(callers) > 1 else starter
+            add(target)
+            message(callers[-1], target, m.group(1).strip(), "-->>")
+            continue
+        m = re.match(r"^(\w+)\s*->\s*(\w+)\s*:\s*(.*)$", line)
+        if m:
+            message(m.group(1), m.group(2), m.group(3).strip(), "-->>" if reply_next else "-)")
+            reply_next = False
+            continue
+        m = re.match(r"^new\s+(\w+)\s*(\(.*\))?\s*(\{)?$", line)
+        if m:
+            message(current(), m.group(1), f"«create»{m.group(2) or ''}", "->>")
+            if m.group(3):
+                callers.append(m.group(1))
+                opened.append(("call", m.group(1), ""))
+            continue
+        m = re.match(
+            r"^(?:(?:\w+\s+)?(\w+)\s*=\s*)?(?:(\w+)\s*->\s*)?(\w+)\.(\w+)\s*(\(.*?\))?\s*(\{)?$",
+            line,
+        )
+        if m:
+            var, caller, target, method, params, block = m.groups()
+            src = caller or current()
+            message(src, target, f"{method}{params or '()'}", "->>")
+            if block:
+                callers.append(target)
+                opened.append(("call", target, var or ""))
+            elif var:
+                message(target, src, var, "-->>")
+    while opened:
+        kind, _, _ = opened.pop()
+        if kind != "call":
+            sd.events.append(SeqBlock("end"))
+    return sd, title
+
+
+def render_zenuml_svg(source: str, theme: dict[str, str] | None = None) -> str:
+    sd, title = parse_zenuml(source)
+    svg = render_sequence_svg(sd, theme)
+    return _with_title(svg, title, _tokens(theme)) if title else svg
+
+
 def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> str:
     """Render a state diagram to SVG via the flowchart layout engine."""
     if not sd.states:
@@ -4627,21 +6796,16 @@ class UnsupportedDiagramError(ValueError):
 
 # Mermaid diagram keywords with no renderer here; the original code block is kept.
 _UNSUPPORTED_TYPES = (
-    "quadrantChart",
-    "requirementDiagram",
-    "sankey",
-    "block",
-    "packet",
-    "kanban",
-    "architecture",
-    "C4Context",
-    "C4Container",
-    "C4Component",
-    "C4Dynamic",
-    "C4Deployment",
-    "zenuml",
-    "radar",
-    "treemap",
+    "agentflow",
+    "cynefin",
+    "eventmodeling",
+    "ishikawa",
+    "railroad",
+    "swimlanes",
+    "treeView",
+    "usecase",
+    "venn",
+    "wardley",
 )
 
 
@@ -4774,6 +6938,28 @@ def _detect_diagram_type(source: str) -> str:
             return "journey"
         if re.match(r"^gitGraph\b", line, re.IGNORECASE):
             return "git"
+        if re.match(r"^quadrantChart\b", line, re.IGNORECASE):
+            return "quadrant"
+        if re.match(r"^sankey(-beta)?\b", line, re.IGNORECASE):
+            return "sankey"
+        if re.match(r"^radar(-beta)?\b", line, re.IGNORECASE):
+            return "radar"
+        if re.match(r"^treemap(-beta)?\b", line, re.IGNORECASE):
+            return "treemap"
+        if re.match(r"^packet(-beta)?\b", line, re.IGNORECASE):
+            return "packet"
+        if re.match(r"^block(-beta)?\b", line, re.IGNORECASE):
+            return "block"
+        if re.match(r"^kanban\b", line, re.IGNORECASE):
+            return "kanban"
+        if re.match(r"^architecture(-beta)?\b", line, re.IGNORECASE):
+            return "architecture"
+        if re.match(r"^C4(Context|Container|Component|Dynamic|Deployment)\b", line):
+            return "c4"
+        if re.match(r"^requirementDiagram\b", line, re.IGNORECASE):
+            return "requirement"
+        if re.match(r"^zenuml\b", line, re.IGNORECASE):
+            return "zenuml"
         if re.match(rf"^(?:{'|'.join(_UNSUPPORTED_TYPES)})\b", line, re.IGNORECASE):
             return "unsupported"
         if re.match(r"^stateDiagram", line, re.IGNORECASE):
@@ -4793,6 +6979,7 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
     (PDF) and the docx builder (which rasterizes the SVG for embedding).
     """
     config = _diagram_config(source)
+    _ACTIVE_CONFIG.set(config)
     theme = {**(theme or {}), **_config_theme(config)}
     source = _strip_preamble(source)
     diagram_type = _detect_diagram_type(source)
@@ -4833,6 +7020,28 @@ def _render_by_type(diagram_type: str, source: str, theme: dict[str, str]) -> st
         return render_journey_svg(parse_journey(source), theme)
     elif diagram_type == "git":
         return render_git_svg(parse_git(source), theme)
+    elif diagram_type == "quadrant":
+        return render_quadrant_svg(parse_quadrant(source), theme)
+    elif diagram_type == "sankey":
+        return render_sankey_svg(parse_sankey(source), theme)
+    elif diagram_type == "radar":
+        return render_radar_svg(parse_radar(source), theme)
+    elif diagram_type == "treemap":
+        return render_treemap_svg(parse_treemap(source), theme)
+    elif diagram_type == "packet":
+        return render_packet_svg(parse_packet(source), theme)
+    elif diagram_type == "block":
+        return render_block_svg(parse_block(source), theme)
+    elif diagram_type == "kanban":
+        return render_kanban_svg(parse_kanban(source), theme)
+    elif diagram_type == "architecture":
+        return render_architecture_svg(parse_architecture(source), theme)
+    elif diagram_type == "c4":
+        return render_c4_svg(parse_c4(source), theme)
+    elif diagram_type == "requirement":
+        return render_requirement_svg(parse_requirement(source), theme)
+    elif diagram_type == "zenuml":
+        return render_zenuml_svg(source, theme)
     else:
         # flowchart (default for unrecognized types too)
         return render_svg(parse(source), theme)

@@ -379,7 +379,7 @@ def test_front_matter_and_init_directives_are_ignored():
         assert "<svg" in m.render_to_svg(pre + "flowchart TD\n A --> B")
 
 
-@pytest.mark.parametrize("kind", ["quadrantChart", "sankey-beta", "C4Context"])
+@pytest.mark.parametrize("kind", ["venn", "wardley", "ishikawa"])
 def test_unsupported_diagram_types_fail_cleanly(kind):
     with pytest.raises(m.UnsupportedDiagramError):
         m.render_to_svg(f"{kind}\n  anything")
@@ -628,3 +628,198 @@ def test_named_themes_and_theme_variables():
 def test_front_matter_title_is_drawn():
     svg = m.render_to_svg("---\ntitle: Order flow\n---\nflowchart LR\n A --> B")
     assert ">Order flow<" in svg
+
+
+def test_quadrant_points_classes_and_label_placement():
+    qc = m.parse_quadrant(
+        "quadrantChart\n title Reach\n x-axis Low --> High\n y-axis Bad --> Good\n"
+        " quadrant-1 Expand\n A: [0.4, 0.34]\n B:::hot: [0.78, 0.34] radius: 8\n"
+        " classDef hot color: #d03b3b"
+    )
+    assert (qc.x_low, qc.x_high, qc.y_low, qc.y_high) == ("Low", "High", "Bad", "Good")
+    assert qc.quadrants[0] == "Expand"
+    assert qc.points[1][3] == {"color": "#d03b3b", "radius": "8"}
+    svg = m.render_quadrant_svg(qc)
+    assert 'fill="#d03b3b"' in svg and ">Expand<" in svg
+
+
+def test_sankey_layers_and_quoted_csv():
+    sk = m.parse_sankey('sankey\nWind,Grid,10\nGrid,"Heating, homes",6\nGrid,Industry,4')
+    assert sk.links == [
+        ("Wind", "Grid", 10.0),
+        ("Grid", "Heating, homes", 6.0),
+        ("Grid", "Industry", 4.0),
+    ]
+    svg = m.render_sankey_svg(sk)
+    assert ">Heating, homes<" in svg and svg.count('fill-opacity="0.32"') == 3
+
+
+def test_radar_axes_curves_and_options():
+    rd = m.parse_radar(
+        'radar-beta\n axis a["A"], b["B"], c["C"]\n curve x["X"]{1, 2, 3}\n'
+        " curve y{ c: 3, a: 1, b: 2 }\n max 5\n graticule polygon\n ticks 4"
+    )
+    assert rd.axes == [("a", "A"), ("b", "B"), ("c", "C")]
+    assert rd.curves == [("X", [1.0, 2.0, 3.0]), ("y", [1.0, 2.0, 3.0])]
+    assert (rd.max_val, rd.graticule, rd.ticks) == (5.0, "polygon", 4)
+    assert m.render_radar_svg(rd).count("<polygon") >= 4 + 2
+
+
+def test_treemap_areas_follow_values():
+    root = m.parse_treemap('treemap-beta\n"G"\n    "A": 30\n    "B": 10\n"H"\n    "C": 60')
+    assert [c.name for c in root.children] == ["G", "H"]
+    rects = m._squarify([60, 30, 10], 0, 0, 100, 100)
+    areas = [w * h for _, _, w, h in rects]
+    assert areas == pytest.approx([6000, 3000, 1000], rel=1e-6)
+    assert ">A<" in m.render_treemap_svg(root)
+
+
+def test_packet_ranges_relative_bits_and_rows():
+    pk = m.parse_packet('packet\n0-15: "Src"\n+16: "Dst"\n32: "FIN"\n+31: "Rest"')
+    assert pk.fields == [(0, 15, "Src"), (16, 31, "Dst"), (32, 32, "FIN"), (33, 63, "Rest")]
+    svg = m.render_packet_svg(pk)
+    assert ">Src<" in svg and "rotate(-90)" in svg  # one-bit field labelled vertically
+
+
+def test_block_grid_spans_arrows_and_groups():
+    bd = m.parse_block(
+        'block\n columns 3\n a["A"] arrow<["go"]>(right) b\n space:2 c\n'
+        " block:grp:3\n  d e\n end\n grp --> c\n style a fill:#fde"
+    )
+    kinds = [(k.kind, k.id, k.span) for k in bd.root.children]
+    assert kinds == [
+        ("node", "a", 1),
+        ("arrow", "arrow", 1),
+        ("node", "b", 1),
+        ("space", "", 2),
+        ("node", "c", 1),
+        ("group", "grp", 3),
+    ]
+    assert bd.edges == [("grp", "c", "", "arrow")]
+    assert bd.root.children[0].css == {"fill": "#fde"}
+    svg = m.render_block_svg(bd)
+    assert ">go<" in svg and 'fill="#fde"' in svg
+
+
+def test_kanban_columns_and_metadata():
+    cols = m.parse_kanban(
+        "kanban\n  Todo\n    t1[Write docs]@{ ticket: MC-1, assigned: 'knsv', priority: 'High' }\n"
+        "  [Done]\n    t2[Ship]"
+    )
+    assert [c.title for c in cols] == ["Todo", "Done"]
+    assert cols[0].items[0].meta == {"ticket": "MC-1", "assigned": "knsv", "priority": "High"}
+    svg = m.render_kanban_svg(cols)
+    assert ">MC-1<" in svg and m._PRIORITY_COLORS["high"] in svg
+
+
+def test_architecture_grid_from_edge_sides():
+    ad = m.parse_architecture(
+        "architecture-beta\n group api(cloud)[API]\n service db(database)[Database] in api\n"
+        " service server(server)[Server] in api\n service disk(disk)[Disk] in api\n"
+        " junction j\n db:L -- R:server\n disk:T -- B:server\n server:T --> B:j"
+    )
+    grid = m._arch_grid(ad)
+    assert grid["db"][0] == grid["server"][0] + 1 and grid["db"][1] == grid["server"][1]
+    assert grid["disk"][1] == grid["server"][1] + 1
+    assert grid["j"][1] == grid["server"][1] - 1
+    svg = m.render_architecture_svg(ad)
+    assert ">API<" in svg and "url(#arr)" in svg
+
+
+def test_c4_elements_boundaries_and_relations():
+    cd = m.parse_c4(
+        'C4Container\n title Banking\n Person(c, Customer, "A customer")\n'
+        ' Container_Boundary(b, "Internet Banking") {\n'
+        '  Container(spa, "SPA", "JavaScript, Angular", "The app")\n'
+        '  ContainerDb(db, "Database", "SQL")\n }\n'
+        ' System_Ext(mail, "E-mail")\n Rel(c, spa, "Uses", "HTTPS")\n'
+        ' Rel_Back(db, spa, "Reads")\n BiRel(spa, mail, "Sends")\n'
+        ' UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")'
+    )
+    spa = cd.elements["spa"]
+    assert (spa.level, spa.techn, spa.descr) == ("container", "JavaScript, Angular", "The app")
+    assert cd.elements["db"].shape == "db" and cd.elements["mail"].ext
+    assert [b.label for b in cd.root.boundaries] == ["Internet Banking"]
+    assert [(r.src, r.dst, r.bi) for r in cd.rels] == [
+        ("c", "spa", False),
+        ("spa", "db", False),
+        ("spa", "mail", True),
+    ]
+    assert (cd.shape_in_row, cd.boundary_in_row) == (3, 1)
+    svg = m.render_c4_svg(cd)
+    assert "[Container: JavaScript, Angular]" in svg and ">Internet Banking<" in svg
+
+
+def test_requirement_cards_and_both_relation_directions():
+    rd = m.parse_requirement(
+        "requirementDiagram\n requirement r1 {\n id: 1\n text: Must pay.\n risk: high\n"
+        " verifymethod: test\n }\n element svc {\n type: service\n }\n"
+        " svc - satisfies -> r1\n r1 <- traces - svc"
+    )
+    assert rd.nodes["r1"].fields[0] == ("id", "1")
+    assert rd.relations == [("svc", "r1", "satisfies"), ("svc", "r1", "traces")]
+    svg = m.render_requirement_svg(rd)
+    assert "«satisfies»" in svg and ">High<" in svg and "«Element»" in svg
+
+
+def test_zenuml_translates_to_a_sequence():
+    sd, title = m.parse_zenuml(
+        "zenuml\n title Orders\n @Actor Client\n Client->Svc.create(o) {\n"
+        "  ok = Check.run(o)\n  if(ok) {\n   return id\n  } else {\n   @return\n"
+        "   Svc->Client: no\n  }\n }\n par {\n  Svc->Mail: hi\n }"
+    )
+    assert title == "Orders" and sd.actors == {"Client"}
+    msgs = [(x.src, x.dst, x.label, x.arrow) for x in sd.messages]
+    assert msgs == [
+        ("Client", "Svc", "create(o)", "->>"),
+        ("Svc", "Check", "run(o)", "->>"),
+        ("Check", "Svc", "ok", "-->>"),
+        ("Svc", "Client", "id", "-->>"),
+        ("Svc", "Client", "no", "-->>"),
+        ("Svc", "Mail", "hi", "-)"),
+    ]
+    blocks = [(e.kind, e.label) for e in sd.events if isinstance(e, m.SeqBlock)]
+    assert blocks == [("alt", "ok"), ("else", ""), ("end", ""), ("par", ""), ("end", "")]
+    assert ">Orders<" in m.render_to_svg("zenuml\n title Orders\n A->B: hi")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "quadrantChart\n A: [0.5, 0.5]",
+        "sankey-beta\nA,B,1",
+        "radar-beta\n axis a, b, c\n curve x{1,2,3}",
+        'treemap-beta\n"A": 1',
+        'packet-beta\n0-7: "A"',
+        "block-beta\n a b",
+        "kanban\n  Todo\n    [x]",
+        "architecture-beta\n service a(server)[A]",
+        "C4Context\n Person(a, A)",
+        "requirementDiagram\n requirement r {\n id: 1\n }",
+        "zenuml\n A->B: hi",
+    ],
+)
+def test_every_new_type_renders(source):
+    svg = m.render_to_svg(source)
+    assert svg.startswith("<svg") and m.svg_natural_width(svg)
+
+
+def test_fonts_registered_after_a_raster_still_apply():
+    ziamath = pytest.importorskip("ziamath")
+    from pathlib import Path
+
+    from md_doc.builders._assets import _svg_to_png
+
+    font = Path(ziamath.__file__).parent / "fonts" / "STIXTwoMath-Regular.ttf"
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 300 40">'
+        '<text x="4" y="28" font-family="Late Face Test" font-size="22">Late</text></svg>'
+    )
+    before = _svg_to_png(svg)
+    if before is None or not font.is_file():
+        pytest.skip("cairosvg or test font missing")
+    generation = m.font_generation()
+    copy = Path(str(font))  # a path not yet registered under this family
+    m._FC_ADDED.discard(copy)
+    m.register_fonts([("Late Face Test", copy, "400")])
+    assert m.font_generation() > generation

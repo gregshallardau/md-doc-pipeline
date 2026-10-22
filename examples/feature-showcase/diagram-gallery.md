@@ -262,3 +262,231 @@ flowchart LR
     B -->|no| D[Render page]
     D --> C
 ```
+
+<!-- pagebreak -->
+
+## Quadrant chart
+
+```mermaid
+quadrantChart
+    title Reach and engagement of campaigns
+    x-axis Low Reach --> High Reach
+    y-axis Low Engagement --> High Engagement
+    quadrant-1 We should expand
+    quadrant-2 Need to promote
+    quadrant-3 Re-evaluate
+    quadrant-4 May be improved
+    Campaign A: [0.3, 0.6]
+    Campaign B: [0.45, 0.23]
+    Campaign C: [0.57, 0.69]
+    Campaign D: [0.78, 0.34]
+    Campaign E: [0.40, 0.34]
+    Campaign F:::hot: [0.35, 0.78]
+    classDef hot color: #d03b3b, radius : 7
+```
+
+## Sankey
+
+```mermaid
+sankey
+Electricity grid,Heating and cooling - homes,113.726
+Electricity grid,Industry,342.165
+Electricity grid,Losses,56.691
+Wind,Electricity grid,289.366
+Solar,Electricity grid,59.901
+Nuclear,Electricity grid,839.978
+Gas,Electricity grid,26.861
+Gas,Industry,46.477
+Electricity grid,"Heating and cooling, commercial",88.14
+```
+
+<!-- pagebreak -->
+
+## Radar
+
+```mermaid
+radar-beta
+  title Restaurant comparison
+  axis food["Food"], service["Service"], price["Price"]
+  axis ambiance["Ambiance"], wait["Wait time"]
+  curve a["Restaurant A"]{4, 3, 2, 4, 3}
+  curve b["Restaurant B"]{3, 4, 3, 3, 5}
+  max 5
+```
+
+## Treemap
+
+```mermaid
+treemap-beta
+"Products"
+    "Electronics"
+        "Phones": 50
+        "Computers": 30
+        "Accessories": 20
+    "Clothing"
+        "Men's": 40
+        "Women's": 40
+"Services"
+    "Support": 35
+    "Training": 15
+```
+
+<!-- pagebreak -->
+
+## Packet
+
+```mermaid
+---
+title: "TCP Packet"
+---
+packet
+0-15: "Source Port"
+16-31: "Destination Port"
+32-63: "Sequence Number"
+64-95: "Acknowledgment Number"
+96-99: "Data Offset"
+100-105: "Reserved"
+106: "URG"
+107: "ACK"
+108: "PSH"
+109: "RST"
+110: "SYN"
+111: "FIN"
+112-127: "Window"
+128-143: "Checksum"
+144-159: "Urgent Pointer"
+160-191: "(Options and Padding)"
+192-255: "Data (variable length)"
+```
+
+## Block
+
+```mermaid
+block
+columns 1
+  db(("DB"))
+  blockArrowId6(down)
+  block:ID
+    A
+    B["A wide one in the middle"]
+    C
+  end
+  space
+  D
+  ID --> D
+  C --> D
+  style B fill:#e8eefc,stroke:#3c5aa8
+```
+
+<!-- pagebreak -->
+
+## Kanban
+
+```mermaid
+kanban
+  Todo
+    [Create Documentation]
+    docs[Create Blog about the new diagram]
+  [In progress]
+    id6[Create renderer so that it works in all cases]@{ priority: 'High' }
+  id9[Ready for deploy]
+    id8[Design grammar]@{ assigned: 'knsv' }
+  id10[Ready for test]
+    id4[Create parsing tests]@{ ticket: MC-2038, assigned: 'K.Sveidqvist', priority: 'High' }
+    id66[last item]@{ priority: 'Very Low', assigned: 'knsv' }
+  id11[Done]
+    id5[define getData]
+    id2[Title of diagram is more than 100 chars]@{ ticket: MC-2036, priority: 'Very High'}
+```
+
+## Architecture
+
+```mermaid
+architecture-beta
+    group api(cloud)[API]
+    service db(database)[Database] in api
+    service disk1(disk)[Storage] in api
+    service disk2(disk)[Storage] in api
+    service server(server)[Server] in api
+    service web(internet)[Internet]
+    db:L -- R:server
+    disk1:T -- B:server
+    disk2:T -- B:db
+    web:R --> L:server
+```
+
+<!-- pagebreak -->
+
+## C4 container
+
+```mermaid
+C4Container
+    title Container diagram for Internet Banking System
+    System_Ext(email_system, "E-Mail System", "The internal Microsoft Exchange system")
+    Person(customer, Customer, "A customer of the bank, with personal bank accounts")
+    Container_Boundary(c1, "Internet Banking") {
+        Container(spa, "Single-Page App", "JavaScript, Angular", "Provides all the Internet banking functionality to customers via their web browser")
+        Container_Ext(mobile_app, "Mobile App", "C#, Xamarin", "Provides a limited subset of the Internet banking functionality")
+        Container(web_app, "Web Application", "Java, Spring MVC", "Delivers the static content and the SPA")
+        ContainerDb(database, "Database", "SQL Database", "Stores user registration information, hashed credentials, access logs")
+        ContainerDb_Ext(backend_api, "API Application", "Java, Docker Container", "Provides Internet banking functionality via API")
+    }
+    System_Ext(banking_system, "Mainframe Banking System", "Stores all of the core banking information")
+    Rel(customer, web_app, "Uses", "HTTPS")
+    Rel(customer, spa, "Uses", "HTTPS")
+    Rel(customer, mobile_app, "Uses")
+    Rel_Back(database, backend_api, "Reads from and writes to", "sync, JDBC")
+    Rel(email_system, customer, "Sends e-mails to")
+    Rel(backend_api, email_system, "Sends e-mails using", "sync, SMTP")
+    Rel(backend_api, banking_system, "Uses", "sync/async, XML/HTTPS")
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+```
+
+## Requirement
+
+```mermaid
+requirementDiagram
+  requirement checkout_req {
+    id: 1
+    text: Orders must be payable online.
+    risk: high
+    verifymethod: test
+  }
+  functionalRequirement payment_req {
+    id: 1.1
+    text: Card payments must be authorised.
+    risk: high
+    verifymethod: test
+  }
+  element checkout_service {
+    type: service
+    docref: docs/checkout.md
+  }
+  checkout_req - contains -> payment_req
+  checkout_service - satisfies -> payment_req
+```
+
+<!-- pagebreak -->
+
+## ZenUML
+
+```mermaid
+zenuml
+    title Order service
+    @Actor Client
+    @Database DB
+    Client->OrderService.create(order) {
+      valid = Validator.check(order)
+      if(valid) {
+        DB.save(order)
+        return id
+      } else {
+        @return
+        OrderService->Client: rejected
+      }
+    }
+    par {
+      OrderService->Email: confirmation
+      OrderService->Analytics: track
+    }
+```
