@@ -66,6 +66,7 @@ class RefactorRequest(BaseModel):
     name: str
     documents: list[str]
     revisions: dict[str, str]
+    folder: str | None = None  # templates folder; default: closest one the documents share
 
 
 class BuildRequest(BaseModel):
@@ -491,7 +492,20 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 )
             group.name = name
             group.include = f"{name}.md"
-            group.target = group.target.with_name(f"{name}.md")
+            # Includes only resolve from a templates/ folder in the documents' common
+            # folder or one of its parents, so those are the only valid locations.
+            common = Path(os.path.commonpath([o.doc.path.parent for o in group.occurrences]))
+            allowed = [common / "templates"]
+            for parent in common.parents:
+                if not parent.is_relative_to(ws.root):
+                    break
+                allowed.append(parent / "templates")
+            chosen_dir = allowed[0] if req.folder is None else _locate(req.folder)[1]
+            if chosen_dir not in allowed:
+                raise HTTPException(
+                    400, "Templates must live in a templates folder shared by every document"
+                )
+            group.target = chosen_dir / f"{name}.md"
             if group.target.exists():
                 raise HTTPException(409, f"{_api_path(ws, group.target)} already exists")
 

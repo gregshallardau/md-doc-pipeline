@@ -122,3 +122,35 @@ def test_crlf_documents_stay_crlf(client, workspace):
     raw = (workspace / "clients/a/proposal.md").read_bytes()
     assert b'{% include "about-blueshift.md" %}\r\n' in raw
     assert raw.count(b"\n") == raw.count(b"\r\n")
+
+
+def test_apply_into_chosen_parent_folder(client, workspace):
+    [g] = scan(client)["groups"]
+    body = payload(g)
+    body["folder"] = "templates"
+    r = client.post("/api/refactor/apply", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["template"] == "templates/about-blueshift.md"
+    assert (workspace / "templates/about-blueshift.md").exists()
+    from md_doc.renderer import render
+
+    assert "Blueshift is a consultancy" in render(workspace / "clients/a/proposal.md")
+
+
+def test_subset_defaults_to_its_own_closest_folder(client, workspace):
+    (workspace / "clients/a/second.md").write_text(f"# s\n\n{ABOUT}")
+    [g] = scan(client)["groups"]
+    docs = ["clients/a/proposal.md", "clients/a/second.md"]
+    r = client.post("/api/refactor/apply", json=payload(g, docs))
+    assert r.status_code == 200, r.text
+    assert r.json()["template"] == "clients/a/templates/about-blueshift.md"
+
+
+@pytest.mark.parametrize(
+    "folder", ["clients/a/templates", "clients/templates/sub", "other", "../x"]
+)
+def test_apply_rejects_unreachable_locations(client, folder):
+    [g] = scan(client)["groups"]
+    body = payload(g)
+    body["folder"] = folder
+    assert client.post("/api/refactor/apply", json=body).status_code in {400, 404}

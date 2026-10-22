@@ -3563,19 +3563,60 @@
         "This text appears in several documents. Choose where to replace it with an include of one shared template.",
       ),
     );
-    const folder = group.target.slice(0, group.target.lastIndexOf("/") + 1);
     const nameInput = el("input", "input");
     nameInput.value = group.name;
     nameInput.setAttribute("aria-label", "Template name");
-    const where = el("p", "shared-where");
-    const syncWhere = () => {
-      where.textContent = "Saved as " + folder + nameInput.value.trim() + ".md";
-    };
-    nameInput.oninput = syncWhere;
-    syncWhere();
     const nameRow = el("div", "shared-name-row");
     nameRow.append(nameInput, el("span", null, ".md"));
-    body.append(el("label", null, "Template name"), nameRow, where);
+    // An include only resolves from a templates/ folder in the documents' closest
+    // shared folder or above it, so those are the choices (closest first).
+    const place = el("select", "input");
+    place.setAttribute("aria-label", "Template location");
+    let placeTouched = false;
+    const syncPlace = (paths) => {
+      const dirs = paths.map((p) => p.split("/").slice(0, -1));
+      let common = dirs[0] || [];
+      for (const d of dirs) {
+        const mismatch = common.findIndex((part, i) => d[i] !== part);
+        if (mismatch >= 0) common = common.slice(0, mismatch);
+      }
+      const previous = place.value;
+      place.replaceChildren();
+      for (let depth = common.length; depth >= 0; depth--) {
+        const folder = [...common.slice(0, depth), "templates"].join("/");
+        const label =
+          (depth === common.length
+            ? "Next to the documents"
+            : depth === 0
+              ? "Workspace root"
+              : "Shared parent folder") +
+          " · " +
+          folder +
+          "/";
+        place.append(new Option(label, folder));
+      }
+      place.value =
+        placeTouched && [...place.options].some((o) => o.value === previous)
+          ? previous
+          : place.options[0]?.value;
+    };
+    const where = el("p", "shared-where");
+    const syncWhere = () => {
+      where.textContent =
+        "Saved as " + place.value + "/" + nameInput.value.trim() + ".md";
+    };
+    nameInput.oninput = syncWhere;
+    place.onchange = () => {
+      placeTouched = true;
+      syncWhere();
+    };
+    body.append(
+      el("label", null, "Template name"),
+      nameRow,
+      el("label", null, "Location"),
+      place,
+      where,
+    );
     body.append(el("label", null, "Shared text"));
     body.append(el("pre", "shared-text", group.text));
     body.append(el("label", null, "Replace in"));
@@ -3586,6 +3627,11 @@
       const button = $("dialog-actions").lastElementChild;
       button.disabled = count < 2;
       button.textContent = `Extract from ${count} document${count === 1 ? "" : "s"}`;
+      const picked = boxes.filter((box) => box.checked).map((box) => box.dataset.path);
+      if (picked.length) {
+        syncPlace(picked);
+        syncWhere();
+      }
     };
     for (const occurrence of group.occurrences) {
       const buffer = state.buffers.get(occurrence.path);
@@ -3653,6 +3699,7 @@
                 min_chars: shared.minChars,
                 key: group.key,
                 name: nameInput.value,
+                folder: place.value,
                 documents: chosen.map((o) => o.path),
                 revisions: Object.fromEntries(
                   chosen.map((o) => [o.path, o.revision]),
