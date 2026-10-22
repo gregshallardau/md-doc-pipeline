@@ -490,3 +490,197 @@ zenuml
       OrderService->Analytics: track
     }
 ```
+
+<!-- pagebreak -->
+
+## Use case
+
+```mermaid
+usecase-beta
+direction LR
+actor Customer
+actor Support
+systemBoundary Storefront
+  Browse("Browse catalogue")
+  Checkout("Checkout")
+end
+systemBoundary Fulfilment
+  Track("Track delivery")
+end
+Customer --> Browse
+Customer --> Checkout
+Customer --> Track
+Support --> Track
+Checkout ..> : include Browse
+```
+
+## Swimlanes
+
+```mermaid
+swimlane-beta LR
+  subgraph Customer
+    request[Request service]
+    receive[Receive update]
+  end
+  subgraph Support
+    triage[Triage request]
+    answer[Send answer]
+  end
+  subgraph Engineering
+    investigate[Investigate issue]
+    fix[Prepare fix]
+  end
+  request --> triage
+  triage -->|Known issue| answer
+  triage -->|Needs code| investigate
+  investigate --> fix --> answer
+  answer --> receive
+```
+
+<!-- pagebreak -->
+
+## Agent flow
+
+```mermaid
+agentflow-beta TB
+  brief@{ shape: input, label: "Release brief" }
+  flow drafting["Drafting Agent"]
+    draft@{ shape: task, label: "Draft the notes" }
+    search@{ shape: tool, label: "changelog_search" }
+    tone@{ shape: refdoc, label: "Tone of voice" }
+    draft --> search
+    draft -.-> tone
+  end
+  flow review["Review Agent"]
+    check@{ shape: task, label: "Check the claims" }
+    ok@{ shape: decision, label: "Accurate?" }
+    check --> ok
+  end
+  publish@{ shape: action, label: "Publish" }
+  brief --> draft
+  tone --> check
+  ok -->|yes| publish
+  ok --x|no| draft
+```
+
+## Tree view
+
+```mermaid
+treeView-beta
+src/
+  App.tsx :::highlight ## main component
+  index.ts ## entry point
+  components/
+    Button.tsx
+    Card.tsx
+.env ## environment variables
+package.json
+```
+
+<!-- pagebreak -->
+
+## Ishikawa
+
+```mermaid
+ishikawa-beta
+Blurry photo
+  Process
+    Out of focus
+    Shutter speed too slow
+  Equipment
+    Lens
+      Dirty lens
+    Sensor
+  User
+    Shaky hands
+  Environment
+    Too dark
+    Subject moved
+```
+
+## Venn
+
+```mermaid
+venn-beta
+  title What makes a good feature
+  set Desirable
+  set Feasible
+  set Viable
+  union Desirable,Feasible["Buildable"]
+  union Feasible,Viable["Sustainable"]
+  union Desirable,Viable["Marketable"]
+  union Desirable,Feasible,Viable["Ship it"]
+```
+
+<!-- pagebreak -->
+
+## Cynefin
+
+```mermaid
+cynefin-beta
+  title Incident response
+  complex
+    "Investigate root cause"
+    "Run chaos experiment"
+  complicated
+    "Analyse performance data"
+  clear
+    "Restart service"
+    "Apply known fix"
+  chaotic
+    "Page on-call immediately"
+  confusion
+    "Unknown failure mode"
+  chaotic --> complex : "Stabilised"
+  complex --> complicated : "Pattern found"
+```
+
+<!-- pagebreak -->
+
+## Wardley map
+
+```mermaid
+wardley-beta
+title Tea shop value chain
+anchor Business [0.95, 0.63]
+component Cup of Tea [0.79, 0.61]
+component Tea [0.63, 0.81]
+component Hot Water [0.52, 0.80]
+component Kettle [0.43, 0.35] (build)
+component Power [0.10, 0.70] (outsource)
+Business -> Cup of Tea
+Cup of Tea -> Tea
+Cup of Tea -> Hot Water
+Hot Water -> Kettle
+Kettle -> Power
+evolve Kettle 0.62
+note "Standard power lets kettles evolve" [0.28, 0.40]
+```
+
+## Railroad
+
+```mermaid
+railroad-ebnf-beta
+title "Arithmetic expressions"
+expression = term ( ( "+" | "-" ) term )* ;
+term = factor ( ( "*" | "/" ) factor )* ;
+factor = number | "(" expression ")" ;
+number = digit+ ;
+```
+
+<!-- pagebreak -->
+
+## Event modeling
+
+```mermaid
+eventmodeling
+tf 01 ui CartUI
+tf 02 cmd AddItem { description: string, price: number }
+tf 03 evt ItemAdded
+tf 04 rmo CartItems ->> 03
+tf 05 ui CartUI
+rf 06 evt External.InventoryChanged
+tf 07 pcr InventoryProcessor
+tf 08 cmd ChangeInventory
+tf 09 evt Cart.InventoryChanged
+```

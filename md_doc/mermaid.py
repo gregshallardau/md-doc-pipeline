@@ -218,6 +218,16 @@ class MindNode:
 
 
 @dataclass
+class TreeRow:
+    label: str
+    depth: int = 0
+    is_dir: bool = False
+    desc: str = ""
+    highlight: bool = False
+    icon: str | None = None
+
+
+@dataclass
 class EREntity:
     name: str = ""
     attributes: list[str] = field(default_factory=list)  # "type name"
@@ -967,7 +977,7 @@ _EDGE_RE = re.compile(
         (?P<tend>-{2,}>|-{3,}|-{2}[ox](?=\s|$)|={2,}>|={3,}|={2}[ox](?=\s|$)
                  |\.-+>|\.-+(?![>\w])|\.-[ox](?=\s|$))
       |
-        (?P<plain>-{2,}>|-{3,}|-{2,}[ox](?=\s|$)|={2,}>|={3,}|={2,}[ox](?=\s|$)
+        (?P<plain>-{2,}>|-{3,}|-{2,}[ox](?=\s|$|\|)|={2,}>|={3,}|={2,}[ox](?=\s|$|\|)
                  |-\.+-?>|-\.+-(?![>\w]))
     )
     (?:\|(?P<pipe>[^|]*)\|)?
@@ -1028,10 +1038,43 @@ def _ensure_node(fc: Flowchart, token: str) -> str:
         token = cm.group(1).strip()
         classes.insert(0, cm.group(2))
 
+    meta: dict[str, str] = {}
+    mm = re.match(r"^(.*?)\s*@\{(.*)\}$", token, re.DOTALL)
+    if mm:
+        token = mm.group(1).strip()
+        for key, value in re.findall(r"(\w+)\s*:\s*(\"[^\"]*\"|'[^']*'|[^,]+)", mm.group(2)):
+            meta[key.lower()] = value.strip().strip("\"'")
+
     nid = _ensure_node_token(fc, token)
     if nid in fc.nodes:
-        fc.nodes[nid].classes.extend(c for c in classes if c not in fc.nodes[nid].classes)
+        node = fc.nodes[nid]
+        node.classes.extend(c for c in classes if c not in node.classes)
+        if meta.get("shape"):
+            node.shape = _SHAPE_ALIASES.get(meta["shape"].lower(), "rect")
+        if meta.get("label"):
+            node.label = meta["label"]
     return nid
+
+
+# Mermaid v11 named shapes (``A@{ shape: cyl }``) and the agentflow aliases
+_SHAPE_ALIASES = {
+    **{k: "rect" for k in ("rect", "rectangle", "proc", "process", "card", "notched-rectangle")},
+    **{k: "rounded" for k in ("rounded", "event", "task")},
+    **{k: "stadium" for k in ("stadium", "pill", "terminal")},
+    **{k: "subroutine" for k in ("subroutine", "subproc", "fr-rect", "framed-rectangle", "tool")},
+    **{k: "cylinder" for k in ("cyl", "cylinder", "database", "db", "h-cyl", "das")},
+    **{k: "circle" for k in ("circle", "circ", "dbl-circ", "double-circle", "sm-circ", "start")},
+    **{k: "diamond" for k in ("diamond", "diam", "decision", "question")},
+    **{k: "hexagon" for k in ("hex", "hexagon", "prepare", "action")},
+    **{k: "parallelogram" for k in ("lean-r", "lean-right", "in-out", "input")},
+    **{k: "parallelogram_alt" for k in ("lean-l", "lean-left", "out-in")},
+    **{k: "trapezoid" for k in ("trap-b", "trapezoid", "priority")},
+    **{k: "trapezoid_alt" for k in ("trap-t", "inv-trapezoid", "manual")},
+    **{k: "document" for k in ("doc", "document", "lin-doc", "docs", "documents", "refdoc")},
+    **{k: "flag" for k in ("flag", "asym", "paper-tape")},
+    "ellipse": "ellipse",
+    "actor": "actor",
+}
 
 
 def _ensure_node_token(fc: Flowchart, token: str) -> str:
@@ -1140,7 +1183,42 @@ def parse(source: str) -> Flowchart:
                     subgraph_stack[-1].node_ids.append(nid)
 
     _apply_styles(fc, class_defs, class_assign, node_styles, link_styles)
+    _attach_subgraph_edges(fc)
     return fc
+
+
+def _subgraph_members(fc: Flowchart, sg: Subgraph) -> list[str]:
+    by_id = {g.id: g for g in fc.subgraphs}
+    out = [n for n in sg.node_ids if n in fc.nodes]
+    for child in sg.children:
+        if child in by_id:
+            out += _subgraph_members(fc, by_id[child])
+    return out
+
+
+def _attach_subgraph_edges(fc: Flowchart) -> None:
+    """``A --> group`` targets the group's first node; ``group --> B`` leaves from its last."""
+    groups = {sg.id: sg for sg in fc.subgraphs}
+    hits = {e.src for e in fc.edges if e.src in groups} | {
+        e.dst for e in fc.edges if e.dst in groups
+    }
+    for gid in hits:
+        node = fc.nodes.get(gid)
+        if node is not None and node.label == gid:
+            del fc.nodes[gid]  # created by the edge parser, not a real node
+            for sg in fc.subgraphs:
+                if gid in sg.node_ids:
+                    sg.node_ids.remove(gid)
+    for e in fc.edges:
+        if e.dst in groups and e.dst not in fc.nodes:
+            members = _subgraph_members(fc, groups[e.dst])
+            if members:
+                e.dst = members[0]
+        if e.src in groups and e.src not in fc.nodes:
+            members = _subgraph_members(fc, groups[e.src])
+            if members:
+                e.src = members[-1]
+    fc.edges = [e for e in fc.edges if e.src in fc.nodes and e.dst in fc.nodes]
 
 
 def _apply_styles(
@@ -1816,6 +1894,33 @@ def _minimize_crossings(
     return best
 
 
+def _group_contiguous(fc: Flowchart, order: dict[int, list[str]]) -> dict[int, list[str]]:
+    """Keep each top-level subgraph's members side by side within a rank.
+
+    Groups stay where their first member landed; a lane carrying a long edge
+    joins the group of the node it leads to, so it runs inside that frame.
+    """
+    child_ids = {c for sg in fc.subgraphs for c in sg.children}
+    group: dict[str, int] = {}
+    for gi, sg in enumerate(sg for sg in fc.subgraphs if sg.id not in child_ids):
+        for nid in _subgraph_members(fc, sg):
+            group.setdefault(nid, gi)
+    for nid in fc.nodes:
+        m = re.match(r"__lane(\d+)_", nid)
+        if m:
+            e = fc.edges[int(m.group(1))]
+            g = group.get(e.dst, group.get(e.src))
+            if g is not None:
+                group[nid] = g
+    out: dict[int, list[str]] = {}
+    for lvl, row in order.items():
+        first: dict[object, int] = {}
+        for i, n in enumerate(row):
+            first.setdefault(group.get(n, ("solo", n)), i)
+        out[lvl] = sorted(row, key=lambda n: first[group.get(n, ("solo", n))])
+    return out
+
+
 def _layout_layered(
     fc: Flowchart,
     levels: dict[str, int],
@@ -1849,6 +1954,8 @@ def _layout_layered(
                 parents_map[k].append(src)
 
     order = _minimize_crossings(level_groups, children_map, parents_map)
+    if fc.subgraphs:
+        order = _group_contiguous(fc, order)
     crossings = _total_crossings(order, children_map)
 
     center: dict[str, float] = {}
@@ -1950,6 +2057,13 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             node.w += 2 * _SLANT_INSET
         elif node.shape == "cylinder":
             node.h = max(node.h + 16, 56)
+        elif node.shape == "document":
+            node.h += 8
+        elif node.shape == "ellipse":
+            node.w, node.h = node.w * 1.22, node.h + 10
+        elif node.shape == "actor":
+            node.w = max(max(_text_w(line, font_size, 500) for line in lines) + 12, 56)
+            node.h = 50 + num_lines * font_size * 1.3
 
     # Assign levels
     levels = _compute_levels(fc)
@@ -2063,7 +2177,13 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     for nid in [n for n, node in fc.nodes.items() if node.shape == "dummy"]:
         del fc.nodes[nid]
 
-    # Subgraph frames: inner ones first so an outer frame can wrap its children
+    _frame_subgraphs(fc, is_horizontal)
+    _separate_frames(fc, is_horizontal)
+
+
+def _frame_subgraphs(fc: Flowchart, horizontal: bool = True) -> None:
+    """Size every subgraph frame around its members."""
+    # Inner frames first so an outer frame can wrap its children
     by_id = {sg.id: sg for sg in fc.subgraphs}
     sg_pad = 12
     for sg in reversed(fc.subgraphs):
@@ -2079,11 +2199,71 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
         ]
         if not boxes:
             continue
+        # A long edge into this group runs inside the frame on the ranks it shares
+        members = set(sg.node_ids)
+        lo_x, hi_x = min(b[0] for b in boxes), max(b[2] for b in boxes)
+        lo_y, hi_y = min(b[1] for b in boxes), max(b[3] for b in boxes)
+        for i, pts in fc.waypoints.items():
+            if fc.edges[i].dst in members and fc.edges[i].src not in members:
+                for px, py in pts:
+                    if (lo_x <= px <= hi_x) if horizontal else (lo_y <= py <= hi_y):
+                        boxes.append((px - 4, py - 4, px + 4, py + 4))
         x0 = min(b[0] for b in boxes) - sg_pad
         y0 = min(b[1] for b in boxes) - sg_pad - 18  # room for the title
         sg.x, sg.y = x0, y0
         sg.w = max(b[2] for b in boxes) + sg_pad - x0
         sg.h = max(b[3] for b in boxes) + sg_pad - y0
+
+
+def _separate_frames(fc: Flowchart, is_horizontal: bool) -> None:
+    """Push apart sibling top-level frames whose panels overlap.
+
+    Members of different groups can share a rank, so their frames may
+    interleave; everything past the overlap moves along the cross axis.
+    """
+    child_ids = {c for sg in fc.subgraphs for c in sg.children}
+    for _ in range(8):
+        tops = [sg for sg in fc.subgraphs if sg.id not in child_ids and sg.w > 0]
+        clash = None
+        for a in tops:
+            for b in tops:
+                if a is b:
+                    continue
+                if a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h:
+                    a0 = a.y if is_horizontal else a.x
+                    b0 = b.y if is_horizontal else b.x
+                    if a0 <= b0:
+                        clash = (a, b)
+                        break
+            if clash:
+                break
+        if clash is None:
+            return
+        a, b = clash
+        if is_horizontal:
+            shift, start = a.y + a.h + 10 - b.y, b.y
+        else:
+            shift, start = a.x + a.w + 10 - b.x, b.x
+        keep = set(_subgraph_members(fc, a))
+        for nid, node in fc.nodes.items():
+            if nid in keep:
+                continue
+            if is_horizontal and node.y + node.h > start:
+                node.y += shift
+            elif not is_horizontal and node.x + node.w > start:
+                node.x += shift
+        for k, pts in fc.waypoints.items():
+            if fc.edges[k].dst in keep and fc.edges[k].src not in keep:
+                continue  # runs inside frame a, which stays put
+            fc.waypoints[k] = [
+                (
+                    (x, y + shift if y > start else y)
+                    if is_horizontal
+                    else (x + shift if x > start else x, y)
+                )
+                for x, y in pts
+            ]
+        _frame_subgraphs(fc, is_horizontal)
 
 
 # ---------------------------------------------------------------------------
@@ -2129,6 +2309,9 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
             f'<path d="M2 2 L8 8 M8 2 L2 8" stroke="{c}" stroke-width="1.6" fill="none"/></marker>',
             f'<marker id="{prefix}cross-s{sfx}" markerWidth="10" markerHeight="10" refX="1" refY="5" {common}>'
             f'<path d="M2 2 L8 8 M8 2 L2 8" stroke="{c}" stroke-width="1.6" fill="none"/></marker>',
+            f'<marker id="{prefix}triangle{sfx}" markerWidth="15" markerHeight="13" refX="14" refY="6.5" {common}>'
+            f'<path d="M 1,1 L 14,6.5 L 1,12 Z" fill="{t["surface"]}" stroke="{c}" stroke-width="1.3" '
+            f'stroke-linejoin="round"/></marker>',
         ]
     out.append("</defs>")
     return "\n".join(out)
@@ -2371,6 +2554,29 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     elif node.shape == "circle":
         r = min(node.w, node.h) / 2
         parts.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" {style}/>')
+    elif node.shape == "ellipse":
+        parts.append(f'<ellipse cx="{cx}" cy="{cy}" rx="{node.w / 2}" ry="{node.h / 2}" {style}/>')
+    elif node.shape == "document":
+        x0, y0, x1, y1 = node.x, node.y, node.x + node.w, node.y + node.h - 6
+        parts.append(
+            f'<path d="M {x0:g},{y0 + 5:g} Q {x0:g},{y0:g} {x0 + 5:g},{y0:g} H {x1 - 5:g} '
+            f"Q {x1:g},{y0:g} {x1:g},{y0 + 5:g} V {y1:g} "
+            f"C {x1 - node.w / 4:g},{y1 - 8:g} {x0 + node.w * 0.6:g},{y1 + 12:g} {x0 + node.w / 2:g},{y1:g} "
+            f'C {x0 + node.w * 0.35:g},{y1 - 10:g} {x0 + node.w / 6:g},{y1 + 2:g} {x0:g},{y1:g} Z" {style}/>'
+        )
+        cy -= 3
+    elif node.shape == "actor":
+        hx, hy = cx, node.y + 8
+        ink2 = t["ink2"]
+        parts.append(
+            f'<g fill="none" stroke="{ink2}" stroke-width="1.5" stroke-linecap="round">'
+            f'<circle cx="{hx:g}" cy="{hy:g}" r="7" fill="{t["surface"]}"/>'
+            f'<path d="M {hx:g},{hy + 7:g} V {hy + 24:g} M {hx - 12:g},{hy + 13:g} H {hx + 12:g} '
+            f'M {hx:g},{hy + 24:g} L {hx - 9:g},{hy + 36:g} M {hx:g},{hy + 24:g} L {hx + 9:g},{hy + 36:g}"/>'
+            f"</g>"
+        )
+        text_color = t["ink"]
+        cy = node.y + 50 + (node.h - 50) / 2 - 2
     elif node.shape == "cylinder":
         ry = 8  # ellipse cap height
         body_top = node.y + ry
@@ -6270,6 +6476,48 @@ def _c4_card_size(el: C4Element) -> tuple[float, float, list[str], list[str]]:
     return w, max(h, 76.0), label, descr
 
 
+def _c4_point(
+    p0: tuple[float, float], c: tuple[float, float] | None, p1: tuple[float, float], f: float
+) -> tuple[float, float]:
+    """Point at fraction *f* along a straight relation, or a quadratic one bent through *c*."""
+    if c is None:
+        return p0[0] + (p1[0] - p0[0]) * f, p0[1] + (p1[1] - p0[1]) * f
+    g = 1 - f
+    return (
+        g * g * p0[0] + 2 * g * f * c[0] + f * f * p1[0],
+        g * g * p0[1] + 2 * g * f * c[1] + f * f * p1[1],
+    )
+
+
+def _c4_detour(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    others: list[tuple[float, float, float, float]],
+) -> tuple[float, float] | None:
+    """Control point that bends a relation around cards it would cross, or None if it is clear."""
+
+    def hits(c: tuple[float, float] | None) -> bool:
+        for i in range(1, 40):
+            x, y = _c4_point(p0, c, p1, i / 40)
+            if any(
+                bx - 4 < x < bx + bw + 4 and by - 4 < y < by + bh + 4 for bx, by, bw, bh in others
+            ):
+                return True
+        return False
+
+    if not hits(None):
+        return None
+    mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    length = math.hypot(dx, dy) or 1.0
+    nx, ny = -dy / length, dx / length
+    for off in (60, -60, 110, -110, 170, -170, 240, -240):
+        c = (mx + nx * off, my + ny * off)
+        if not hits(c):
+            return c
+    return None
+
+
 def render_c4_svg(cd: C4Diagram, theme: dict[str, str] | None = None) -> str:
     """Render a C4 diagram: role-coloured cards packed in rows inside dashed boundaries."""
     t = _tokens(theme)
@@ -6278,6 +6526,21 @@ def render_c4_svg(cd: C4Diagram, theme: dict[str, str] | None = None) -> str:
     gap, row_gap, pad, head = 34.0, 64.0, 16.0, 34.0
     boxes: dict[str, tuple[float, float, float, float]] = {}
     frames: list[tuple[C4Boundary, float, float, float, float]] = []
+
+    def rel_lines(rel: C4Rel) -> list[str]:
+        lines = _wrap_lines(rel.label, 140, _FS_SM) if rel.label else []
+        if rel.techn:
+            lines.append(f"[{rel.techn}]")
+        return lines
+
+    # Neighbours joined by a labelled relation sit far enough apart for the label
+    pair_gap: dict[frozenset[str], float] = {}
+    for rel in cd.rels:
+        lines = rel_lines(rel)
+        if lines:
+            need = max(_text_w(x, _FS_SM) for x in lines) + 34
+            key = frozenset((rel.src, rel.dst))
+            pair_gap[key] = max(pair_gap.get(key, gap), need)
 
     def measure(b: C4Boundary) -> tuple[float, float]:
         return place(b, 0.0, 0.0, dry=True)
@@ -6292,11 +6555,13 @@ def render_c4_svg(cd: C4Diagram, theme: dict[str, str] | None = None) -> str:
             sizes = [_c4_card_size(el) for el in row]
             row_h = max(s[1] for s in sizes)
             cx = x + inner
-            for el, (w, h, _, _) in zip(row, sizes):
+            for k, (el, (w, h, _, _)) in enumerate(zip(row, sizes)):
+                if k:
+                    cx += pair_gap.get(frozenset((row[k - 1].alias, el.alias)), gap)
                 if not dry:
                     boxes[el.alias] = (cx, cy + (row_h - h) / 2, w, h)
-                cx += w + gap
-            width = max(width, cx - gap - x - inner)
+                cx += w
+            width = max(width, cx - x - inner)
             cy += row_h + row_gap
         for start in range(0, len(b.boundaries), cd.boundary_in_row):
             row_b = b.boundaries[start : start + cd.boundary_in_row]
@@ -6355,21 +6620,28 @@ def render_c4_svg(cd: C4Diagram, theme: dict[str, str] | None = None) -> str:
         bc = (box_b[0] + box_b[2] / 2, box_b[1] + box_b[3] / 2)
         p0, p1 = clip(box_a, *bc), clip(box_b, *ac)
         mk = ' marker-end="url(#c4-arr)"' + (' marker-start="url(#c4-arr-s)"' if rel.bi else "")
-        parts.append(
-            f'<line x1="{p0[0]:.1f}" y1="{p0[1]:.1f}" x2="{p1[0]:.1f}" y2="{p1[1]:.1f}" '
-            f'stroke="{t["ink2"]}" stroke-width="1.25" stroke-dasharray="5 3"{mk}/>'
-        )
-        mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
-        lines = _wrap_lines(rel.label, 140, _FS_SM) if rel.label else []
-        if rel.techn:
-            lines.append(f"[{rel.techn}]")
+        others = [b for k, b in boxes.items() if k not in (rel.src, rel.dst)]
+        ctrl = _c4_detour(p0, p1, others)
+        if ctrl is None:
+            parts.append(
+                f'<line x1="{p0[0]:.1f}" y1="{p0[1]:.1f}" x2="{p1[0]:.1f}" y2="{p1[1]:.1f}" '
+                f'stroke="{t["ink2"]}" stroke-width="1.25" stroke-dasharray="5 3"{mk}/>'
+            )
+        else:
+            # Re-aim the ends at the control point so arrowheads follow the curve
+            p0, p1 = clip(box_a, *ctrl), clip(box_b, *ctrl)
+            parts.append(
+                f'<path d="M {p0[0]:.1f},{p0[1]:.1f} Q {ctrl[0]:.1f},{ctrl[1]:.1f} {p1[0]:.1f},{p1[1]:.1f}" '
+                f'fill="none" stroke="{t["ink2"]}" stroke-width="1.25" stroke-dasharray="5 3"{mk}/>'
+            )
+        mx, my = _c4_point(p0, ctrl, p1, 0.5)
+        lines = rel_lines(rel)
         if lines:
             lw = max(_text_w(x, _FS_SM) for x in lines) + 10
             lh = 14 * len(lines) + 4
             # Slide the label along its line until it clears every card (and earlier labels)
             for f in sorted((i / 40 for i in range(4, 37)), key=lambda v: abs(v - 0.5)):
-                cx_ = p0[0] + (p1[0] - p0[0]) * f
-                cy_ = p0[1] + (p1[1] - p0[1]) * f
+                cx_, cy_ = _c4_point(p0, ctrl, p1, f)
                 box = (cx_ - lw / 2, cy_ - lh / 2, cx_ + lw / 2, cy_ + lh / 2)
                 hits = any(
                     box[0] < bx + bw and box[2] > bx and box[1] < by + bh and box[3] > by
@@ -6795,18 +7067,8 @@ class UnsupportedDiagramError(ValueError):
 
 
 # Mermaid diagram keywords with no renderer here; the original code block is kept.
-_UNSUPPORTED_TYPES = (
-    "agentflow",
-    "cynefin",
-    "eventmodeling",
-    "ishikawa",
-    "railroad",
-    "swimlanes",
-    "treeView",
-    "usecase",
-    "venn",
-    "wardley",
-)
+# Every current Mermaid type renders, so this is empty until Mermaid adds another.
+_UNSUPPORTED_TYPES: tuple[str, ...] = ()
 
 
 _NAMED_THEMES: dict[str, dict[str, str]] = {
@@ -6909,6 +7171,2120 @@ def _strip_preamble(source: str) -> str:
     return re.sub(r"^\s*%%\{.*?\}%%[ \t]*\n?", "", text, flags=re.DOTALL).strip()
 
 
+def parse_usecase(source: str) -> Flowchart:
+    """Translate a use case diagram onto the flowchart model."""
+    fc = Flowchart(direction="LR")
+    boundary: Subgraph | None = None
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^usecase(-beta)?\s*$", line, re.I):
+            continue
+        line = re.sub(r"\s*>\s*(:::[\w-]+)?$", r"\1", line)  # visible stereotype marker
+        m = re.match(r"^direction\s+(TB|TD|BT|LR|RL)$", line, re.I)
+        if m:
+            fc.direction = {"TB": "TD", "BT": "TD"}.get(m.group(1).upper(), m.group(1).upper())
+            continue
+        m = re.match(
+            r'^systemBoundary\s+(?:"([^"]+)"|([\w-]+)\s*(?:[\[(]"?([^"\])]*)"?[\])])?)', line
+        )
+        if m:
+            label = m.group(1) or m.group(3) or m.group(2)
+            sid = _slug(m.group(1)) if m.group(1) else m.group(2)
+            boundary = Subgraph(id=sid, label=label)
+            fc.subgraphs.append(boundary)
+            continue
+        if line == "end":
+            boundary = None
+            continue
+        if (
+            line.startswith(("classDef ", "class ", "style ", "linkStyle ", "click "))
+            or re.match(r"^[\w-]+@\{", line)
+            and "-" not in line.split("@", 1)[0]
+        ):
+            continue
+        before = set(fc.nodes)
+        m = re.match(r"^(\S+)\s+\.\.>\s*:\s*(include|extend)\s+(\S+)$", line)
+        if m:
+            a, b = _ensure_node(fc, m.group(1)), _ensure_node(fc, m.group(3))
+            fc.edges.append(Edge(a, b, f"«{m.group(2)}»", "dotted", "arrow"))
+        elif "--|>" in line:
+            a, _, b = line.partition("--|>")
+            fc.edges.append(
+                Edge(
+                    _ensure_node(fc, a.strip()),
+                    _ensure_node(fc, b.strip()),
+                    "",
+                    "solid",
+                    "triangle",
+                )
+            )
+        elif any(
+            True for _ in _EDGE_RE.finditer(_mask(re.sub(r"\b[\w-]+@(?=[-.<o x])", "", line)))
+        ):
+            _parse_edge_line(fc, re.sub(r"\b[\w-]+@(?=[-.<ox])", "", line))
+        else:
+            am = re.match(r"^actor\s+(.+)$", line)
+            token = am.group(1) if am else line
+            qm = re.match(r'^"([^"]+)"$', token)
+            if qm:
+                token = f'{_slug(qm.group(1))}("{qm.group(1)}")'
+            nid = _ensure_node(fc, token)
+            if nid in fc.nodes:
+                node = fc.nodes[nid]
+                if am:
+                    node.shape = "actor"
+                elif node.shape == "rounded":
+                    node.shape = "ellipse"
+        for nid in fc.nodes:
+            if nid not in before:
+                node = fc.nodes[nid]
+                if node.shape == "rounded":
+                    node.shape = "ellipse"
+                if boundary is not None:
+                    boundary.node_ids.append(nid)
+    # Undeclared bare ids used only in relations are use cases, except known actors
+    for e in fc.edges:
+        for nid in (e.src, e.dst):
+            used = fc.nodes.get(nid)
+            if used is not None and used.shape == "rect" and used.label == nid:
+                used.shape = "ellipse"
+    return fc
+
+
+def render_usecase_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
+    return render_svg(fc, theme)
+
+
+def parse_agentflow(source: str) -> Flowchart:
+    """Translate an agentflow diagram (flows, typed shapes, three edge kinds) onto the flowchart model."""
+    lines_out: list[str] = []
+    global_lines: list[str] = []
+    collapsed: set[str] = set()
+    in_global = 0
+    depth_stack: list[str] = []
+    direction = "TB"
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%"):
+            continue
+        m = re.match(r"^agentflow(?:-beta)?(?:\s+(TB|TD|BT|LR|RL))?\s*$", line, re.I)
+        if m:
+            direction = (m.group(1) or "TB").upper()
+            continue
+        m = re.match(r"^([\w-]+)@\{\s*view\s*:\s*\"?collapsed\"?\s*\}$", line)
+        if m:
+            collapsed.add(m.group(1))
+            continue
+        if line == "global":
+            in_global += 1
+            depth_stack.append("global")
+            continue
+        m = re.match(r'^flow\s+([\w-]+)\s*(?:\[\s*"?([^"\]]*)"?\s*\])?(?:@\{.*\})?$', line)
+        if m:
+            depth_stack.append("flow")
+            target = global_lines if in_global else lines_out
+            target.append(f'subgraph {m.group(1)} ["{m.group(2) or m.group(1)}"]')
+            continue
+        if line == "end" and depth_stack:
+            kind = depth_stack.pop()
+            if kind == "global":
+                in_global -= 1
+            else:
+                (global_lines if in_global else lines_out).append("end")
+            continue
+        (global_lines if in_global else lines_out).append(line)
+    fc = parse(
+        "flowchart "
+        + ("TD" if direction == "TB" else direction)
+        + "\n"
+        + "\n".join(global_lines + lines_out)
+    )
+    for e in fc.edges:
+        if e.head == "cross":  # failure path
+            e.css.setdefault("stroke", _CRITICAL)
+    for gid in collapsed:
+        sg = next((g for g in fc.subgraphs if g.id == gid), None)
+        if sg is None:
+            continue
+        members = set(_subgraph_members(fc, sg))
+        fc.nodes[gid] = Node(gid, sg.label, "subroutine")
+        for e in fc.edges:
+            if e.src in members:
+                e.src = gid
+            if e.dst in members:
+                e.dst = gid
+        for nid in members:
+            fc.nodes.pop(nid, None)
+        fc.edges = [e for e in fc.edges if e.src != e.dst]
+        drop = {gid} | set(sg.children)
+        fc.subgraphs = [g for g in fc.subgraphs if g.id not in drop]
+        for g in fc.subgraphs:
+            g.node_ids = [n for n in g.node_ids if n in fc.nodes]
+            if gid in g.children:
+                g.children.remove(gid)
+                g.node_ids.append(gid)
+    return fc
+
+
+def parse_swimlanes(source: str) -> Flowchart:
+    """Swimlanes are flowcharts whose top-level subgraphs are lanes."""
+    lines = source.strip().splitlines()
+    head = lines[0].strip() if lines else ""
+    m = re.match(r"^swimlanes?(?:-beta)?(?:\s+(TB|TD|BT|LR|RL))?\s*$", head, re.I)
+    direction = (m.group(1) if m and m.group(1) else "TB").upper()
+    return parse(
+        "flowchart "
+        + ("TD" if direction in ("TB", "BT") else direction)
+        + "\n"
+        + "\n".join(lines[1:])
+    )
+
+
+def render_swimlanes_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
+    """Render lanes as bands; columns (or rows) follow the flow's ranks."""
+    t = _tokens(theme)
+    if not fc.nodes:
+        return _svg_root(120, 40, _svg_text(0, 20, "No steps", t, color=t["ink2"]), t["font"])
+    horizontal = fc.direction in ("LR", "RL")
+    # Size nodes the way the flowchart layout does
+    probe = Flowchart(direction=fc.direction, nodes=dict(fc.nodes), edges=fc.edges)
+    layout(probe, t)
+    levels = _compute_levels(fc)
+    child_ids = {c for sg in fc.subgraphs for c in sg.children}
+    lanes = [sg for sg in fc.subgraphs if sg.id not in child_ids]
+    lane_of: dict[str, int] = {}
+    for i, sg in enumerate(lanes):
+        for nid in _subgraph_members(fc, sg):
+            lane_of.setdefault(nid, i)
+    loose = [n for n in fc.nodes if n not in lane_of]
+    if loose:
+        lanes.append(Subgraph(id="__other", label=""))
+        for n in loose:
+            lane_of[n] = len(lanes) - 1
+
+    n_levels = max(levels.values()) + 1
+    major_size = [0.0] * n_levels  # column width (LR) or row height (TD)
+    for nid, node in fc.nodes.items():
+        lvl = levels[nid]
+        major_size[lvl] = max(major_size[lvl], node.w if horizontal else node.h)
+    # A label sits on its edge's last segment, in the gap just before the target
+    gap_need: dict[int, float] = defaultdict(lambda: 56.0)
+    for e in fc.edges:
+        if e.label:
+            ls, ld = levels[e.src], levels[e.dst]
+            gap = ld - 1 if ld > ls else ld
+            gap_need[gap] = max(gap_need[gap], _text_w(e.label, _FS_SM) + 30)
+    header = max(_text_w(sg.label, _FS, 600) for sg in lanes) + 28 if horizontal else 36.0
+    major_pos = []
+    acc = header + 20
+    for lvl, size in enumerate(major_size):
+        major_pos.append(acc)
+        acc += size + (gap_need[lvl] if lvl < n_levels - 1 else 0.0)
+    major_end = acc + 20
+
+    gap_minor, pad = 14.0, 16.0
+    lane_start, lane_extent = [], []
+    acc = 0.0
+    for i in range(len(lanes)):
+        stacks: dict[int, float] = defaultdict(float)
+        counts: dict[int, int] = defaultdict(int)
+        for nid, lane in lane_of.items():
+            if lane == i:
+                node = fc.nodes[nid]
+                stacks[levels[nid]] += (node.h if horizontal else node.w) + gap_minor
+                counts[levels[nid]] += 1
+        extent = max(stacks.values(), default=40.0) - gap_minor + 2 * pad
+        extent = max(extent, 64.0 if horizontal else _text_w(lanes[i].label, _FS, 600) + 2 * pad)
+        lane_start.append(acc)
+        lane_extent.append(extent)
+        acc += extent
+    lane_total = acc
+
+    # Place nodes: centred in their rank, stacked inside their lane
+    for i in range(len(lanes)):
+        by_level: dict[int, list[str]] = defaultdict(list)
+        for nid in fc.nodes:
+            if lane_of[nid] == i:
+                by_level[levels[nid]].append(nid)
+        for lvl, nids in by_level.items():
+            total = sum(
+                (fc.nodes[n].h if horizontal else fc.nodes[n].w) for n in nids
+            ) + gap_minor * (len(nids) - 1)
+            cursor = lane_start[i] + (lane_extent[i] - total) / 2
+            for n in nids:
+                node = fc.nodes[n]
+                minor_size = node.h if horizontal else node.w
+                major = major_pos[lvl] + (major_size[lvl] - (node.w if horizontal else node.h)) / 2
+                if horizontal:
+                    node.x, node.y = major, cursor
+                else:
+                    node.x, node.y = cursor, major
+                cursor += minor_size + gap_minor
+
+    parts: list[str] = []
+    for i, sg in enumerate(lanes):
+        fill = _tint(t["primary"], 0.965 if i % 2 == 0 else 0.985, t)
+        if horizontal:
+            parts.append(
+                f'<rect x="0" y="{lane_start[i]:g}" width="{major_end:g}" height="{lane_extent[i]:g}" fill="{fill}"/>'
+            )
+            parts.append(
+                f'<rect x="0" y="{lane_start[i]:g}" width="{header:g}" height="{lane_extent[i]:g}" '
+                f'fill="{_tint(t["primary"], 0.9, t)}"/>'
+            )
+            parts.append(
+                _svg_text(
+                    12, lane_start[i] + lane_extent[i] / 2 + 4, sg.label, t, _FS, t["ink"], 600
+                )
+            )
+        else:
+            parts.append(
+                f'<rect x="{lane_start[i]:g}" y="0" width="{lane_extent[i]:g}" height="{major_end:g}" fill="{fill}"/>'
+            )
+            parts.append(
+                f'<rect x="{lane_start[i]:g}" y="0" width="{lane_extent[i]:g}" height="{header:g}" '
+                f'fill="{_tint(t["primary"], 0.9, t)}"/>'
+            )
+            parts.append(
+                _svg_text(
+                    lane_start[i] + lane_extent[i] / 2,
+                    23,
+                    sg.label,
+                    t,
+                    _FS,
+                    t["ink"],
+                    600,
+                    "middle",
+                )
+            )
+        if i:
+            if horizontal:
+                parts.append(
+                    f'<line x1="0" y1="{lane_start[i]:g}" x2="{major_end:g}" y2="{lane_start[i]:g}" stroke="{t["subgraph_stroke"]}" stroke-width="1"/>'
+                )
+            else:
+                parts.append(
+                    f'<line x1="{lane_start[i]:g}" y1="0" x2="{lane_start[i]:g}" y2="{major_end:g}" stroke="{t["subgraph_stroke"]}" stroke-width="1"/>'
+                )
+    parts.insert(0, _make_arrow_defs(t))
+    for e in fc.edges:
+        parts.append(
+            _render_edge(
+                fc.nodes[e.src], fc.nodes[e.dst], e.label, fc.direction, t, e.style, edge=e
+            )
+        )
+    for node in fc.nodes.values():
+        parts.append(_render_node(node, t))
+    width, height = (major_end, lane_total) if horizontal else (lane_total, major_end)
+    column = float(t.get("column_px") or 640)
+    if horizontal and width > column and t.get("auto_fit") != "0":
+        # Too wide for the page: lanes become columns and the flow runs downwards
+        fc.direction = "TD"
+        return render_swimlanes_svg(fc, theme)
+    return _svg_root(width, height, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Tree view
+# ---------------------------------------------------------------------------
+
+
+def parse_treeview(source: str) -> list[TreeRow]:
+    """Parse a treeView (indentation or box-drawing input) into rows with depths."""
+    rows: list[TreeRow] = []
+    raw = [
+        line for line in source.splitlines() if line.strip() and not line.strip().startswith("%%")
+    ]
+    if raw and re.match(r"^\s*treeView(-beta)?\s*$", raw[0], re.I):
+        raw = raw[1:]
+    box = any(re.search(r"[├└┣┗]", line) for line in raw)
+    indents: list[int] = []
+    for line in raw:
+        if box:
+            m = re.search(r"[├└┣┗][─━]+\s*", line)
+            if m:
+                depth = m.start() // 4 + 1
+                text = line[m.end() :]
+            else:
+                depth, text = 0, line.strip()
+        else:
+            indent = len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+            while indents and indents[-1] > indent:
+                indents.pop()
+            if not indents or indents[-1] < indent:
+                indents.append(indent)
+            depth = len(indents) - 1
+            text = line.strip()
+        desc = ""
+        if "##" in text:
+            text, desc = text.split("##", 1)
+        classes = re.findall(r":::([\w-]+)", text)
+        icon_m = re.search(r"icon\(([^)]*)\)", text)
+        text = re.sub(r":::[\w-]+|icon\([^)]*\)", "", text).strip()
+        rows.append(
+            TreeRow(
+                _unquote(text),
+                depth,
+                _unquote(text).endswith("/"),
+                desc.strip(),
+                "highlight" in classes,
+                icon_m.group(1) if icon_m else None,
+            )
+        )
+    return rows
+
+
+def render_treeview_svg(rows: list[TreeRow], theme: dict[str, str] | None = None) -> str:
+    """Render a directory-style tree with connector lines."""
+    t = _tokens(theme)
+    if not rows:
+        return _svg_root(120, 40, _svg_text(0, 20, "Empty tree", t, color=t["ink2"]), t["font"])
+    conf = _config_section("treeView")
+    show_icons = conf.get("showIcons") is True
+    row_h, indent = 24.0, 20.0
+    parts: list[str] = []
+    width = 0.0
+    line_color = t["baseline"]
+    for i, row in enumerate(rows):
+        y = 12 + i * row_h
+        x = 6 + row.depth * indent
+        # Connector: from the parent's column down to this row
+        if row.depth > 0:
+            px = 6 + (row.depth - 1) * indent + 5
+            parent_i = (
+                max(j for j in range(i) if rows[j].depth == row.depth - 1)
+                if any(rows[j].depth == row.depth - 1 for j in range(i))
+                else 0
+            )
+            py = 12 + parent_i * row_h + 8
+            parts.append(
+                f'<path d="M {px:g},{py:g} V {y - 4:g} Q {px:g},{y:g} {px + 4:g},{y:g} H {x - 3:g}" '
+                f'fill="none" stroke="{line_color}" stroke-width="1"/>'
+            )
+        tx = x + 2
+        show = show_icons and row.icon not in ("", "none")
+        if show or row.icon not in (None, "", "none"):
+            if row.is_dir:
+                parts.append(
+                    f'<path d="M {tx:g},{y - 5:g} h 5 l 2,2 h 7 v 9 h -14 Z" fill="{_tint(t["accent"], 0.6, t)}" '
+                    f'stroke="{t["accent"]}" stroke-width="1"/>'
+                )
+            else:
+                parts.append(
+                    f'<path d="M {tx + 1:g},{y - 6:g} h 8 l 4,4 v 10 h -12 Z" fill="{t["card"]}" '
+                    f'stroke="{t["chrome"]}" stroke-width="1"/>'
+                )
+            tx += 20
+        label = row.label
+        weight = 600 if row.is_dir else 400
+        lw = _text_w(label, _FS, weight)
+        if row.highlight:
+            parts.append(
+                f'<rect x="{tx - 4:g}" y="{y - 10:g}" width="{lw + 8:g}" height="19" rx="4" '
+                f'fill="{_tint(t["accent"], 0.82, t)}"/>'
+            )
+        parts.append(_svg_text(tx, y + 4, label, t, _FS, t["ink"], weight))
+        end = tx + lw
+        if row.desc:
+            parts.append(
+                _svg_text(
+                    end + 10, y + 4, row.desc, t, _FS_SM, t["ink2"], extra=' font-style="italic"'
+                )
+            )
+            end += 10 + _text_w(row.desc, _FS_SM)
+        width = max(width, end)
+    return _svg_root(width + 8, 12 + len(rows) * row_h - 4, parts, t["font"])
+
+
+# ---------------------------------------------------------------------------
+# Ishikawa (fishbone)
+# ---------------------------------------------------------------------------
+
+
+def parse_ishikawa(source: str) -> tuple[str, list[MindNode]]:
+    """First line is the effect; indented lines are categories and their causes."""
+    lines = [
+        line for line in source.splitlines() if line.strip() and not line.strip().startswith("%%")
+    ]
+    if lines and re.match(r"^\s*ishikawa(-beta)?\s*$", lines[0], re.I):
+        lines = lines[1:]
+    if not lines:
+        return "", []
+    effect = lines[0].strip()
+    root = MindNode(effect)
+    stack: list[tuple[int, MindNode]] = []
+    base = None
+    for line in lines[1:]:
+        indent = len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+        if base is None:
+            base = indent
+        node = MindNode(line.strip())
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        (stack[-1][1].children if stack else root.children).append(node)
+        stack.append((indent, node))
+    return effect, root.children
+
+
+def render_ishikawa_svg(
+    effect: str, categories: list[MindNode], theme: dict[str, str] | None = None
+) -> str:
+    """Render a fishbone: effect at the head, categories as bones above and below the spine."""
+    t = _tokens(theme)
+    if not effect:
+        return _svg_root(120, 40, _svg_text(0, 20, "No effect", t, color=t["ink2"]), t["font"])
+    top = categories[0::2]
+    bottom = categories[1::2]
+
+    def cause_lines(cat: MindNode) -> list[tuple[str, int]]:
+        out: list[tuple[str, int]] = []
+
+        def walk(node: MindNode, depth: int) -> None:
+            out.append((node.label, depth))
+            for c in node.children:
+                walk(c, depth + 1)
+
+        for c in cat.children:
+            walk(c, 0)
+        return out
+
+    row = 17.0
+    col_w = max(
+        [_text_w(c.label, _FS, 600) + 30 for c in categories]
+        + [
+            _text_w(text, 11 if d == 0 else 10) + 16 * d + 40
+            for c in categories
+            for text, d in cause_lines(c)
+        ]
+        + [150.0]
+    )
+    half_h = max([len(cause_lines(c)) * row + 46 for c in categories] + [90.0])
+    n_cols = max(len(top), len(bottom), 1)
+    head_w = min(max(_text_w(effect, 12.5, 600) + 28, 120.0), 200.0)
+    head_lines = _wrap_lines(effect, head_w - 20, 12.5)
+    spine_y = half_h + 8
+    spine_x1 = 20 + n_cols * col_w + 10
+    parts: list[str] = []
+    parts.append(
+        f'<line x1="10" y1="{spine_y:g}" x2="{spine_x1:g}" y2="{spine_y:g}" stroke="{t["ink2"]}" '
+        f'stroke-width="2.5" stroke-linecap="round"/>'
+    )
+    head_h = max(44.0, 16 * len(head_lines) + 18)
+    parts.append(
+        f'<path d="M {spine_x1:g},{spine_y - head_h / 2:g} H {spine_x1 + head_w - 16:g} '
+        f"Q {spine_x1 + head_w:g},{spine_y:g} {spine_x1 + head_w - 16:g},{spine_y + head_h / 2:g} "
+        f'H {spine_x1:g} Z" fill="{t["term_fill"]}"/>'
+    )
+    for i, text in enumerate(head_lines):
+        parts.append(
+            _svg_text(
+                spine_x1 + 12,
+                spine_y - (len(head_lines) - 1) * 8 + 4.5 + i * 16,
+                text,
+                t,
+                12.5,
+                t["term_text"],
+                600,
+            )
+        )
+    palette = _palette(t)
+    for side, cats in ((-1, top), (1, bottom)):
+        for k, cat in enumerate(cats):
+            color = palette[(2 * k + (0 if side < 0 else 1)) % len(palette)]
+            joint_x = 20 + (k + 1) * col_w - 10
+            end_y = spine_y + side * (half_h - 24)
+            end_x = joint_x - (half_h - 24) * 0.45
+            parts.append(
+                f'<line x1="{end_x:.1f}" y1="{end_y:.1f}" x2="{joint_x:.1f}" y2="{spine_y:g}" '
+                f'stroke="{_tint(color, 0.25, t)}" stroke-width="2" stroke-linecap="round"/>'
+            )
+            label_y = end_y - 8 if side < 0 else end_y + 18
+            lw = _text_w(cat.label, _FS, 600) + 16
+            parts.append(
+                f'<rect x="{end_x - lw / 2:.1f}" y="{label_y - 14:.1f}" width="{lw:.1f}" height="20" rx="10" '
+                f'fill="{_tint(color, 0.85, t)}" stroke="{_tint(color, 0.4, t)}" stroke-width="1"/>'
+            )
+            parts.append(_svg_text(end_x, label_y, cat.label, t, _FS, t["ink"], 600, "middle"))
+            lines = cause_lines(cat)
+            for j, (text, depth) in enumerate(lines):
+                # Walk along the bone so causes read top to bottom: from the label
+                # toward the spine above it, from the spine toward the label below
+                f = (j + 1) / (len(lines) + 1)
+                if side > 0:
+                    f = 1 - f
+                by = end_y + (spine_y - end_y) * f
+                bx = end_x + (joint_x - end_x) * f
+                size = 11.0 if depth == 0 else 10.0
+                tx = bx - 6 - depth * 14
+                if depth == 0:
+                    parts.append(
+                        f'<line x1="{tx - _text_w(text, size) - 2:.1f}" y1="{by + 3:.1f}" x2="{bx:.1f}" y2="{by + 3:.1f}" '
+                        f'stroke="{_tint(color, 0.55, t)}" stroke-width="1"/>'
+                    )
+                parts.append(
+                    _svg_text(
+                        tx, by, text, t, size, t["ink"] if depth == 0 else t["ink2"], anchor="end"
+                    )
+                )
+    width = spine_x1 + head_w + 6
+    return _svg_root(width, spine_y * 2 + 8, parts, t["font"])
+
+
+def parse_venn(source: str) -> dict:
+    """Sets, unions (with labels, sizes and text children) and style overrides."""
+    title = ""
+    sets: list[dict] = []
+    unions: list[dict] = []
+    styles: dict[str, dict[str, str]] = {}
+    last: dict | None = None
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^venn(-beta)?$", line, re.I):
+            continue
+        if line.startswith(("accTitle", "accDescr")):
+            continue
+        m = re.match(r"^title\s+(.+)$", line)
+        if m:
+            title = _unquote(m.group(1).strip())
+            continue
+        m = re.match(
+            r'^(set|union|text)\s+(.+?)(?:\[\s*"?([^"\]]*)"?\s*\])?\s*(?::\s*([\d.]+))?$', line
+        )
+        if m:
+            kind, ident, label, size = m.groups()
+            if kind == "text":
+                item = {
+                    "id": ident.strip(),
+                    "label": label if label is not None else _unquote(ident.strip()),
+                }
+                if last is not None:
+                    last["texts"].append(item)
+                continue
+            ids = [_unquote(p.strip()) for p in ident.split(",") if p.strip()]
+            entry = {
+                "id": ",".join(ids),
+                "ids": ids,
+                "label": label if label is not None else ("" if kind == "union" else ids[0]),
+                "size": float(size) if size else None,
+                "texts": [],
+            }
+            (sets if kind == "set" else unions).append(entry)
+            last = entry
+            continue
+        m = re.match(r"^style\s+(\S+)\s+(.+)$", line)
+        if m:
+            key = ",".join(_unquote(p.strip()) for p in m.group(1).split(","))
+            css = styles.setdefault(key, {})
+            for decl in m.group(2).split(","):
+                if ":" in decl:
+                    k, v = decl.split(":", 1)
+                    css[k.strip()] = v.strip()
+    return {"title": title, "sets": sets, "unions": unions, "styles": styles}
+
+
+def render_venn_svg(data: dict, theme: dict[str, str] | None = None) -> str:
+    """Overlapping translucent circles; radius follows the optional set size."""
+    t = _tokens(theme)
+    sets = data["sets"]
+    if not sets:
+        return _svg_root(120, 40, _svg_text(0, 20, "No sets", t, color=t["ink2"]), t["font"])
+    n = len(sets)
+    sizes = [s["size"] or 10.0 for s in sets]
+    big = max(sizes)
+    base = 104.0 if n <= 3 else 86.0
+    radii = [base * max(0.55, math.sqrt(sz / big)) for sz in sizes]
+    centres: list[tuple[float, float]] = []
+    if n == 1:
+        centres = [(0.0, 0.0)]
+    elif n == 2:
+        pair = next((u for u in data["unions"] if len(u["ids"]) == 2), None)
+        frac = 0.32
+        if pair and pair["size"] and min(sizes):
+            frac = min(0.85, max(0.12, pair["size"] / min(sizes) * 1.3))
+        d = radii[0] + radii[1] - 2 * min(radii) * frac
+        centres = [(-d / 2, 0.0), (d / 2, 0.0)]
+    else:
+        ring = (base * 0.62) / math.sin(math.pi / n) if n > 3 else base * 0.66
+        for i in range(n):
+            ang = -math.pi / 2 + 2 * math.pi * i / n + (math.pi / n if n == 3 else 0)
+            if n == 3:
+                ang = [-math.pi * 5 / 6, -math.pi / 6, math.pi / 2][i]
+            centres.append((ring * math.cos(ang), ring * math.sin(ang)))
+    index = {s["ids"][0]: i for i, s in enumerate(sets)}
+    gx = sum(c[0] for c in centres) / n
+    gy = sum(c[1] for c in centres) / n
+    palette = _palette(t)
+    styles = data["styles"]
+
+    shapes: list[str] = []
+    labels: list[str] = []
+    for i, s in enumerate(sets):
+        cx, cy = centres[i]
+        css = styles.get(s["id"], {})
+        color = css.get("fill", palette[i % len(palette)])
+        stroke = css.get("stroke", color)
+        opacity = css.get("fill-opacity", "0.2")
+        shapes.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{radii[i]:.1f}" fill="{color}" fill-opacity="{opacity}" '
+            f'stroke="{stroke}" stroke-width="{css.get("stroke-width", "1.5")}"/>'
+        )
+        # Label in the part of the circle furthest from the group's centre
+        dx, dy = cx - gx, cy - gy
+        dist = math.hypot(dx, dy)
+        ux, uy = (dx / dist, dy / dist) if dist > 1 else (0.0, -1.0)
+        if n == 1:
+            ux, uy = 0.0, 0.0
+        reach = radii[i] * (0.52 if n > 1 else 0.0)
+        lx, ly = cx + ux * reach, cy + uy * reach
+        lines = [(s["label"], _FS + 1, 600, css.get("color", t["ink"]))]
+        lines += [
+            (x["label"], _FS_SM, 400, styles.get(x["id"], {}).get("color", t["ink2"]))
+            for x in s["texts"]
+        ]
+        labels += _venn_label_block(lx, ly, lines, t)
+    for u in data["unions"]:
+        members = [index[i] for i in u["ids"] if i in index]
+        if len(members) < 2:
+            continue
+        ux = sum(centres[k][0] for k in members) / len(members)
+        uy = sum(centres[k][1] for k in members) / len(members)
+        if 2 <= len(members) < n:
+            # push a partial overlap away from the sets it leaves out
+            ox = sum(centres[k][0] for k in range(n) if k not in members) / (n - len(members))
+            oy = sum(centres[k][1] for k in range(n) if k not in members) / (n - len(members))
+            vx, vy = ux - ox, uy - oy
+            d = math.hypot(vx, vy) or 1.0
+            push = min(radii) * (0.4 if n == 3 else 0.12)
+            ux, uy = ux + vx / d * push, uy + vy / d * push
+        css = styles.get(u["id"], {})
+        lines = [(u["label"], _FS, 600, css.get("color", t["ink"]))] if u["label"] else []
+        lines += [
+            (x["label"], _FS_SM, 400, styles.get(x["id"], {}).get("color", t["ink2"]))
+            for x in u["texts"]
+        ]
+        labels += _venn_label_block(ux, uy, lines, t)
+
+    x0 = min(c[0] - r for c, r in zip(centres, radii)) - 8
+    x1 = max(c[0] + r for c, r in zip(centres, radii)) + 8
+    y0 = min(c[1] - r for c, r in zip(centres, radii)) - 8
+    y1 = max(c[1] + r for c, r in zip(centres, radii)) + 8
+    title_parts, title_h = _chart_title(data["title"], t)
+    body = [f'<g transform="translate({-x0:.1f},{title_h - y0:.1f})">', *shapes, *labels, "</g>"]
+    return _svg_root(x1 - x0, y1 - y0 + title_h, title_parts + body, t["font"])
+
+
+def _venn_label_block(
+    x: float, y: float, lines: list[tuple[str, float, int, str]], t: dict[str, str]
+) -> list[str]:
+    """Centre a stack of text lines on (x, y)."""
+    if not lines:
+        return []
+    heights = [size * 1.35 for _, size, _, _ in lines]
+    cursor = y - sum(heights) / 2
+    out = []
+    for (text, size, weight, color), h in zip(lines, heights):
+        cursor += h
+        out.append(_svg_text(x, cursor - h * 0.28, text, t, size, color, weight, "middle"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Cynefin
+# ---------------------------------------------------------------------------
+
+_CYNEFIN_DOMAINS = {
+    "complex": ("Complex", "Probe → Sense → Respond", "Emergent practice"),
+    "complicated": ("Complicated", "Sense → Analyse → Respond", "Good practice"),
+    "chaotic": ("Chaotic", "Act → Sense → Respond", "Novel practice"),
+    "clear": ("Clear", "Sense → Categorise → Respond", "Best practice"),
+    "confusion": ("Confusion", "", ""),
+}
+
+
+def parse_cynefin(source: str) -> dict:
+    title = ""
+    items: dict[str, list[str]] = {k: [] for k in _CYNEFIN_DOMAINS}
+    transitions: list[tuple[str, str, str]] = []
+    current: str | None = None
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^cynefin(-beta)?$", line, re.I):
+            continue
+        if line.startswith(("accTitle", "accDescr")):
+            continue
+        m = re.match(r"^title\s+(.+)$", line)
+        if m:
+            title = _unquote(m.group(1).strip())
+            continue
+        m = re.match(r"^(\w+)\s*-->\s*(\w+)\s*(?::\s*(.+))?$", line)
+        if m:
+            a, b = m.group(1).lower(), m.group(2).lower()
+            if a in _CYNEFIN_DOMAINS and b in _CYNEFIN_DOMAINS and a != b:
+                transitions.append((a, b, _unquote((m.group(3) or "").strip())))
+            continue
+        if line.lower() in _CYNEFIN_DOMAINS:
+            current = line.lower()
+            continue
+        if current:
+            items[current].append(_unquote(line))
+    return {"title": title, "items": items, "transitions": transitions}
+
+
+def render_cynefin_svg(data: dict, theme: dict[str, str] | None = None) -> str:
+    """Four domains split by wavy boundaries, the cliff, confusion at the centre."""
+    t = _tokens(theme)
+    conf = _config_section("cynefin")
+    show_desc = conf.get("showDomainDescriptions", True) is not False
+    amp = float(conf.get("boundaryAmplitude", 6))
+    items = data["items"]
+    pal = _palette(t)
+    tones = {"complex": pal[0], "complicated": pal[1], "chaotic": pal[3], "clear": pal[2]}
+
+    def badge_w(text: str) -> float:
+        return _text_w(text, _FS_SM) + 18
+
+    widest = max(
+        [badge_w(x) for k in tones for x in items[k]]
+        + [_text_w(_CYNEFIN_DOMAINS[k][1], _FS_SM) for k in tones]
+        + [150.0]
+    )
+    qw = max(widest + 70, 250.0)
+    tallest = max(len(items[k]) for k in tones)
+    qh = max(170.0, 64 + (24 if show_desc else 0) + tallest * 26 + 70)
+    W, H = 2 * qw, 2 * qh
+    title_parts, title_h = _chart_title(data["title"], t)
+
+    def wave(x0: float, y0: float, x1: float, y1: float, seed: float) -> str:
+        steps = 24
+        pts = []
+        length = math.hypot(x1 - x0, y1 - y0)
+        nx, ny = -(y1 - y0) / length, (x1 - x0) / length
+        for i in range(steps + 1):
+            f = i / steps
+            w = amp * math.sin(f * math.pi * 3 + seed) * math.sin(f * math.pi)
+            pts.append((x0 + (x1 - x0) * f + nx * w, y0 + (y1 - y0) * f + ny * w))
+        return "M " + " L ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+
+    parts: list[str] = [f'<g transform="translate(0,{title_h:g})">']
+    cells = {"complex": (0, 0), "complicated": (qw, 0), "chaotic": (0, qh), "clear": (qw, qh)}
+    for key, (x, y) in cells.items():
+        parts.append(
+            f'<rect x="{x:g}" y="{y:g}" width="{qw:g}" height="{qh:g}" fill="{_tint(tones[key], 0.9, t)}"/>'
+        )
+    border = t["chrome"]
+    parts.append(
+        f'<rect x="0.5" y="0.5" width="{W - 1:g}" height="{H - 1:g}" rx="10" fill="none" stroke="{border}"/>'
+    )
+    parts.append(
+        f'<path d="{wave(0, qh, W, qh, 0.7)}" fill="none" stroke="{t["ink2"]}" stroke-width="1.5"/>'
+    )
+    parts.append(
+        f'<path d="{wave(qw, 0, qw, qh + 30, 2.1)}" fill="none" stroke="{t["ink2"]}" stroke-width="1.5"/>'
+    )
+    # The cliff between Clear and Chaotic: a heavier fold at the foot of the divide
+    parts.append(
+        f'<path d="M {qw:g},{qh + 30:g} C {qw + 4:g},{H - 50:g} {qw + 18:g},{H - 22:g} {qw - 8:g},{H - 6:g}" '
+        f'fill="none" stroke="{t["ink"]}" stroke-width="2.6" stroke-linecap="round"/>'
+    )
+
+    for key, (x, y) in cells.items():
+        name, model, practice = _CYNEFIN_DOMAINS[key]
+        right = key in ("complicated", "clear")
+        top = key in ("complex", "complicated")
+        tx = x + qw - 20 if right else x + 20
+        anchor = "end" if right else "start"
+        ty = y + 32 if top else y + qh - (58 if show_desc else 22)
+        color = (
+            _mix(tones[key], t["ink"], 0.45)
+            if t.get("mode") != "dark"
+            else _tint(tones[key], 0.4, t)
+        )
+        parts.append(_svg_text(tx, ty, name, t, 15, color, 700, anchor))
+        if show_desc:
+            parts.append(_svg_text(tx, ty + 18, model, t, _FS_SM, t["ink2"], 400, anchor))
+            parts.append(
+                _svg_text(
+                    tx, ty + 33, practice, t, _FS_SM, t["ink2"], 400, anchor, ' font-style="italic"'
+                )
+            )
+        cursor = (ty + (46 if show_desc else 20)) if top else y + 22
+        for text in items[key]:
+            bw = badge_w(text)
+            bx = tx - bw if right else tx
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{cursor:.1f}" width="{bw:.1f}" height="20" rx="10" fill="{t["card"]}" '
+                f'stroke="{_tint(tones[key], 0.45, t)}" stroke-width="1"/>'
+            )
+            parts.append(
+                _svg_text(bx + bw / 2, cursor + 13.8, text, t, _FS_SM, t["ink"], 400, "middle")
+            )
+            cursor += 26
+
+    centres = {
+        "complex": (qw * 0.55, qh * 0.62),
+        "complicated": (qw * 1.45, qh * 0.62),
+        "chaotic": (qw * 0.55, qh * 1.38),
+        "clear": (qw * 1.45, qh * 1.38),
+        "confusion": (qw, qh),
+    }
+    conf_items = items["confusion"]
+    if conf_items or any("confusion" in tr[:2] for tr in data["transitions"]):
+        shown = conf_items[:3]
+        extra = len(conf_items) - len(shown)
+        rows = ["Confusion", *shown] + ([f"+{extra} more"] if extra else [])
+        ew = max([_text_w(r, _FS_SM) for r in rows] + [70.0]) / 2 + 26
+        eh = 18 + len(rows) * 8
+        parts.append(
+            f'<ellipse cx="{qw:g}" cy="{qh:g}" rx="{ew:.1f}" ry="{eh:.1f}" fill="{t["card"]}" '
+            f'stroke="{t["ink2"]}" stroke-width="1.2" stroke-dasharray="4 3"/>'
+        )
+        top_y = qh - len(rows) * 7.5 + 10
+        for i, r in enumerate(rows):
+            parts.append(
+                _svg_text(
+                    qw,
+                    top_y + i * 15,
+                    r,
+                    t,
+                    _FS_SM if i else _FS,
+                    t["ink"] if i else t["ink2"],
+                    600 if i == 0 else 400,
+                    "middle",
+                )
+            )
+
+    if data["transitions"]:
+        parts.insert(0, _make_arrow_defs(t))
+        for a, b, label in data["transitions"]:
+            (x0, y0), (x1, y1) = centres[a], centres[b]
+            mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+            # bow the arrow away from the middle of the framework
+            vx, vy = mx - qw, my - qh
+            d = math.hypot(vx, vy)
+            if d < 1:
+                vx, vy, d = -(y1 - y0), x1 - x0, math.hypot(x1 - x0, y1 - y0) or 1.0
+            cx, cy = mx + vx / d * 40, my + vy / d * 40
+            # trim the ends so arrows start and stop clear of the centres
+            parts.append(
+                f'<path d="M {x0:.1f},{y0:.1f} Q {cx:.1f},{cy:.1f} {x1:.1f},{y1:.1f}" fill="none" '
+                f'stroke="{t["ink2"]}" stroke-width="1.5" marker-end="url(#arr)"/>'
+            )
+            if label:
+                lx, ly = 0.25 * x0 + 0.5 * cx + 0.25 * x1, 0.25 * y0 + 0.5 * cy + 0.25 * y1
+                lw = _text_w(label, _FS_SM) + 12
+                parts.append(
+                    f'<rect x="{lx - lw / 2:.1f}" y="{ly - 9:.1f}" width="{lw:.1f}" height="17" rx="4" '
+                    f'fill="{t["surface"]}" fill-opacity="0.92"/>'
+                )
+                parts.append(_svg_text(lx, ly + 3.8, label, t, _FS_SM, t["ink"], 500, "middle"))
+    parts.append("</g>")
+    return _svg_root(W, H + title_h, title_parts + parts, t["font"])
+
+
+def parse_wardley(source: str) -> dict:
+    """Wardley map in the OnlineWardleyMaps dialect Mermaid uses: ``[visibility, evolution]``."""
+    data: dict = {
+        "title": "",
+        "size": (1100.0, 600.0),
+        "stages": [("Genesis", 0.25), ("Custom", 0.5), ("Product", 0.75), ("Commodity", 1.0)],
+        "components": {},
+        "links": [],
+        "evolve": [],
+        "notes": [],
+        "annotations": [],
+        "annotation_box": None,
+        "forces": [],
+        "pipelines": [],
+    }
+    comps: dict[str, dict] = data["components"]
+    pipeline: dict | None = None
+
+    def name_of(text: str) -> str:
+        return _unquote(text.strip())
+
+    for raw_line in source.splitlines():
+        line = re.sub(r"\s+%%.*$", "", raw_line).strip()
+        if not line or line.startswith("%%") or re.match(r"^wardley(-beta)?$", line, re.I):
+            continue
+        if line.startswith(("accTitle", "accDescr")):
+            continue
+        if pipeline is not None:
+            if line == "}":
+                pipeline = None
+                continue
+            m = re.match(r"^component\s+(.+?)\s*\[\s*([\d.]+)\s*\]", line)
+            if m:
+                pipeline["items"].append((name_of(m.group(1)), float(m.group(2))))
+            continue
+        m = re.match(r"^title\s+(.+)$", line)
+        if m:
+            data["title"] = _unquote(m.group(1).strip())
+            continue
+        m = re.match(r"^size\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\]", line)
+        if m:
+            data["size"] = (float(m.group(1)), float(m.group(2)))
+            continue
+        m = re.match(r"^evolution\s+(.+)$", line)
+        if m:
+            names = [p.strip() for p in m.group(1).split("->")]
+            stages = []
+            for i, p in enumerate(names):
+                at = re.match(r"^(.*?)@([\d.]+)$", p)
+                stages.append(
+                    (at.group(1).strip(), float(at.group(2))) if at else (p, (i + 1) / len(names))
+                )
+            data["stages"] = stages
+            continue
+        m = re.match(r"^(component|anchor)\s+(.+?)\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\](.*)$", line)
+        if m:
+            kind, name, vis, evo, rest = m.groups()
+            off = re.search(r"label\s*\[\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\]", rest)
+            comps[name_of(name)] = {
+                "kind": kind,
+                "vis": float(vis),
+                "evo": float(evo),
+                "label": (float(off.group(1)), float(off.group(2))) if off else None,
+                "decorators": re.findall(r"\((\w+)\)", rest),
+            }
+            continue
+        m = re.match(r"^pipeline\s+(.+?)\s*\{$", line)
+        if m:
+            pipeline = {"parent": name_of(m.group(1)), "items": []}
+            data["pipelines"].append(pipeline)
+            continue
+        m = re.match(r"^evolve\s+(.+?)\s+([\d.]+)$", line)
+        if m:
+            data["evolve"].append((name_of(m.group(1)), float(m.group(2))))
+            continue
+        m = re.match(r'^note\s+(".*?"|\S+)\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\]', line)
+        if m:
+            data["notes"].append((_unquote(m.group(1)), float(m.group(2)), float(m.group(3))))
+            continue
+        m = re.match(r"^annotations\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\]", line)
+        if m:
+            data["annotation_box"] = (float(m.group(1)), float(m.group(2)))
+            continue
+        m = re.match(
+            r'^annotation\s+(\d+)\s*,\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\]\s*(".*?"|.*)$', line
+        )
+        if m:
+            data["annotations"].append(
+                (
+                    int(m.group(1)),
+                    float(m.group(2)),
+                    float(m.group(3)),
+                    _unquote(m.group(4).strip()),
+                )
+            )
+            continue
+        m = re.match(
+            r'^(accelerator|deaccelerator)\s+(".*?"|.+?)\s*\[\s*([\d.]+)\s*,\s*([\d.]+)\s*\]', line
+        )
+        if m:
+            data["forces"].append(
+                (m.group(1), _unquote(m.group(2)), float(m.group(3)), float(m.group(4)))
+            )
+            continue
+        m = re.match(
+            r"^(.+?)\s*(\+'[^']*'>|\+<>|\+<|\+>|-\.->|-->|->)\s*(.+?)(?:\s*;\s*(.+))?$", line
+        )
+        if m:
+            a, op, b, label = m.groups()
+            flow = op.startswith("+")
+            if op.startswith("+'"):
+                label = op[2:-2]
+            data["links"].append(
+                {
+                    "src": name_of(a),
+                    "dst": name_of(b),
+                    "label": (label or "").strip(),
+                    "dashed": op == "-.->",
+                    "flow": flow,
+                    "fwd": op != "+<",
+                    "back": op in ("+<", "+<>"),
+                }
+            )
+    return data
+
+
+def render_wardley_svg(data: dict, theme: dict[str, str] | None = None) -> str:
+    """Value chain against evolution: components, links, movement and annotations."""
+    t = _tokens(theme)
+    sw, sh = data["size"]
+    pw = 660.0
+    ph = max(300.0, min(760.0, pw * sh / sw))
+    left, top = 40.0, 10.0
+    title_parts, title_h = _chart_title(data["title"], t)
+    top += title_h
+    comps: dict[str, dict] = data["components"]
+
+    def pos(vis: float, evo: float) -> tuple[float, float]:
+        return left + evo * pw, top + (1 - vis) * ph
+
+    ink, ink2, grid = t["ink"], t["ink2"], t["grid"]
+    red = _CRITICAL
+    parts: list[str] = [
+        "<defs>"
+        f'<marker id="wm-arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">'
+        f'<polygon points="0 0.5, 8 3.5, 0 6.5" fill="{ink2}"/></marker>'
+        f'<marker id="wm-arr-s" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">'
+        f'<polygon points="9 0.5, 1 3.5, 9 6.5" fill="{ink2}"/></marker>'
+        f'<marker id="wm-evo" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">'
+        f'<polygon points="0 0.5, 8 3.5, 0 6.5" fill="{red}"/></marker>'
+        "</defs>"
+    ]
+    # Frame: stage bands, axes and labels
+    prev = 0.0
+    for i, (name, edge) in enumerate(data["stages"]):
+        x0, x1 = left + prev * pw, left + edge * pw
+        if i % 2 == 0:
+            parts.append(
+                f'<rect x="{x0:.1f}" y="{top:g}" width="{x1 - x0:.1f}" height="{ph:g}" fill="{t["subgraph_fill"]}"/>'
+            )
+        if i:
+            parts.append(
+                f'<line x1="{x0:.1f}" y1="{top:g}" x2="{x0:.1f}" y2="{top + ph:g}" stroke="{grid}" stroke-dasharray="4 4"/>'
+            )
+        for k, piece in enumerate(name.split(" / ")):
+            parts.append(
+                _svg_text(
+                    (x0 + x1) / 2,
+                    top + ph + 17 + k * 13,
+                    piece,
+                    t,
+                    _FS_SM if k == 0 else 9.5,
+                    ink if k == 0 else ink2,
+                    600 if k == 0 else 400,
+                    "middle",
+                )
+            )
+        prev = edge
+    parts.append(
+        f'<path d="M {left:g},{top + ph:g} H {left + pw + 6:g}" stroke="{ink2}" stroke-width="1.2" marker-end="url(#wm-arr)"/>'
+    )
+    parts.append(
+        f'<path d="M {left:g},{top + ph:g} V {top - 6:g}" stroke="{ink2}" stroke-width="1.2" marker-end="url(#wm-arr)"/>'
+    )
+    stage_rows = max(len(n.split(" / ")) for n, _ in data["stages"])
+    parts.append(
+        _svg_text(
+            left + pw,
+            top + ph + 17 + stage_rows * 13 + 4,
+            "Evolution →",
+            t,
+            _FS_SM,
+            ink2,
+            400,
+            "end",
+        )
+    )
+    cy = top + ph / 2
+    parts.append(
+        _svg_text(
+            14,
+            cy,
+            "Value chain",
+            t,
+            _FS_SM,
+            ink2,
+            600,
+            "middle",
+            f' transform="rotate(-90 14 {cy:g})"',
+        )
+    )
+    parts.append(
+        _svg_text(
+            left - 6,
+            top + 10,
+            "Visible",
+            t,
+            9.5,
+            ink2,
+            400,
+            "end",
+            f' transform="rotate(-90 {left - 6:g} {top + 10:g})"',
+        )
+    )
+    parts.append(
+        _svg_text(
+            left - 6,
+            top + ph - 4,
+            "Invisible",
+            t,
+            9.5,
+            ink2,
+            400,
+            "start",
+            f' transform="rotate(-90 {left - 6:g} {top + ph - 4:g})"',
+        )
+    )
+
+    # Pipelines: a frame at the parent's visibility spanning its variants
+    for pl in data["pipelines"]:
+        parent = comps.get(pl["parent"])
+        if not parent or not pl["items"]:
+            continue
+        evos = [e for _, e in pl["items"]]
+        x0, _ = pos(parent["vis"], min(evos))
+        x1, y = pos(parent["vis"], max(evos))
+        parts.append(
+            f'<rect x="{x0 - 14:.1f}" y="{y + 8:.1f}" width="{x1 - x0 + 28:.1f}" height="26" rx="3" '
+            f'fill="{t["card"]}" stroke="{ink2}" stroke-width="1"/>'
+        )
+        for name, evo in pl["items"]:
+            px, _ = pos(parent["vis"], evo)
+            comps.setdefault(
+                name,
+                {
+                    "kind": "pipeline",
+                    "vis": parent["vis"],
+                    "evo": evo,
+                    "label": None,
+                    "decorators": [],
+                    "y": y + 21,
+                },
+            )
+
+    def centre(name: str) -> tuple[float, float] | None:
+        c = comps.get(name)
+        if not c:
+            return None
+        x, y = pos(c["vis"], c["evo"])
+        return (x, c.get("y", y))
+
+    def trim(
+        a: tuple[float, float], b: tuple[float, float], ra: float, rb: float
+    ) -> tuple[float, float, float, float]:
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        d = math.hypot(dx, dy) or 1.0
+        return a[0] + dx / d * ra, a[1] + dy / d * ra, b[0] - dx / d * rb, b[1] - dy / d * rb
+
+    def radius(name: str) -> float:
+        c = comps.get(name, {})
+        return 12.0 if c.get("kind") == "anchor" else 7.0
+
+    for link in data["links"]:
+        a, b = centre(link["src"]), centre(link["dst"])
+        if not a or not b:
+            continue
+        x0, y0, x1, y1 = trim(
+            a, b, radius(link["src"]), radius(link["dst"]) + (2 if link["flow"] else 0)
+        )
+        attrs = f'stroke="{ink2 if link["flow"] else _mix(ink2, t["surface"], 0.25)}" stroke-width="{1.6 if link["flow"] else 1}"'
+        if link["dashed"]:
+            attrs += ' stroke-dasharray="5 4"'
+        if link["flow"] and link["fwd"]:
+            attrs += ' marker-end="url(#wm-arr)"'
+        if link["back"]:
+            attrs += ' marker-start="url(#wm-arr-s)"'
+        parts.append(f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" {attrs}/>')
+        if link["label"]:
+            mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+            lw = _text_w(link["label"], 9.5) + 8
+            parts.append(
+                f'<rect x="{mx - lw / 2:.1f}" y="{my - 8:.1f}" width="{lw:.1f}" height="14" rx="3" fill="{t["surface"]}" fill-opacity="0.9"/>'
+            )
+            parts.append(_svg_text(mx, my + 3, link["label"], t, 9.5, ink2, 400, "middle"))
+
+    for name, target in data["evolve"]:
+        c = comps.get(name)
+        if not c:
+            continue
+        a = centre(name)
+        assert a is not None
+        b = pos(c["vis"], target)
+        x0, y0, x1, y1 = trim(a, (b[0], a[1]), 8, 9)
+        parts.append(
+            f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" stroke="{red}" stroke-width="1.4" '
+            f'stroke-dasharray="5 4" marker-end="url(#wm-evo)"/>'
+        )
+        parts.append(
+            f'<circle cx="{b[0]:.1f}" cy="{a[1]:.1f}" r="6" fill="{t["surface"]}" stroke="{red}" stroke-width="1.5"/>'
+        )
+        parts.append(_svg_text(b[0] + 10, a[1] - 8, name, t, _FS_SM, red, 500))
+
+    for name, c in comps.items():
+        x, y = centre(name) or (0.0, 0.0)
+        decs = c["decorators"]
+        shade = _tint(ink2, 0.75, t)
+        for d in decs:
+            if d == "build":
+                parts.append(
+                    f'<polygon points="{x:.1f},{y - 15:.1f} {x + 14:.1f},{y + 10:.1f} {x - 14:.1f},{y + 10:.1f}" fill="{shade}"/>'
+                )
+            elif d == "buy":
+                parts.append(
+                    f'<polygon points="{x:.1f},{y - 15:.1f} {x + 15:.1f},{y:.1f} {x:.1f},{y + 15:.1f} {x - 15:.1f},{y:.1f}" fill="{shade}"/>'
+                )
+            elif d == "outsource":
+                parts.append(
+                    f'<rect x="{x - 12:.1f}" y="{y - 12:.1f}" width="24" height="24" fill="{shade}"/>'
+                )
+            elif d == "market":
+                parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="15" fill="{shade}"/>')
+            elif d == "inertia":
+                parts.append(
+                    f'<rect x="{x + 16:.1f}" y="{y - 12:.1f}" width="5" height="24" fill="{ink}"/>'
+                )
+        if c["kind"] == "anchor":
+            lw = _text_w(name, _FS, 700)
+            parts.append(_svg_text(x, y + 4, name, t, _FS, ink, 700, "middle"))
+            continue
+        dot = 4.5 if c["kind"] == "pipeline" else 6.0
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{dot:g}" fill="{t["surface"]}" stroke="{ink}" stroke-width="1.5"/>'
+        )
+        if c["kind"] == "pipeline":
+            parts.append(_svg_text(x, y + 22, name, t, 9.5, ink2, 400, "middle"))
+            continue
+        dx, dy = c["label"] if c["label"] else (10.0, -9.0)
+        parts.append(
+            _svg_text(x + dx, y + dy + 4 if c["label"] else y + dy, name, t, _FS_SM, ink, 500)
+        )
+
+    for text, vis, evo in data["notes"]:
+        x, y = pos(vis, evo)
+        parts.append(_svg_text(x, y, text, t, _FS_SM, ink, 600))
+
+    for num, vis, evo, _text in data["annotations"]:
+        x, y = pos(vis, evo)
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="8" fill="{t["surface"]}" stroke="{ink2}" stroke-width="1"/>'
+        )
+        parts.append(_svg_text(x, y + 3.5, str(num), t, 9.5, ink, 600, "middle"))
+    if data["annotations"]:
+        bvis, bevo = data["annotation_box"] or (0.95, 0.02)
+        bx, by = pos(bvis, bevo)
+        rows = [f"{n}. {txt}" for n, _, _, txt in sorted(data["annotations"])]
+        bw = max(_text_w(r, _FS_SM) for r in rows + ["Annotations"]) + 20
+        bh = 26 + 15 * len(rows)
+        bx = min(bx, left + pw - bw)
+        by = min(by, top + ph - bh)
+        parts.append(
+            f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bw:.1f}" height="{bh:g}" rx="4" fill="{t["card"]}" stroke="{grid}"/>'
+        )
+        parts.append(_svg_text(bx + 10, by + 16, "Annotations", t, _FS_SM, ink, 600))
+        for i, row in enumerate(rows):
+            parts.append(_svg_text(bx + 10, by + 32 + i * 15, row, t, _FS_SM, ink2))
+
+    for kind, text, vis, evo in data["forces"]:
+        x, y = pos(vis, evo)
+        s = 1 if kind == "accelerator" else -1
+        fill = _tint(t["accent"], 0.55, t) if s > 0 else _tint(red, 0.6, t)
+        x0, x1 = x - 26 * s, x + 26 * s
+        parts.append(
+            f'<polygon points="{x0:.1f},{y - 7:.1f} {x + 8 * s:.1f},{y - 7:.1f} {x + 8 * s:.1f},{y - 14:.1f} '
+            f'{x1:.1f},{y:.1f} {x + 8 * s:.1f},{y + 14:.1f} {x + 8 * s:.1f},{y + 7:.1f} {x0:.1f},{y + 7:.1f}" fill="{fill}"/>'
+        )
+        parts.append(_svg_text(x, y + 28, text, t, _FS_SM, ink, 600, "middle"))
+
+    height = top + ph + 17 + stage_rows * 13 + 12
+    # Labels to the right of points near commodity can run past the plot
+    right = left + pw + 20
+    for name, c in comps.items():
+        if c["kind"] in ("component", "anchor"):
+            x = (centre(name) or (0.0, 0.0))[0]
+            dx = c["label"][0] if c["label"] else 10.0
+            right = max(
+                right, x + (dx if c["kind"] == "component" else 0) + _text_w(name, _FS_SM, 500) + 6
+            )
+    for name, target in data["evolve"]:
+        if name in comps:
+            right = max(right, pos(0, target)[0] + 16 + _text_w(name, _FS_SM, 500))
+    for text, vis, evo in data["notes"]:
+        right = max(right, pos(vis, evo)[0] + _text_w(text, _FS_SM, 600) + 6)
+    return _svg_root(right, height, title_parts + parts, t["font"])
+
+
+def _rr_tokens(text: str, notation: str) -> list[str]:
+    """Split a grammar definition into tokens for the railroad parser."""
+    tokens: list[str] = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch in "\"'":
+            j = text.find(ch, i + 1)
+            j = len(text) - 1 if j < 0 else j
+            tokens.append(text[i : j + 1])
+            i = j + 1
+            continue
+        m = re.match(r"%[xdb][0-9A-Fa-f]+(?:[-.][0-9A-Fa-f]+)*", text[i:])
+        if m:
+            tokens.append(m.group(0))
+            i += m.end()
+            continue
+        if notation == "abnf":
+            m = re.match(r"\d*\*\d*|\d+(?=[\"'(\[%A-Za-z])", text[i:])
+            if m:
+                tokens.append("#rep:" + m.group(0))
+                i += m.end()
+                continue
+        m = re.match(r"[A-Za-z_][\w]*(?:-[A-Za-z_]\w*)*", text[i:])
+        if m:
+            tokens.append(m.group(0))
+            i += m.end()
+            continue
+        if notation == "ebnf" and ch == "?":
+            # ISO special sequence `? text ?` where an operand is expected
+            prev = tokens[-1] if tokens else "("
+            j = text.find("?", i + 1)
+            if prev in ("(", "[", "{", "|", ",", "=") and j > 0:
+                tokens.append("#special:" + text[i + 1 : j].strip())
+                i = j + 1
+                continue
+        tokens.append(ch)
+        i += 1
+    return tokens
+
+
+def _rr_parse_expr(tokens: list[str], notation: str) -> tuple:
+    """Recursive descent over the token list; returns a railroad AST tuple."""
+    pos = 0
+    alt_ops = ("|", "/") if notation != "ebnf" else ("|",)
+
+    def peek() -> str | None:
+        return tokens[pos] if pos < len(tokens) else None
+
+    def take() -> str:
+        nonlocal pos
+        pos += 1
+        return tokens[pos - 1]
+
+    def expr() -> tuple:
+        options = [seq()]
+        while peek() in alt_ops:
+            take()
+            options.append(seq())
+        return options[0] if len(options) == 1 else ("choice", options)
+
+    def seq() -> tuple:
+        items: list[tuple] = []
+        while peek() is not None and peek() not in (")", "]", "}", *alt_ops):
+            if peek() == ",":
+                take()
+                continue
+            item = term()
+            if peek() == "-" and notation == "ebnf":
+                take()
+                excluded = term()
+                item = ("group", f"except {_rr_label(excluded)}", item)
+            items.append(item)
+        if not items:
+            return ("skip",)
+        return items[0] if len(items) == 1 else ("seq", items)
+
+    def term() -> tuple:
+        tok = peek()
+        if tok in ("&", "!") and notation == "peg":
+            take()
+            return ("group", "followed by" if tok == "&" else "not followed by", term())
+        if tok and tok.startswith("#rep:"):
+            spec = take()[5:]
+            node = primary()
+            if "*" in spec:
+                lo, _, hi = spec.partition("*")
+                lo_n = int(lo) if lo else 0
+                label = f"{lo or 0}–{hi}" if hi else (f"≥{lo_n}" if lo_n > 1 else "")
+                return ("more", node, label) if lo_n >= 1 else ("opt", ("more", node, label))
+            return ("more", node, f"×{spec}")
+        node = primary()
+        while peek() in ("?", "*", "+"):
+            op = take()
+            node = (
+                ("opt", node)
+                if op == "?"
+                else ("more", node, "") if op == "+" else ("opt", ("more", node, ""))
+            )
+        return node
+
+    def primary() -> tuple:
+        tok = take() if peek() is not None else ""
+        if tok in ("(", "[", "{"):
+            inner = expr()
+            if peek() in (")", "]", "}"):
+                take()
+            if tok == "[":
+                return ("opt", inner)
+            if tok == "{":
+                return ("opt", ("more", inner, ""))
+            return inner
+        if tok.startswith("#special:"):
+            return ("special", tok[9:])
+        if tok[:1] in ("'", '"'):
+            return ("term", tok[1:-1] if len(tok) > 1 else tok)
+        if tok.startswith("%"):
+            return ("term", tok)
+        if tok == ".":
+            return ("special", "any character")
+        if tok:
+            return ("nonterm", tok)
+        return ("skip",)
+
+    return expr()
+
+
+def _rr_label(node: tuple) -> str:
+    if node[0] in ("term", "nonterm", "special"):
+        return node[1]
+    return "…"
+
+
+def _rr_parse_ir(text: str) -> tuple:
+    """Parse ``sequence(terminal("a"), …)`` constructor syntax."""
+    pos = 0
+
+    def ws() -> None:
+        nonlocal pos
+        while pos < len(text) and text[pos] in " \t\r\n,":
+            pos += 1
+
+    def node() -> tuple:
+        nonlocal pos
+        ws()
+        m = re.match(r"(\w+)\s*\(", text[pos:])
+        if not m:
+            m2 = re.match(r"\"([^\"]*)\"|'([^']*)'|(\w+)", text[pos:])
+            pos += m2.end() if m2 else 1
+            return (
+                ("term", (m2.group(1) or m2.group(2) or ""))
+                if m2 and m2.group(3) is None
+                else ("nonterm", m2.group(3) if m2 else "?")
+            )
+        name = m.group(1)
+        pos += m.end()
+        args: list[tuple] = []
+        strings: list[str] = []
+        while True:
+            ws()
+            if pos >= len(text) or text[pos] == ")":
+                pos += 1
+                break
+            sm = re.match(r"\"([^\"]*)\"|'([^']*)'", text[pos:])
+            if sm:
+                strings.append(sm.group(1) if sm.group(1) is not None else sm.group(2))
+                pos += sm.end()
+            else:
+                args.append(node())
+        label = strings[0] if strings else ""
+        lname = name.lower()
+        if lname == "terminal":
+            return ("term", label)
+        if lname == "nonterminal":
+            return ("nonterm", label)
+        if lname in ("special", "comment"):
+            return ("special", label)
+        if lname == "sequence":
+            return ("seq", args) if len(args) != 1 else args[0]
+        if lname == "choice":
+            return ("choice", args)
+        if lname == "optional":
+            return ("opt", args[0] if args else ("skip",))
+        if lname == "oneormore":
+            return ("more", args[0] if args else ("skip",), "")
+        if lname == "zeroormore":
+            return ("opt", ("more", args[0] if args else ("skip",), ""))
+        return ("seq", args)
+
+    return node()
+
+
+def parse_railroad(source: str) -> dict:
+    """Rules from any of Mermaid's railroad notations, as one AST."""
+    lines = source.strip().splitlines()
+    head = lines[0].strip().lower() if lines else ""
+    notation = "ebnf"
+    for key in ("abnf", "peg", "ebnf"):
+        if f"-{key}" in head:
+            notation = key
+            break
+    else:
+        if head.startswith("railroad"):
+            notation = "ir"
+    title = ""
+    body_lines = []
+    for line in lines[1:]:
+        s = line.strip()
+        m = re.match(r"^title\s+(.+)$", s)
+        if m:
+            title = _unquote(m.group(1).strip())
+            continue
+        if s.startswith(("accTitle", "accDescr", "%%")):
+            continue
+        body_lines.append(line)
+    body = "\n".join(body_lines)
+    body = re.sub(r"/\*.*?\*/|\(\*.*?\*\)", " ", body, flags=re.S)
+    if notation == "peg":
+        body = re.sub(r"#[^\n]*", " ", body)
+    if notation == "abnf":
+        # `;` ends a rule at the end of a line; anything after it is a comment
+        body = re.sub(r";[^\n]*", ";", body)
+    assign = {"ebnf": r"::=|=", "abnf": r"=/|=", "peg": r"<-|←|=", "ir": r"="}[notation]
+    rules: list[tuple[str, tuple]] = []
+    for stmt in _split_rules(body):
+        m = re.match(rf"^\s*<?([A-Za-z_][\w-]*)>?\s*(?:{assign})\s*(.*)$", stmt, re.S)
+        if not m:
+            continue
+        name, definition = m.group(1), m.group(2).strip()
+        if notation == "ir":
+            ast = _rr_parse_ir(definition)
+        else:
+            ast = _rr_parse_expr(_rr_tokens(definition, notation), notation)
+        rules.append((name, ast))
+    return {"title": title, "rules": rules}
+
+
+def _split_rules(body: str) -> list[str]:
+    """Split on `;` outside quotes."""
+    out, buf, quote = [], [], ""
+    for ch in body:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "\"'":
+            quote = ch
+        if ch == ";":
+            out.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    if "".join(buf).strip():
+        out.append("".join(buf))
+    return [s for s in out if s.strip()]
+
+
+_RR_ARC = 10.0
+_RR_H = 24.0  # box height
+
+
+_RR_ARC = 10.0
+_RR_H = 24.0  # box height
+
+
+def _rr_measure(node: tuple) -> tuple[float, float, float]:
+    """(width, extent above the track, extent below)."""
+    kind = node[0]
+    half = _RR_H / 2
+    if kind == "skip":
+        return 0.0, 0.0, 0.0
+    if kind in ("term", "nonterm", "special"):
+        size = _FS_SM if kind == "special" else _FS
+        return _text_w(node[1], size, 500) + 22, half, half
+    if kind == "seq":
+        ms = [_rr_measure(c) for c in node[1]]
+        return (
+            sum(m[0] for m in ms) + 12 * (len(ms) - 1),
+            max(m[1] for m in ms),
+            max(m[2] for m in ms),
+        )
+    if kind == "choice":
+        ms = [_rr_measure(c) for c in node[1]]
+        w = max(m[0] for m in ms) + 4 * _RR_ARC
+        down = 0.0
+        prev_down = ms[0][2]
+        for m in ms[1:]:
+            down += max(prev_down + 10 + m[1], 2 * _RR_ARC)
+            prev_down = m[2]
+        return w, max(ms[0][1], half), down + prev_down
+    if kind == "opt":
+        w, up, down = _rr_measure(node[1])
+        return w + 4 * _RR_ARC, max(up + 10, 2 * _RR_ARC), down
+    if kind == "more":
+        w, up, down = _rr_measure(node[1])
+        extra = 10.0 if node[2] else 0.0
+        return w + 4 * _RR_ARC, up, max(down + 10, 2 * _RR_ARC) + extra
+    if kind == "group":
+        w, up, down = _rr_measure(node[2])
+        return w + 16, up + 22, down + 8
+    return 0.0, 0.0, 0.0
+
+
+def _rr_draw(
+    node: tuple, x: float, y: float, t: dict[str, str], out: list[str], width: float | None = None
+) -> None:
+    """Draw *node* entering at (x, y); pads the track to *width* if given."""
+    kind = node[0]
+    w, up, down = _rr_measure(node)
+    line = t["ink2"]
+    track = f'fill="none" stroke="{line}" stroke-width="1.5"'
+    if width is not None and width > w:
+        pad = (width - w) / 2
+        out.append(
+            f'<path d="M {x:.1f},{y:.1f} h {pad:.1f} M {x + pad + w:.1f},{y:.1f} h {pad:.1f}" {track}/>'
+        )
+        x += pad
+    a = _RR_ARC
+    if kind == "skip":
+        return
+    if kind in ("term", "nonterm", "special"):
+        h = _RR_H
+        if kind == "term":
+            out.append(
+                f'<rect x="{x:.1f}" y="{y - h / 2:.1f}" width="{w:.1f}" height="{h:g}" rx="{h / 2:g}" '
+                f'fill="{_tint(t["primary"], 0.88, t)}" stroke="{_tint(t["primary"], 0.3, t)}" stroke-width="1.2"/>'
+            )
+            out.append(_svg_text(x + w / 2, y + 4.2, node[1], t, _FS, t["ink"], 500, "middle"))
+        elif kind == "nonterm":
+            out.append(
+                f'<rect x="{x:.1f}" y="{y - h / 2:.1f}" width="{w:.1f}" height="{h:g}" rx="3" '
+                f'fill="{t["card"]}" stroke="{t["node_stroke"]}" stroke-width="1.2"/>'
+            )
+            out.append(_svg_text(x + w / 2, y + 4.2, node[1], t, _FS, t["ink"], 500, "middle"))
+        else:
+            inset = 8
+            out.append(
+                f'<polygon points="{x:.1f},{y:.1f} {x + inset:.1f},{y - h / 2:.1f} {x + w - inset:.1f},{y - h / 2:.1f} '
+                f'{x + w:.1f},{y:.1f} {x + w - inset:.1f},{y + h / 2:.1f} {x + inset:.1f},{y + h / 2:.1f}" '
+                f'fill="{t["subgraph_fill"]}" stroke="{t["chrome"]}" stroke-width="1.2"/>'
+            )
+            out.append(
+                _svg_text(
+                    x + w / 2,
+                    y + 3.8,
+                    node[1],
+                    t,
+                    _FS_SM,
+                    t["ink2"],
+                    400,
+                    "middle",
+                    ' font-style="italic"',
+                )
+            )
+        return
+    if kind == "seq":
+        cx = x
+        for i, child in enumerate(node[1]):
+            if i:
+                out.append(f'<path d="M {cx:.1f},{y:.1f} h 12" {track}/>')
+                cx += 12
+            _rr_draw(child, cx, y, t, out)
+            cx += _rr_measure(child)[0]
+        return
+    if kind == "choice":
+        inner = w - 4 * a
+        ms = [_rr_measure(c) for c in node[1]]
+        out.append(f'<path d="M {x:.1f},{y:.1f} h {2 * a:g}" {track}/>')
+        out.append(f'<path d="M {x + w - 2 * a:.1f},{y:.1f} h {2 * a:g}" {track}/>')
+        _rr_draw(node[1][0], x + 2 * a, y, t, out, inner)
+        cy = y
+        prev_down = ms[0][2]
+        for child, m in zip(node[1][1:], ms[1:]):
+            cy += max(prev_down + 10 + m[1], 2 * a)
+            prev_down = m[2]
+            dy = cy - y
+            out.append(
+                f'<path d="M {x:.1f},{y:.1f} a {a:g} {a:g} 0 0 1 {a:g} {a:g} v {dy - 2 * a:.1f} '
+                f'a {a:g} {a:g} 0 0 0 {a:g} {a:g}" {track}/>'
+            )
+            out.append(
+                f'<path d="M {x + w - 2 * a:.1f},{cy:.1f} a {a:g} {a:g} 0 0 0 {a:g} {-a:g} v {-(dy - 2 * a):.1f} '
+                f'a {a:g} {a:g} 0 0 1 {a:g} {-a:g}" {track}/>'
+            )
+            _rr_draw(child, x + 2 * a, cy, t, out, inner)
+        return
+    if kind == "opt":
+        child = node[1]
+        cw, cup, _ = _rr_measure(child)
+        sy = y - up
+        out.append(f'<path d="M {x:.1f},{y:.1f} h {2 * a:g}" {track}/>')
+        out.append(f'<path d="M {x + w - 2 * a:.1f},{y:.1f} h {2 * a:g}" {track}/>')
+        out.append(
+            f'<path d="M {x:.1f},{y:.1f} a {a:g} {a:g} 0 0 0 {a:g} {-a:g} v {-(y - sy - 2 * a):.1f} '
+            f"a {a:g} {a:g} 0 0 1 {a:g} {-a:g} H {x + w - 2 * a:.1f} a {a:g} {a:g} 0 0 1 {a:g} {a:g} "
+            f'v {y - sy - 2 * a:.1f} a {a:g} {a:g} 0 0 0 {a:g} {a:g}" {track}/>'
+        )
+        _rr_draw(child, x + 2 * a, y, t, out, w - 4 * a)
+        return
+    if kind == "more":
+        child = node[1]
+        _, _, cdown = _rr_measure(child)
+        ly = y + max(cdown + 10, 2 * a)
+        out.append(f'<path d="M {x:.1f},{y:.1f} h {2 * a:g}" {track}/>')
+        out.append(f'<path d="M {x + w - 2 * a:.1f},{y:.1f} h {2 * a:g}" {track}/>')
+        mid = x + w / 2
+        out.append(
+            f'<path d="M {x + w - 2 * a:.1f},{y:.1f} a {a:g} {a:g} 0 0 1 {a:g} {a:g} v {ly - y - 2 * a:.1f} '
+            f"a {a:g} {a:g} 0 0 1 {-a:g} {a:g} H {x + 2 * a:.1f} a {a:g} {a:g} 0 0 1 {-a:g} {-a:g} "
+            f'v {-(ly - y - 2 * a):.1f} a {a:g} {a:g} 0 0 1 {a:g} {-a:g}" {track}/>'
+        )
+        # direction cue on the return loop
+        out.append(
+            f'<path d="M {mid + 3:.1f},{ly - 4:.1f} L {mid - 3:.1f},{ly:.1f} L {mid + 3:.1f},{ly + 4:.1f}" {track}/>'
+        )
+        if node[2]:
+            out.append(_svg_text(mid, ly + 13, node[2], t, 9.5, t["ink2"], 400, "middle"))
+        _rr_draw(child, x + 2 * a, y, t, out, w - 4 * a)
+        return
+    if kind == "group":
+        child = node[2]
+        cw, cup, cdown = _rr_measure(child)
+        out.append(
+            f'<rect x="{x + 2:.1f}" y="{y - cup - 8:.1f}" width="{w - 4:.1f}" height="{cup + cdown + 16:.1f}" rx="6" '
+            f'fill="none" stroke="{t["chrome"]}" stroke-dasharray="4 3"/>'
+        )
+        out.append(
+            _svg_text(
+                x + 6,
+                y - cup - 12,
+                node[1],
+                t,
+                9.5,
+                t["ink2"],
+                400,
+                "start",
+                ' font-style="italic"',
+            )
+        )
+        out.append(f'<path d="M {x:.1f},{y:.1f} h 8 M {x + w - 8:.1f},{y:.1f} h 8" {track}/>')
+        _rr_draw(child, x + 8, y, t, out)
+        return
+
+
+def _rr_rows(node: tuple, limit: float) -> list[tuple]:
+    """Break a long top-level sequence into rows that fit *limit*."""
+    if node[0] != "seq" or _rr_measure(node)[0] <= limit:
+        return [node]
+    rows: list[list[tuple]] = [[]]
+    width = 0.0
+    for child in node[1]:
+        cw = _rr_measure(child)[0] + 12
+        if rows[-1] and width + cw > limit:
+            rows.append([])
+            width = 0.0
+        rows[-1].append(child)
+        width += cw
+    return [r[0] if len(r) == 1 else ("seq", r) for r in rows]
+
+
+def render_railroad_svg(data: dict, theme: dict[str, str] | None = None) -> str:
+    """One track per rule: terminals are pills, rule references are boxes."""
+    t = _tokens(theme)
+    if not data["rules"]:
+        return _svg_root(120, 40, _svg_text(0, 20, "No rules", t, color=t["ink2"]), t["font"])
+    limit = float(t.get("column_px") or 680) - 60
+    parts: list[str] = []
+    title_parts, title_h = _chart_title(data["title"], t)
+    parts += title_parts
+    y = title_h + 4
+    width = 0.0
+    line = t["ink2"]
+    track = f'fill="none" stroke="{line}" stroke-width="1.5"'
+    for name, ast in data["rules"]:
+        parts.append(_svg_text(0, y + 13, name, t, _FS, t["ink"], 600))
+        y += 22
+        rows = _rr_rows(ast, limit)
+        x0 = 14.0
+        for i, row in enumerate(rows):
+            w, up, down = _rr_measure(row)
+            ty = y + up + 4
+            if i == 0:
+                parts.append(f'<path d="M 2,{ty - 7:.1f} v 14 M 6,{ty - 7:.1f} v 14" {track}/>')
+                parts.append(f'<path d="M 6,{ty:.1f} H {x0:.1f}" {track}/>')
+            _rr_draw(row, x0, ty, t, parts)
+            end = x0 + w
+            if i == len(rows) - 1:
+                parts.append(
+                    f'<path d="M {end:.1f},{ty:.1f} h 8 M {end + 8:.1f},{ty - 7:.1f} v 14 M {end + 12:.1f},{ty - 7:.1f} v 14" {track}/>'
+                )
+                width = max(width, end + 14)
+                y = ty + down + 18
+            else:
+                # carry the track back to the left edge for the next row
+                nxt_up = _rr_measure(rows[i + 1])[1]
+                ny = ty + down + 14 + nxt_up + 4
+                mid = ty + down + 7
+                a = _RR_ARC
+                parts.append(
+                    f'<path d="M {end:.1f},{ty:.1f} h 4 a {a:g} {a:g} 0 0 1 {a:g} {a:g} V {mid - a:.1f} '
+                    f"a {a:g} {a:g} 0 0 1 {-a:g} {a:g} H {a:.1f} a {a:g} {a:g} 0 0 0 {-a + 2:g} {a:g} "
+                    f'V {ny - a:.1f} a {a:g} {a:g} 0 0 0 {a:g} {a:g} H {x0:.1f}" {track}/>'
+                )
+                width = max(width, end + 4 + a)
+                y = ny - nxt_up - 4
+        y += 6
+    return _svg_root(width + 4, y - 14, parts, t["font"])
+
+
+_EM_KINDS = {
+    "ui": "ui",
+    "pcr": "pcr",
+    "processor": "pcr",
+    "cmd": "cmd",
+    "command": "cmd",
+    "rmo": "rmo",
+    "readmodel": "rmo",
+    "evt": "evt",
+    "event": "evt",
+}
+_EM_GROUP = {"ui": 0, "pcr": 0, "cmd": 1, "rmo": 1, "evt": 2}
+_EM_GROUP_NAMES = ("UI / Automation", "Command / Read model", "Events")
+_EM_CAPTION = {
+    "ui": "UI",
+    "pcr": "Processor",
+    "cmd": "Command",
+    "rmo": "Read model",
+    "evt": "Event",
+}
+_EM_COLORS = {
+    "cmd": "#3b6fd4",
+    "evt": "#e08a2c",
+    "rmo": "#3f9a52",
+    "pcr": "#6b7280",
+    "ui": "#8a94a6",
+}
+
+
+def _fit_label(text: str, max_w: float, size: float) -> str:
+    """Shorten *text* with an ellipsis so it fits *max_w*."""
+    if _text_w(text, size) <= max_w:
+        return text
+    while text and _text_w(text + "…", size) > max_w:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
+
+def _em_data_lines(text: str) -> list[str]:
+    body = text.strip()
+    if body.startswith("{") and body.endswith("}"):
+        body = body[1:-1]
+    parts = re.split(r"\n|,(?![^{\[]*[}\]])", body)
+    return [p.strip().rstrip(",") for p in parts if p.strip()]
+
+
+def parse_eventmodeling(source: str) -> dict:
+    """Time frames (with inline or referenced data), reset frames and explicit ``->>`` links."""
+    frames: list[dict] = []
+    data_blocks: dict[str, list[str]] = {}
+    lines = source.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        if not line or line.startswith("%%") or line.lower() == "eventmodeling":
+            continue
+        m = re.match(r"^data\s+([\w.]+)\s*(?:`\w+`)?\s*(\{.*)$", line)
+        if m:
+            buf = m.group(2)
+            depth = buf.count("{") - buf.count("}")
+            while depth > 0 and i < len(lines):
+                buf += "\n" + lines[i]
+                depth += lines[i].count("{") - lines[i].count("}")
+                i += 1
+            data_blocks[m.group(1)] = _em_data_lines(buf)
+            continue
+        m = re.match(r"^(tf|timeframe|rf|resetframe)\s+(\d+)\s+(\w+)\s+([\w.-]+)\s*(.*)$", line)
+        if not m:
+            continue
+        kw, num, kind, ident, rest = m.groups()
+        refs = re.findall(r"->>\s*(\d+)", rest)
+        rest = re.sub(r"->>\s*\d+", "", rest)
+        ref = re.search(r"\[\[([\w.]+)\]\]", rest)
+        inline = re.search(r"\{.*\}", rest)
+        ns, _, name = ident.rpartition(".")
+        frames.append(
+            {
+                "num": num,
+                "kind": _EM_KINDS.get(kind.lower(), "ui"),
+                "name": name,
+                "ns": ns,
+                "reset": kw in ("rf", "resetframe"),
+                "refs": refs,
+                "data_ref": ref.group(1) if ref else None,
+                "data": _em_data_lines(inline.group(0)) if inline else [],
+            }
+        )
+    for f in frames:
+        if f["data_ref"] and not f["data"]:
+            f["data"] = data_blocks.get(f["data_ref"], [])
+    return {"frames": frames}
+
+
+def render_eventmodeling_svg(data: dict, theme: dict[str, str] | None = None) -> str:
+    """Swimlanes of UI, commands/read models and events along a timeline of frames."""
+    t = _tokens(theme)
+    frames = data["frames"]
+    if not frames:
+        return _svg_root(120, 40, _svg_text(0, 20, "No frames", t, color=t["ink2"]), t["font"])
+    # Lanes: one per (group, namespace), groups in canonical order
+    lane_keys: list[tuple[int, str]] = []
+    for f in frames:
+        key = (_EM_GROUP[f["kind"]], f["ns"])
+        if key not in lane_keys:
+            lane_keys.append(key)
+    lane_keys.sort(key=lambda k: k[0])  # stable: namespaces keep their order
+    lane_of = {i: lane_keys.index((_EM_GROUP[f["kind"]], f["ns"])) for i, f in enumerate(frames)}
+
+    # Box sizes
+    shown_data = [f["data"][:5] for f in frames]
+    boxes = []
+    for f, rows in zip(frames, shown_data):
+        title_lines = _wrap_lines(f["name"], 150, _FS)
+        w = max(
+            [118.0]
+            + [_text_w(x, _FS, 600) + 20 for x in title_lines]
+            + [_text_w(r, 9.5) + 20 for r in rows]
+        )
+        w = min(w, 210.0)
+        h = (
+            24
+            + 15 * len(title_lines)
+            + (8 + 12.5 * len(rows) if rows else 4)
+            + (12.5 if len(f["data"]) > 5 else 0)
+        )
+        boxes.append((w, max(h, 54.0), title_lines))
+
+    header = 116.0
+    gap = 26.0
+    # Frames advance along the timeline; a lane only needs room for its own
+    # boxes, so frames in different lanes overlap in time instead of queueing.
+    xs: list[float] = []
+    lane_right: dict[int, float] = {}
+    for i, (w, _, _) in enumerate(boxes):
+        x = header + 16
+        if xs:
+            x = max(x, xs[-1] + max(56.0, boxes[i - 1][0] * 0.55))
+        x = max(x, lane_right.get(lane_of[i], 0.0) + gap)
+        xs.append(x)
+        lane_right[lane_of[i]] = x + w
+    width = max(xs[i] + boxes[i][0] for i in range(len(boxes))) + 16
+    lane_h = [0.0] * len(lane_keys)
+    for i, (_, h, _) in enumerate(boxes):
+        lane_h[lane_of[i]] = max(lane_h[lane_of[i]], h + 24)
+    lane_h = [max(h, 64.0) for h in lane_h]
+    lane_y = []
+    acc = 0.0
+    for h in lane_h:
+        lane_y.append(acc)
+        acc += h
+    height = acc
+
+    parts: list[str] = [_make_arrow_defs(t)]
+    for k, (group, ns) in enumerate(lane_keys):
+        y = lane_y[k]
+        fill = t["subgraph_fill"] if k % 2 == 0 else t["surface"]
+        parts.append(
+            f'<rect x="0" y="{y:g}" width="{width:g}" height="{lane_h[k]:g}" fill="{fill}"/>'
+        )
+        parts.append(
+            f'<rect x="0" y="{y:g}" width="{header:g}" height="{lane_h[k]:g}" fill="{_tint(t["primary"], 0.9, t)}"/>'
+        )
+        label_lines = ([ns] if ns else []) + _wrap_lines(
+            _EM_GROUP_NAMES[group], header - 20, _FS_SM
+        )
+        ly = y + lane_h[k] / 2 - (len(label_lines) - 1) * 7 + 4
+        for j, text in enumerate(label_lines):
+            bold = j == 0 and bool(ns)
+            parts.append(
+                _svg_text(
+                    10,
+                    ly + j * 14,
+                    text,
+                    t,
+                    _FS if bold else _FS_SM,
+                    t["ink"],
+                    600 if bold or not ns else 400,
+                )
+            )
+        if k:
+            parts.append(
+                f'<line x1="0" y1="{y:g}" x2="{width:g}" y2="{y:g}" stroke="{t["subgraph_stroke"]}"/>'
+            )
+
+    def rect(i: int) -> tuple[float, float, float, float]:
+        w, h, _ = boxes[i]
+        k = lane_of[i]
+        return xs[i], lane_y[k] + (lane_h[k] - h) / 2, w, h
+
+    index = {f["num"]: i for i, f in enumerate(frames)}
+    links: list[tuple[int, int]] = []
+    for i, f in enumerate(frames):
+        if i and not f["reset"]:
+            links.append((i - 1, i))
+        for r in f["refs"]:
+            if r in index and index[r] != i:
+                links.append((index[r], i))
+    unique = list(dict.fromkeys(links))
+    # Several arrows into one box arrive side by side, ordered by where they come from
+    arrival: dict[tuple[int, int], float] = {}
+    for b in {b for _, b in unique}:
+        srcs = sorted(
+            (a for a, bb in unique if bb == b and lane_of[a] != lane_of[b]), key=lambda a: xs[a]
+        )
+        for k, a in enumerate(srcs):
+            arrival[(a, b)] = 0.5 if len(srcs) == 1 else 0.2 + 0.6 * k / (len(srcs) - 1)
+    for a, b in unique:
+        ax, ay, aw, ah = rect(a)
+        bx, by, bw, bh = rect(b)
+        if lane_of[a] == lane_of[b]:
+            x0, y0 = (ax + aw, ay + ah / 2) if ax < bx else (ax, ay + ah / 2)
+            x1, y1 = (bx, by + bh / 2) if ax < bx else (bx + bw, by + bh / 2)
+            d = f"M {x0:.1f},{y0:.1f} L {x1:.1f},{y1:.1f}"
+        else:
+            down = lane_of[b] > lane_of[a]
+            x0 = ax + aw * (0.62 if ax < bx else 0.38)
+            y0 = ay + ah if down else ay
+            x1 = bx + bw * arrival.get((a, b), 0.38 if ax < bx else 0.62)
+            y1 = by if down else by + bh
+            mid = (y0 + y1) / 2
+            d = f"M {x0:.1f},{y0:.1f} C {x0:.1f},{mid:.1f} {x1:.1f},{mid:.1f} {x1:.1f},{y1:.1f}"
+        parts.append(
+            f'<path d="{d}" fill="none" stroke="{t["edge"]}" stroke-width="1.3" marker-end="url(#arr)"/>'
+        )
+
+    for i, f in enumerate(frames):
+        x, y, w, h = rect(i)
+        _, _, title_lines = boxes[i]
+        base = _EM_COLORS[f["kind"]]
+        fill = t["card"] if f["kind"] == "ui" else _tint(base, 0.84, t)
+        parts.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" rx="{8 if f["kind"] == "ui" else 3}" '
+            f'fill="{fill}" stroke="{_tint(base, 0.15, t)}" stroke-width="1.2"/>'
+        )
+        parts.append(
+            _svg_text(
+                x + 10,
+                y + 15,
+                _EM_CAPTION[f["kind"]].upper(),
+                t,
+                8.5,
+                _mix(base, t["ink"], 0.35),
+                600,
+                extra=' letter-spacing="0.6"',
+            )
+        )
+        parts.append(_svg_text(x + w - 8, y + 15, f["num"], t, 8.5, t["ink2"], 400, "end"))
+        cy = y + 31
+        for text in title_lines:
+            parts.append(_svg_text(x + 10, cy, text, t, _FS, t["ink"], 600))
+            cy += 15
+        rows = shown_data[i]
+        if rows:
+            parts.append(
+                f'<line x1="{x + 8:.1f}" y1="{cy - 6:.1f}" x2="{x + w - 8:.1f}" y2="{cy - 6:.1f}" stroke="{_tint(base, 0.5, t)}"/>'
+            )
+            cy += 6
+            for r in rows:
+                parts.append(_svg_text(x + 10, cy, _fit_label(r, w - 18, 9.5), t, 9.5, t["ink2"]))
+                cy += 12.5
+            if len(f["data"]) > 5:
+                parts.append(
+                    _svg_text(
+                        x + 10,
+                        cy,
+                        f"+{len(f['data']) - 5} more",
+                        t,
+                        9.5,
+                        t["ink2"],
+                        extra=' font-style="italic"',
+                    )
+                )
+    return _svg_root(width, height, parts, t["font"])
+
+
 def _detect_diagram_type(source: str) -> str:
     """Detect the diagram type from Mermaid source."""
     source = _strip_preamble(source)
@@ -6960,7 +9336,29 @@ def _detect_diagram_type(source: str) -> str:
             return "requirement"
         if re.match(r"^zenuml\b", line, re.IGNORECASE):
             return "zenuml"
-        if re.match(rf"^(?:{'|'.join(_UNSUPPORTED_TYPES)})\b", line, re.IGNORECASE):
+        if re.match(r"^usecase(-beta)?\b", line, re.IGNORECASE):
+            return "usecase"
+        if re.match(r"^swimlanes?(-beta)?\b", line, re.IGNORECASE):
+            return "swimlanes"
+        if re.match(r"^agentflow(-beta)?\b", line, re.IGNORECASE):
+            return "agentflow"
+        if re.match(r"^treeView(-beta)?\b", line, re.IGNORECASE):
+            return "treeview"
+        if re.match(r"^venn(-beta)?\b", line, re.IGNORECASE):
+            return "venn"
+        if re.match(r"^cynefin(-beta)?\b", line, re.IGNORECASE):
+            return "cynefin"
+        if re.match(r"^wardley(-beta)?\b", line, re.IGNORECASE):
+            return "wardley"
+        if re.match(r"^railroad(-(?:ebnf|abnf|peg))?(-beta)?\b", line, re.IGNORECASE):
+            return "railroad"
+        if re.match(r"^eventmodeling\b", line, re.IGNORECASE):
+            return "eventmodeling"
+        if re.match(r"^ishikawa(-beta)?\b", line, re.IGNORECASE):
+            return "ishikawa"
+        if _UNSUPPORTED_TYPES and re.match(
+            rf"^(?:{'|'.join(_UNSUPPORTED_TYPES)})\b", line, re.IGNORECASE
+        ):
             return "unsupported"
         if re.match(r"^stateDiagram", line, re.IGNORECASE):
             return "state"
@@ -7042,6 +9440,26 @@ def _render_by_type(diagram_type: str, source: str, theme: dict[str, str]) -> st
         return render_requirement_svg(parse_requirement(source), theme)
     elif diagram_type == "zenuml":
         return render_zenuml_svg(source, theme)
+    elif diagram_type == "usecase":
+        return render_usecase_svg(parse_usecase(source), theme)
+    elif diagram_type == "swimlanes":
+        return render_swimlanes_svg(parse_swimlanes(source), theme)
+    elif diagram_type == "agentflow":
+        return render_svg(parse_agentflow(source), theme)
+    elif diagram_type == "treeview":
+        return render_treeview_svg(parse_treeview(source), theme)
+    elif diagram_type == "venn":
+        return render_venn_svg(parse_venn(source), theme)
+    elif diagram_type == "cynefin":
+        return render_cynefin_svg(parse_cynefin(source), theme)
+    elif diagram_type == "wardley":
+        return render_wardley_svg(parse_wardley(source), theme)
+    elif diagram_type == "railroad":
+        return render_railroad_svg(parse_railroad(source), theme)
+    elif diagram_type == "eventmodeling":
+        return render_eventmodeling_svg(parse_eventmodeling(source), theme)
+    elif diagram_type == "ishikawa":
+        return render_ishikawa_svg(*parse_ishikawa(source), theme)
     else:
         # flowchart (default for unrecognized types too)
         return render_svg(parse(source), theme)

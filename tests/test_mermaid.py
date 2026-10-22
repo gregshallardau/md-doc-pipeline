@@ -379,8 +379,9 @@ def test_front_matter_and_init_directives_are_ignored():
         assert "<svg" in m.render_to_svg(pre + "flowchart TD\n A --> B")
 
 
-@pytest.mark.parametrize("kind", ["venn", "wardley", "ishikawa"])
-def test_unsupported_diagram_types_fail_cleanly(kind):
+def test_unsupported_diagram_types_fail_cleanly(monkeypatch):
+    kind = "futureChart"
+    monkeypatch.setattr(m, "_UNSUPPORTED_TYPES", (kind,))
     with pytest.raises(m.UnsupportedDiagramError):
         m.render_to_svg(f"{kind}\n  anything")
     html = f'<pre><code class="language-mermaid">{kind}\n x</code></pre>'
@@ -823,3 +824,192 @@ def test_fonts_registered_after_a_raster_still_apply():
     m._FC_ADDED.discard(copy)
     m.register_fonts([("Late Face Test", copy, "400")])
     assert m.font_generation() > generation
+
+
+@pytest.mark.parametrize(
+    "source, kind",
+    [
+        ("usecase-beta\nactor U\nU --> (Login)", "usecase"),
+        ("swimlane-beta LR\nsubgraph A\n x\nend", "swimlanes"),
+        ("agentflow-beta\na --> b", "agentflow"),
+        ("treeView-beta\nsrc/\n  a.py", "treeview"),
+        ("ishikawa-beta\nEffect\n  Cause", "ishikawa"),
+        ("venn-beta\nset A", "venn"),
+        ("cynefin-beta\ncomplex", "cynefin"),
+        ("wardley-beta\ncomponent A [0.5, 0.5]", "wardley"),
+        ('railroad-ebnf-beta\na = "x" ;', "railroad"),
+        ('railroad-beta\na = terminal("x") ;', "railroad"),
+        ("eventmodeling\ntf 01 ui CartUI", "eventmodeling"),
+    ],
+)
+def test_newest_diagram_types_render(source, kind):
+    assert m._detect_diagram_type(source) == kind
+    svg = m.render_to_svg(source)
+    assert svg.startswith("<svg") and "NaN" not in svg
+
+
+def test_unknown_types_still_default_to_flowchart():
+    assert m._detect_diagram_type("A --> B") == "flowchart"
+    assert m._detect_diagram_type("stateDiagram-v2\n [*] --> A") == "state"
+
+
+def test_pipe_label_after_cross_and_circle_ends():
+    fc = m.parse("flowchart TD\n a --x|no| b\n c --o|maybe| d")
+    assert [(e.src, e.dst, e.label, e.head) for e in fc.edges] == [
+        ("a", "b", "no", "cross"),
+        ("c", "d", "maybe", "circle"),
+    ]
+
+
+def test_flowchart_shape_metadata_and_subgraph_edges():
+    fc = m.parse(
+        'flowchart LR\n a@{ shape: doc, label: "Spec" }\n subgraph G\n  x --> y\n end\n a --> G\n G --> z'
+    )
+    assert fc.nodes["a"].shape == "document" and fc.nodes["a"].label == "Spec"
+    assert ("a", "x") in [(e.src, e.dst) for e in fc.edges]
+    assert ("y", "z") in [(e.src, e.dst) for e in fc.edges]
+    assert "G" not in fc.nodes
+
+
+def test_sibling_subgraph_frames_do_not_overlap():
+    fc = m.parse_usecase(
+        'usecase-beta\nactor C\nactor S\nsystemBoundary Store\n B("Browse")\n K("Checkout")\nend\n'
+        'systemBoundary Ship\n T("Track")\nend\nC --> B\nC --> K\nC --> T\nS --> T\nK ..> : include B'
+    )
+    m.layout(fc)
+    a, b = fc.subgraphs
+    assert a.y + a.h <= b.y or b.y + b.h <= a.y or a.x + a.w <= b.x or b.x + b.w <= a.x
+
+
+def test_usecase_actors_ellipses_and_include():
+    fc = m.parse_usecase(
+        'usecase-beta\nactor Customer\nsystemBoundary Shop\n  Pay("Pay")\nend\n'
+        "Customer --> Pay\nPay ..> : include Login"
+    )
+    assert fc.nodes["Customer"].shape == "actor"
+    assert fc.nodes["Pay"].shape == "ellipse"
+    assert fc.subgraphs[0].node_ids == ["Pay"]
+    inc = [e for e in fc.edges if e.label == "«include»"]
+    assert inc and inc[0].style == "dotted"
+
+
+def test_swimlanes_flip_downwards_when_too_wide():
+    src = "swimlane-beta LR\n" + "\n".join(
+        f"s{i}[Step number {i}] --> s{i + 1}[Step number {i + 1}]" for i in range(8)
+    )
+    fc = m.parse_swimlanes(src)
+    m.render_swimlanes_svg(fc, {"column_px": "600"})
+    assert fc.direction == "TD"
+
+
+def test_agentflow_collapsed_flow_and_failure_edge():
+    fc = m.parse_agentflow(
+        'agentflow-beta LR\nflow f["Agent"]\n a --> b\nend\nf@{ view: collapsed }\nstart --> a\nb --x stop'
+    )
+    assert fc.nodes["f"].label == "Agent" and "a" not in fc.nodes
+    assert any(e.head == "cross" and e.css.get("stroke") for e in fc.edges)
+
+
+def test_treeview_box_drawing_and_descriptions():
+    rows = m.parse_treeview(
+        "treeView-beta\nsrc/\n├── a.py ## entry\n└── lib/\n    └── b.py :::highlight"
+    )
+    assert [(r.label, r.depth) for r in rows] == [
+        ("src/", 0),
+        ("a.py", 1),
+        ("lib/", 1),
+        ("b.py", 2),
+    ]
+    assert rows[1].desc == "entry" and rows[3].highlight and rows[2].is_dir
+
+
+def test_ishikawa_effect_and_categories():
+    effect, cats = m.parse_ishikawa(
+        "ishikawa-beta\nSlow site\n  People\n    Training\n  Tools\n    Old CI"
+    )
+    assert effect == "Slow site" and [c.label for c in cats] == ["People", "Tools"]
+    assert "Old CI" in m.render_ishikawa_svg(effect, cats)
+
+
+def test_venn_sets_unions_text_and_style():
+    data = m.parse_venn(
+        'venn-beta\ntitle T\nset A["Alpha"]:20\n  text A1["React"]\nset B\nunion A,B["AB"]:3\nstyle A fill:#ff6b6b'
+    )
+    assert [s["label"] for s in data["sets"]] == ["Alpha", "B"]
+    assert data["unions"][0]["ids"] == ["A", "B"] and data["unions"][0]["size"] == 3
+    svg = m.render_venn_svg(data)
+    assert "#ff6b6b" in svg and "React" in svg and svg.count("<circle") == 2
+
+
+def test_cynefin_domains_items_and_transitions():
+    data = m.parse_cynefin(
+        'cynefin-beta\ncomplex\n  "Probe"\nclear\n  "Fix"\nconfusion\n  "Huh"\ncomplex --> clear : "Learned"\nclear --> clear'
+    )
+    assert data["items"]["complex"] == ["Probe"] and data["transitions"] == [
+        ("complex", "clear", "Learned")
+    ]
+    svg = m.render_cynefin_svg(data)
+    for word in ("Complex", "Complicated", "Chaotic", "Clear", "Confusion", "Learned"):
+        assert word in svg
+
+
+def test_wardley_components_links_and_evolution():
+    data = m.parse_wardley(
+        "wardley-beta\ntitle Map\nevolution A@0.3 -> B -> C\nanchor User [0.9, 0.9]\n"
+        "component Real-time API [0.6, 0.5] label [-20, 5] (build) (inertia)\n"
+        "User -> Real-time API\nUser +'feeds'> Real-time API\nevolve Real-time API 0.8\n"
+        'note "Watch" [0.3, 0.3]\nannotation 1,[0.5, 0.5] "Key"\naccelerator "AI" [0.2, 0.2]'
+    )
+    comp = data["components"]["Real-time API"]
+    assert comp["decorators"] == ["build", "inertia"] and comp["label"] == (-20.0, 5.0)
+    assert data["stages"][0] == ("A", 0.3)
+    assert data["links"][1]["label"] == "feeds" and data["links"][1]["flow"]
+    svg = m.render_wardley_svg(data)
+    assert "Watch" in svg and "Key" in svg and "AI" in svg
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'railroad-ebnf-beta\nn = [ "-" ] digit { digit } ;\ndigit = "0" | "1" ;',
+        'railroad-abnf-beta\nn = [ "-" ] 1*DIGIT ; comment\nDIGIT = %x30-39 ;',
+        'railroad-peg-beta\nN <- "-"? !"0" D+ ;\nD <- "0" / "1" ;',
+        'railroad-beta\nn = sequence(optional(terminal("-")), oneOrMore(nonterminal("digit"))) ;',
+    ],
+)
+def test_railroad_notations_parse_to_rules(source):
+    data = m.parse_railroad(source)
+    assert data["rules"][0][0] in ("n", "N")
+    svg = m.render_railroad_svg(data)
+    for name, _ in data["rules"]:
+        assert f">{name}<" in svg
+
+
+def test_railroad_long_rule_wraps_to_column():
+    terms = " ".join(f'"token{i}"' for i in range(20))
+    svg = m.render_railroad_svg(
+        m.parse_railroad(f"railroad-ebnf-beta\nr = {terms} ;"), {"column_px": "500"}
+    )
+    assert float(re.search(r'viewBox="0 0 ([\d.]+)', svg).group(1)) <= 500
+
+
+def test_eventmodeling_lanes_data_and_links():
+    data = m.parse_eventmodeling(
+        "eventmodeling\ntf 01 ui CartUI\ntf 02 cmd AddItem [[Add]]\ntf 03 evt ItemAdded { id: string }\n"
+        "rf 04 evt Inventory.Changed\ntf 05 rmo Cart ->> 03\ndata Add {\n  sku: string\n}"
+    )
+    frames = data["frames"]
+    assert [f["kind"] for f in frames] == ["ui", "cmd", "evt", "evt", "rmo"]
+    assert frames[1]["data"] == ["sku: string"] and frames[2]["data"] == ["id: string"]
+    assert frames[3]["reset"] and frames[3]["ns"] == "Inventory" and frames[4]["refs"] == ["03"]
+    svg = m.render_eventmodeling_svg(data)
+    assert "Inventory" in svg and "COMMAND" in svg
+
+
+def test_c4_labelled_neighbours_get_room_and_relations_avoid_cards():
+    cd = m.parse_c4(
+        'C4Context\nSystem(a, "A")\nSystem(b, "B")\nSystem(c, "C")\n'
+        'Rel(a, b, "A rather long relationship label")\nRel(a, c, "Skips")'
+    )
+    svg = m.render_c4_svg(cd)
+    assert " Q " in svg  # a to c bends around b

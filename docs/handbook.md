@@ -922,6 +922,16 @@ which installs `cairosvg`; without it the code block stays as text).
 | C4 | `C4Context`, `C4Container`, `C4Component`, `C4Dynamic`, `C4Deployment` |
 | Requirement | `requirementDiagram` |
 | ZenUML | `zenuml` |
+| Use case (UML) | `usecase-beta` |
+| Swimlanes | `swimlane-beta` |
+| Agent flow | `agentflow-beta` |
+| Tree view | `treeView-beta` |
+| Ishikawa (fishbone) | `ishikawa-beta` |
+| Venn | `venn-beta` |
+| Cynefin | `cynefin-beta` |
+| Wardley map | `wardley-beta` |
+| Railroad (syntax) | `railroad-ebnf-beta`, `railroad-abnf-beta`, `railroad-peg-beta`, `railroad-beta` |
+| Event modeling | `eventmodeling` |
 
 ````markdown
 ```mermaid
@@ -957,6 +967,8 @@ drawing is supported:
 | `classDef name fill:#d4edda,stroke:#28a745,color:#14532d`, `A:::name`, `class A,B name`, `style A fill:#fff` | per-node overrides (`fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`) |
 | `linkStyle 0,2 stroke:#dc3545,stroke-width:2px`, `linkStyle default ...` | per-edge overrides, numbered in the order edges appear |
 | `subgraph id [Title]`, `subgraph "Title"`, nested `subgraph` | framed groups |
+| `A@{ shape: doc, label: "Spec" }` | Mermaid 11 shape names and aliases (`rect`, `rounded`, `stadium`, `diam`, `hex`, `cyl`, `doc`, `circle`, `lean-r`, `subproc`, ...) |
+| `A --> Group`, `Group --> B` | edges to and from a subgraph attach to its first or last member |
 
 Nodes are laid out in ranks with crossings minimised, long and looping edges run in their own
 lanes, and edges leaving one node fan out instead of sharing a line. Override individual nodes
@@ -1010,6 +1022,16 @@ read as a set:
 | Architecture | `group id(icon)[Title] in parent`, `service id(icon)[Title] in group`, `junction id`, edges `a:R --> L:b` (sides `L R T B`, `<`/`>` arrows, `{group}`), `align row \| column`; icons `cloud`, `database`, `disk`, `internet`, `server` (other icon names show a generic tile) |
 | C4 | `Person`, `System`, `Container`, `Component` with `Db` / `Queue` / `_Ext` variants, `Boundary`, `Enterprise_Boundary`, `System_Boundary`, `Container_Boundary`, `Deployment_Node` / `Node` blocks, `Rel`, `BiRel`, `Rel_U/D/L/R`, `Rel_Back`, `RelIndex`, `$named` arguments, `UpdateLayoutConfig($c4ShapeInRow, $c4BoundaryInRow)`; colours follow the C4 roles in your brand primary, grey for external |
 | Requirement | `requirement`, `functionalRequirement`, `interfaceRequirement`, `performanceRequirement`, `physicalRequirement`, `designConstraint` and `element` blocks; `a - satisfies -> b` and `b <- satisfies - a` with `contains`, `copies`, `derives`, `satisfies`, `verifies`, `refines`, `traces` |
+| Use case | `actor Name`, `Id("Use case")` ellipses, `Id[Label]` boxes, `systemBoundary Name ... end`, `A --> B`, `A ..> : include B` / `: extend B` (drawn as «include» / «extend»), `A --\|> B` generalisation, `direction LR \| TB` |
+| Swimlanes | `swimlane-beta LR \| TB`; each top-level `subgraph` is a lane, steps sit in their lane in flow order; full flowchart node and edge syntax |
+| Agent flow | `agentflow-beta TB \| LR`, `flow id["Agent"] ... end` groups, `global ... end`, typed shapes `@{ shape: task \| tool \| input \| decision \| refdoc \| action }`, `id@{ view: collapsed }` folds a flow into one node, `--x` failure edges in red |
+| Tree view | indented lines or pasted `tree` output (`├──`, `└──`); names ending `/` are folders, `## note` adds a description, `:::highlight` marks a row, `icon(...)`; config `treeView.showIcons` |
+| Ishikawa | first line is the effect; indented categories alternate above and below the spine, with causes and sub-causes nested under them |
+| Venn | `title`, `set Id["Label"]:size`, `union A,B["Label"]:size` (two or more sets), indented `text Id["Label"]` items, `style Id fill:...,color:...,stroke:...,fill-opacity:...` |
+| Cynefin | `title`, `complex` / `complicated` / `clear` / `chaotic` / `confusion` blocks of quoted items, transitions `complex --> complicated : "Label"`; config `cynefin.showDomainDescriptions`, `cynefin.boundaryAmplitude` |
+| Wardley map | `title`, `size [w, h]`, `evolution A -> B -> C` (with `@0.3` widths and `Label / Sub` pairs), `anchor` and `component Name [visibility, evolution]` with `label [dx, dy]` and `(inertia)`, `(build)`, `(buy)`, `(outsource)`, `(market)`; links `->`, `-.->`, `+>`, `+<`, `+<>`, `+'label'>`, `A -> B; label`; `evolve`, `pipeline X { ... }`, `note`, `annotations` / `annotation N,[v, e] "text"`, `accelerator`, `deaccelerator` |
+| Railroad | EBNF (`=` or `::=`, `\|`, `,`, `[ ]`, `{ }`, `?`, `*`, `+`, `A - B`, `? special ?`, comments), ABNF (`/`, `*A`, `1*A`, `2*4A`, `%x41-5A`, `;` comments), PEG (`<-`, `/`, `&A`, `!A`, `.`, `#` comments) and IR constructors (`sequence`, `choice`, `optional`, `zeroOrMore`, `oneOrMore`, `terminal`, `nonterminal`, `special`); long rules wrap onto several rows |
+| Event modeling | `tf` / `timeframe` and `rf` / `resetframe NN type Name`, types `ui`, `pcr` / `processor`, `cmd` / `command`, `rmo` / `readmodel`, `evt` / `event`; `Namespace.Name` adds a lane, inline `{ data }`, `[[DataBlock]]` with `data Name { ... }`, `->> NN` extra links; flows are inferred frame to frame unless a reset frame breaks them |
 | ZenUML | drawn as a sequence diagram: `@Actor` / `@Database` annotators, `A as Alice`, `A->B: msg`, sync calls `A.method(args) { ... }`, `x = A.method()`, `return`, `@return`, `new A()`, `if` / `else if` / `else`, `while` / `for` / `loop`, `opt`, `par`, `try` / `catch` / `finally` |
 
 **Themes, dark mode and titles.** A diagram can carry Mermaid's own configuration, either as
@@ -1038,10 +1060,9 @@ flowchart LR
   `primaryTextColor` / `textColor`, `lineColor`, `fontFamily`, `background` and `darkMode`.
 - A front-matter `title` is drawn above any diagram.
 
-Every Mermaid diagram type documented up to the 11.x releases is drawn. The newest additions
-(`venn`, `wardley`, `ishikawa`, `cynefin`, `usecase`, `swimlanes`, `treeView`, `railroad`,
-`eventmodeling`, `agentflow`) are left as an ordinary code block, with a warning in the build
-log, rather than drawn incorrectly.
+Every Mermaid diagram type is drawn, including the beta ones listed above. A diagram type
+Mermaid adds later is left as an ordinary code block, with a warning in the build log, rather
+than drawn incorrectly.
 
 <a id="markdown-values-and-placeholders"></a>
 
