@@ -90,7 +90,7 @@ def _mark_tracked_changes(source: Path, target: Path) -> bool:
     return True
 
 
-def extract_file(file_path: str) -> str:
+def extract_file(file_path: str, keep_images: bool = False) -> str:
     """
     Extract Markdown content from a PDF or DOCX file.
 
@@ -100,6 +100,8 @@ def extract_file(file_path: str) -> str:
 
     Args:
         file_path: Path to PDF or DOCX file.
+        keep_images: Keep embedded images as full ``data:`` URIs instead of the
+            truncated placeholder (see :func:`split_embedded_images`).
 
     Returns:
         Extracted content as Markdown string.
@@ -125,10 +127,35 @@ def extract_file(file_path: str) -> str:
                 has_revisions = _mark_tracked_changes(path, marked)
             except (zipfile.BadZipFile, KeyError):
                 has_revisions = False  # not a readable package: let the converter report it
-            result = converter.convert(str(marked if has_revisions else path))
+            result = converter.convert(
+                str(marked if has_revisions else path), keep_data_uris=keep_images
+            )
         text = result.text_content or ""
         return _REPLACEMENT_RE.sub(lambda m: f"{{~~{m.group(1)}~>{m.group(2)}~~}}", text)
 
-    result = converter.convert(file_path)
+    result = converter.convert(file_path, keep_data_uris=keep_images)
 
     return result.text_content or ""
+
+
+_DATA_URI_IMAGE_RE = re.compile(
+    r"!\[([^\]]*)\]\(data:image/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=]+)\)"
+)
+
+
+def split_embedded_images(markdown: str) -> tuple[str, list[dict[str, str]]]:
+    """Replace inline ``data:`` image URIs with ``import-image-N.ext`` references.
+
+    Returns the rewritten Markdown and one ``{"name", "data"}`` entry per image
+    (``data`` is the original base64), so the caller can store the files wherever
+    suits the destination document and point the references there.
+    """
+    images: list[dict[str, str]] = []
+
+    def replace(match: re.Match[str]) -> str:
+        alt, kind, data = match.groups()
+        name = f"import-image-{len(images) + 1}.{'jpg' if kind == 'jpeg' else kind}"
+        images.append({"name": name, "data": data})
+        return f"![{alt}]({name})"
+
+    return _DATA_URI_IMAGE_RE.sub(replace, markdown), images

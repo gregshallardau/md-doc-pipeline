@@ -315,6 +315,31 @@ def test_import_converts_docx_without_writing(project):
     assert sorted(p.name for p in project.iterdir()) == before
 
 
+def test_import_returns_embedded_images_separately(project):
+    import base64
+    import docx
+    from PIL import Image
+
+    png = io.BytesIO()
+    Image.new("RGB", (30, 20), "red").save(png, format="PNG")
+    png.seek(0)
+    document = docx.Document()
+    document.add_paragraph("Before")
+    document.add_picture(png)
+    content = io.BytesIO()
+    document.save(content)
+    request = {"name": "a.docx", "data": base64.b64encode(content.getvalue()).decode()}
+    with TestClient(create_app(project)) as client:
+        plain = client.post("/api/import", json=request).json()
+        assert plain["images"] == []
+        result = client.post("/api/import", json={**request, "images": True}).json()
+    assert "![](import-image-1.png)" in result["markdown"]
+    assert "base64" not in result["markdown"]
+    [image] = result["images"]
+    assert image["name"] == "import-image-1.png"
+    assert base64.b64decode(image["data"]).startswith(b"\x89PNG")
+
+
 def test_cancelled_jobs_reap_worker_and_remove_snapshot(project):
     with TestClient(create_app(project)) as client:
         result = client.post("/api/preview/jobs", json={"path": "doc.md"}).json()

@@ -2732,44 +2732,111 @@
       ],
     );
   }
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = () => reject(new Error("The file could not be read"));
+      reader.readAsDataURL(file);
+    });
+  }
+  // Saves each extracted image under <dir>assets/ and returns the Markdown
+  // pointing at the stored files (collisions get a numeric suffix).
+  async function storeImportedImages(markdown, images, dir, stem) {
+    for (const image of images) {
+      const ext = image.name.split(".").pop();
+      const base = image.name.replace(/^import-image-/, "").replace(/\.\w+$/, "");
+      let stored = null;
+      for (let attempt = 1; attempt <= 50 && !stored; attempt++) {
+        const name = `${stem}-${base}${attempt > 1 ? "-" + attempt : ""}.${ext}`;
+        try {
+          await api("/api/assets", {
+            method: "POST",
+            body: JSON.stringify({ path: `${dir}assets/${name}`, data: image.data }),
+          });
+          stored = name;
+        } catch (error) {
+          if (!/already exists/.test(error.message)) throw error;
+        }
+      }
+      if (!stored) throw new Error("Could not find a free filename for " + image.name);
+      markdown = markdown.split(`](${image.name})`).join(`](assets/${stored})`);
+    }
+    return markdown;
+  }
   function importDocument() {
-    const parent = state.active?.includes("/")
-      ? state.active.slice(0, state.active.lastIndexOf("/") + 1)
-      : "";
     dialog(
       "Import a document",
-      `<p>Convert a Word or PDF file to Markdown. Tracked changes and comments in Word files are kept as review markup.</p><label for="import-file">Word or PDF file</label><input class="input" id="import-file" type="file" accept=".docx,.pdf"><label for="import-path">Save as</label><input class="input" id="import-path" value="${escape(parent)}imported.md">`,
+      `<p>Convert a Word or PDF file to Markdown. You can review the result before anything is saved.</p><label for="import-file">Word or PDF file</label><input class="input" id="import-file" type="file" accept=".docx,.pdf">`,
       [
         { label: "Cancel", run: (d) => d.close() },
+        {
+          label: "Convert",
+          primary: true,
+          run: async () => {
+            const file = $("import-file").files[0];
+            if (!file) throw new Error("Choose a file to import");
+            const result = await api("/api/import", {
+              method: "POST",
+              body: JSON.stringify({
+                name: file.name,
+                data: await fileToBase64(file),
+                images: true,
+              }),
+            });
+            importPreview(file.name, result);
+          },
+        },
+      ],
+    );
+  }
+  function importPreview(filename, result) {
+    const active = state.active;
+    const canInsert = current()?.type === "md";
+    const dir = active?.includes("/") ? active.slice(0, active.lastIndexOf("/") + 1) : "";
+    const stem = filename.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "-").toLowerCase() || "import";
+    const count = result.images.length;
+    dialog(
+      "Review imported Markdown",
+      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" checked> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new"> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(dir)}${escape(stem)}.md">${count ? `<label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}`,
+      [
+        { label: "Back", run: () => importDocument() },
         {
           label: "Import",
           primary: true,
           run: async (d) => {
-            const file = $("import-file").files[0];
-            if (!file) return toast("Choose a file to import", true);
-            try {
-              const bytes = new Uint8Array(await file.arrayBuffer());
-              let binary = "";
-              for (let i = 0; i < bytes.length; i += 0x8000)
-                binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-              const { markdown } = await api("/api/import", {
-                method: "POST",
-                body: JSON.stringify({ name: file.name, data: btoa(binary) }),
-              });
-              const path = $("import-path").value.trim();
-              await api("/api/files/action", {
-                method: "POST",
-                body: JSON.stringify({ action: "new", path, content: markdown }),
-              });
+            const insert =
+              canInsert && document.querySelector('input[name="import-mode"]:checked')?.value === "insert";
+            const path = $("import-path").value.trim();
+            if (!insert && !path) throw new Error("Enter a path for the new document");
+            const target = insert ? dir : path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+            let markdown = $("import-preview").value;
+            const keep = $("import-images")?.checked ?? false;
+            if (keep) markdown = await storeImportedImages(markdown, result.images, target, stem);
+            else
+              markdown = markdown.replace(/!\[[^\]]*\]\(import-image-\d+\.\w+\)\n*/g, "");
+            if (insert) {
+              if (state.mode === "write") setEditMode("source");
+              const range = state.editor.getSelection();
+              state.editor.executeEdits("import", [
+                { range, text: markdown.trimEnd() + "\n", forceMoveMarkers: true },
+              ]);
+              state.editor.focus();
               d.close();
-              await loadTree();
-              await openFile(path);
-            } catch (error) {
-              toast(error.message, true);
+              toast("Imported at the cursor");
+              return;
             }
+            await api("/api/files/action", {
+              method: "POST",
+              body: JSON.stringify({ action: "new", path, content: markdown }),
+            });
+            d.close();
+            await loadTree();
+            await openFile(path);
           },
         },
       ],
+      true,
     );
   }
   function fileActions(path = state.active) {

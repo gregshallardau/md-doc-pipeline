@@ -4090,13 +4090,21 @@ md-doc extract report.pdf --dest workspace/acme/reports/
 ### Importing in the web editor
 
 In the web editor, the upload button above the file tree (or **Import Word or PDF** on
-the welcome page) converts a `.docx` or `.pdf` to Markdown and saves it as a new
-document, using the same converter as `md-doc extract`. Word tracked changes and
-comments come through as review markup. PDF conversion is lossy for tables and
-multi-column layouts, so check the result.
+the welcome page) converts a `.docx` or `.pdf` to Markdown using the same converter as
+`md-doc extract`. Word tracked changes and comments come through as review markup.
 
-A preview step, destination browser and snippet management are still planned; use
-`md-doc extract` for those workflows today.
+The import is two steps, and nothing is written until you confirm:
+
+1. **Convert** the chosen file.
+2. **Review** the Markdown in an editable preview, then either **insert it at the
+   cursor** of the open document or **save it as a new document**.
+
+Images embedded in a Word file are saved into an `assets/` folder next to the target
+document and linked with relative paths (untick the option to drop them). Existing
+files are never overwritten; a numeric suffix is added instead. PDF conversion is
+approximate, especially for tables and multi-column layouts, so check the preview.
+
+Snippet management is still planned; use `md-doc extract` for batch workflows.
 
 ---
 

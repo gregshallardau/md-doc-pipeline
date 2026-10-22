@@ -46,6 +46,7 @@ class FileAction(BaseModel):
 class ImportRequest(BaseModel):
     name: str
     data: str = Field(max_length=40 * 1024 * 1024)
+    images: bool = False
 
 
 class AssetRequest(BaseModel):
@@ -715,16 +716,19 @@ def install_studio(app, workspace, build_root, builds, write_lock):
         magic = b"PK\x03\x04" if suffix == ".docx" else b"%PDF"
         if not raw.startswith(magic):
             raise HTTPException(422, f"This is not a valid {suffix[1:].upper()} file")
-        from md_doc.extractors import extract_file
+        from md_doc.extractors import extract_file, split_embedded_images
 
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / f"import{suffix}"
             source.write_bytes(raw)
             try:
-                markdown = extract_file(str(source))
+                markdown = extract_file(str(source), keep_images=req.images)
             except Exception as exc:  # converter errors vary by format
                 raise HTTPException(422, f"Could not convert this file: {exc}") from exc
-        return {"markdown": markdown, "format": suffix[1:]}
+        images: list[dict[str, str]] = []
+        if req.images:
+            markdown, images = split_embedded_images(markdown)
+        return {"markdown": markdown, "format": suffix[1:], "images": images}
 
     @app.post("/api/files/action")
     def file_action(req: FileAction):
