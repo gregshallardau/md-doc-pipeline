@@ -181,3 +181,30 @@ def test_state_diagram_markers_and_reciprocal_edges_do_not_collide():
     assert svg.count("<circle") == 4  # filled start dot + end marker (3 circles)
     paths = [line for line in svg.splitlines() if line.startswith("<path") and "arr" in line]
     assert len(paths) == len(set(paths)) == 4  # go/stop edges take separate lanes
+
+
+@pytest.mark.parametrize("direction", ["TD", "LR"])
+def test_long_and_back_edges_route_around_nodes(direction):
+    fc = m.parse(
+        f"flowchart {direction}\n A --> B\n B --> C\n C --> D\n A --> D\n"
+        " B --> E\n E --> D\n C --> B"
+    )
+    m.layout(fc)
+    assert _overlaps(fc) == []
+    assert fc.waypoints, "multi-level edges should reserve lanes"
+    for pts in fc.waypoints.values():
+        for px, py in pts:
+            for n in fc.nodes.values():
+                inside = n.x <= px <= n.x + n.w and n.y <= py <= n.y + n.h
+                assert not inside, f"lane point ({px}, {py}) crosses node {n.id}"
+    assert not any(n.shape == "dummy" for n in fc.nodes.values())
+    svg = m.render_svg(fc)
+    assert "__lane" not in svg
+
+
+def test_lr_branches_are_ordered_without_overlap():
+    fc = m.parse(
+        "flowchart LR\n A --> B\n A --> C\n B --> D\n C --> D\n B --> E\n D --> F\n E --> F\n A --> F"
+    )
+    m.layout(fc)
+    assert _overlaps(fc) == []

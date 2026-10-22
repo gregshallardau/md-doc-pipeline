@@ -83,6 +83,8 @@ class Flowchart:
     nodes: dict[str, Node] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
     subgraphs: list[Subgraph] = field(default_factory=list)
+    # edge index -> lane points (node-centre coordinates) for edges that span levels
+    waypoints: dict[int, list[tuple[float, float]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -1065,21 +1067,31 @@ def _compute_levels(fc: Flowchart) -> dict[str, int]:
     return levels
 
 
-def _layout_vertical(
+def _layout_layered(
     fc: Flowchart,
     levels: dict[str, int],
     level_groups: dict[int, list[str]],
     children_map: dict[str, list[str]],
-    row_y: dict[int, float],
+    major_pos: dict[int, float],
+    horizontal: bool,
     padding: float,
     gap: float,
 ) -> None:
-    """Place nodes for TD/BT charts: ordered rows, parents centred over children.
+    """Place nodes level by level, minimising crossings and overlaps.
 
-    Nodes in a row never overlap. Siblings sharing the same parents are packed
-    as a cluster centred under them; a top-down, bottom-up, top-down sweep
-    settles parents and children against each other.
+    ``major_pos`` is the position of each level along the flow axis. Within a
+    level nodes are ordered by their parents' positions, siblings sharing the
+    same parents are packed as a cluster centred under them, and a top-down,
+    bottom-up, top-down sweep settles parents and children against each other.
+    Lane (``dummy``) nodes carrying long edges are packed tighter.
     """
+
+    def minor(n: str) -> float:
+        return fc.nodes[n].h if horizontal else fc.nodes[n].w
+
+    def spacing(a: str, b: str) -> float:
+        return gap * 0.5 if "dummy" in (fc.nodes[a].shape, fc.nodes[b].shape) else gap
+
     parents_map: dict[str, list[str]] = defaultdict(list)
     for src, kids in children_map.items():
         for k in kids:
@@ -1104,16 +1116,20 @@ def _layout_vertical(
     center: dict[str, float] = {}
 
     def _pack(clusters: list[tuple[list[str], float | None]]) -> None:
-        right = float(padding) - gap
+        right: float | None = None
+        prev_id = ""
         for members, desired in clusters:
-            width = sum(fc.nodes[n].w for n in members) + gap * (len(members) - 1)
-            left = right + gap
+            width = sum(minor(n) for n in members) + sum(
+                spacing(a, b) for a, b in zip(members, members[1:])
+            )
+            left = padding if right is None else right + spacing(prev_id, members[0])
             if desired is not None:
                 left = max(left, desired - width / 2)
-            for n in members:
-                center[n] = left + fc.nodes[n].w / 2
-                left += fc.nodes[n].w + gap
-            right = left - gap
+            for i, n in enumerate(members):
+                center[n] = left + minor(n) / 2
+                left += minor(n) + (spacing(n, members[i + 1]) if i + 1 < len(members) else 0)
+            right = left
+            prev_id = members[-1]
 
     def _top_down() -> None:
         for lvl in sorted(order):
@@ -1143,11 +1159,14 @@ def _layout_vertical(
     _bottom_up()
     _top_down()
 
-    shift = min(center[n] - fc.nodes[n].w / 2 for n in center) - padding
+    shift = min(center[n] - minor(n) / 2 for n in center) - padding
     for n, c in center.items():
         node = fc.nodes[n]
-        node.x = c - node.w / 2 - shift
-        node.y = row_y[levels[n]]
+        pos = c - minor(n) / 2 - shift
+        if horizontal:
+            node.x, node.y = major_pos[levels[n]], pos
+        else:
+            node.x, node.y = pos, major_pos[levels[n]]
 
 
 def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
@@ -1184,22 +1203,45 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     # Assign levels
     levels = _compute_levels(fc)
 
+    # Edges spanning several levels (and back edges) get a chain of invisible
+    # lane nodes so they reserve space and route around the real nodes.
+    chain_pairs: list[tuple[str, str]] = []
+    lanes: dict[int, list[str]] = {}
+    for i, e in enumerate(fc.edges):
+        if e.src not in fc.nodes or e.dst not in fc.nodes:
+            continue
+        ls, ld = levels[e.src], levels[e.dst]
+        lo, hi = (e.src, e.dst) if ls <= ld else (e.dst, e.src)
+        prev = lo
+        ids: list[str] = []
+        for lvl in range(min(ls, ld) + 1, max(ls, ld)):
+            did = f"__lane{i}_{lvl}"
+            fc.nodes[did] = Node(did, "", "dummy", w=10, h=10)
+            levels[did] = lvl
+            chain_pairs.append((prev, did))
+            prev = did
+            ids.append(did)
+        chain_pairs.append((prev, hi))
+        if ids:
+            lanes[i] = ids if ls <= ld else ids[::-1]
+
     # Group nodes by level
     level_groups: dict[int, list[str]] = defaultdict(list)
     for nid, lvl in levels.items():
         level_groups[lvl].append(nid)
 
-    # Build parent->children map for centering
     children_map: dict[str, list[str]] = defaultdict(list)
-    for e in fc.edges:
-        if e.dst not in children_map[e.src]:
-            children_map[e.src].append(e.dst)
+    for a_id, b_id in chain_pairs:
+        if b_id not in children_map[a_id]:
+            children_map[a_id].append(b_id)
 
     is_horizontal = fc.direction in ("LR", "RL")
     gap_major: float = 60
     gap_minor = 30
     padding = 30
 
+    major_pos: dict[int, float] = {}
+    cursor: float = padding
     if is_horizontal:
         longest_label = max((len(e.label) for e in fc.edges), default=0)
         gap_major = max(gap_major, longest_label * 5.5 + 56)
@@ -1214,37 +1256,25 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
                 for n in rect_nodes:
                     n.w = max_w
 
-        col_x: dict[int, float] = {}
-        x_cursor: float = padding
-        for lvl in sorted(level_groups.keys()):
-            col_x[lvl] = x_cursor
-            max_w = max(fc.nodes[n].w for n in level_groups[lvl])
-            x_cursor += max_w + gap_major
-
-        col_total_h: dict[int, float] = {}
-        for lvl, nids in level_groups.items():
-            total = sum(fc.nodes[n].h for n in nids) + gap_minor * (len(nids) - 1)
-            col_total_h[lvl] = total
-        max_total_h = max(col_total_h.values())
-
-        for lvl, nids in level_groups.items():
-            col_h = col_total_h[lvl]
-            y_start = padding + 10 + (max_total_h - col_h) / 2
-            y_cursor = y_start
-            for nid in nids:
-                node = fc.nodes[nid]
-                node.x = col_x[lvl]
-                node.y = y_cursor
-                y_cursor += node.h + gap_minor
+        for lvl in sorted(level_groups):
+            major_pos[lvl] = cursor
+            cursor += max(fc.nodes[n].w for n in level_groups[lvl]) + gap_major
     else:
-        row_y: dict[int, float] = {}
-        y_cursor = padding
-        for lvl in sorted(level_groups.keys()):
-            row_y[lvl] = y_cursor
-            max_h = max(fc.nodes[n].h for n in level_groups[lvl])
-            y_cursor += max_h + gap_major
+        for lvl in sorted(level_groups):
+            major_pos[lvl] = cursor
+            cursor += max(fc.nodes[n].h for n in level_groups[lvl]) + gap_major
 
-        _layout_vertical(fc, levels, level_groups, children_map, row_y, padding, gap_minor)
+    _layout_layered(
+        fc, levels, level_groups, children_map, major_pos, is_horizontal, padding, gap_minor
+    )
+
+    # Hand the lane positions to the edge router and drop the helper nodes
+    fc.waypoints = {
+        i: [(fc.nodes[n].x + fc.nodes[n].w / 2, fc.nodes[n].y + fc.nodes[n].h / 2) for n in ids]
+        for i, ids in lanes.items()
+    }
+    for nid in [n for n, node in fc.nodes.items() if node.shape == "dummy"]:
+        del fc.nodes[nid]
 
     # Compute subgraph bounding boxes
     for sg in fc.subgraphs:
@@ -1310,6 +1340,11 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
             max_x = max(max_x, sg.x + sg.w + 30)
             max_y = max(max_y, sg.y + sg.h + 30)
 
+    for pts in fc.waypoints.values():
+        for px, py in pts:
+            max_x = max(max_x, px + 30)
+            max_y = max(max_y, py + 30)
+
     width = max(max_x, 200)
     height = max(max_y, 100)
 
@@ -1321,7 +1356,7 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         parts.append(_render_subgraph(sg, t))
 
     # Draw edges (behind nodes)
-    for edge in fc.edges:
+    for edge_idx, edge in enumerate(fc.edges):
         src = fc.nodes.get(edge.src)
         dst = fc.nodes.get(edge.dst)
         if not src or not dst:
@@ -1329,7 +1364,11 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         lane = 0.0
         if any(o.src == edge.dst and o.dst == edge.src for o in fc.edges):
             lane = -7.0 if edge.src < edge.dst else 7.0
-        parts.append(_render_edge(src, dst, edge.label, fc.direction, t, edge.style, lane))
+        parts.append(
+            _render_edge(
+                src, dst, edge.label, fc.direction, t, edge.style, lane, fc.waypoints.get(edge_idx)
+            )
+        )
 
     # Draw nodes
     for node in fc.nodes.values():
@@ -1503,6 +1542,45 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
+def _routed_path(
+    src: Node,
+    dst: Node,
+    via: list[tuple[float, float]],
+    horizontal: bool,
+    label: str,
+) -> tuple[str, tuple[float, float] | None]:
+    """Orthogonal path from ``src`` to ``dst`` passing through the lane points ``via``.
+
+    Returns the SVG path data and the position for the edge label, which sits on
+    the final segment so it never lands on another edge's trunk.
+    """
+    if horizontal:
+        fwd = src.x + src.w / 2 <= dst.x + dst.w / 2
+        start = (src.x + (src.w if fwd else 0), src.y + src.h / 2)
+        end = (dst.x + (0 if fwd else dst.w), dst.y + dst.h / 2)
+    else:
+        fwd = src.y + src.h / 2 <= dst.y + dst.h / 2
+        start = (src.x + src.w / 2, src.y + (src.h if fwd else 0))
+        end = (dst.x + dst.w / 2, dst.y + (0 if fwd else dst.h))
+
+    pts = [start, *via, end]
+    d = f"M {pts[0][0]},{pts[0][1]}"
+    mid = 0.0
+    for (px, py), (qx, qy) in zip(pts, pts[1:]):
+        if horizontal:
+            mid = (px + qx) / 2
+            d += f" L {mid},{py} L {mid},{qy} L {qx},{qy}"
+        else:
+            mid = (py + qy) / 2
+            d += f" L {px},{mid} L {qx},{mid} L {qx},{qy}"
+
+    if horizontal:
+        label_xy = ((mid + end[0]) / 2, end[1] - 5)
+    else:
+        label_xy = (end[0] + len(label) * 2.75 + 8, (mid + end[1]) / 2 + 3)
+    return d, label_xy
+
+
 def _render_edge(
     src: Node,
     dst: Node,
@@ -1511,6 +1589,7 @@ def _render_edge(
     t: dict[str, str],
     style: str = "solid",
     lane: float = 0.0,
+    via: list[tuple[float, float]] | None = None,
 ) -> str:
     """Render an edge between two nodes."""
     font = t.get("font", DEFAULT_THEME["font"])
@@ -1532,7 +1611,10 @@ def _render_edge(
     is_h = direction in ("LR", "RL")
     label_xy: tuple[float, float] | None = None  # set for elbow edges
 
-    if is_h:
+    if via:
+        d, label_xy = _routed_path(src, dst, via, is_h, label)
+        parts.append(f'<path d="{d}" {stroke_attrs}{marker}/>')
+    elif is_h:
         if src.x + src.w / 2 < dst.x + dst.w / 2:
             x1, y1 = src.x + src.w, src.y + src.h / 2
             x2, y2 = dst.x, dst.y + dst.h / 2
