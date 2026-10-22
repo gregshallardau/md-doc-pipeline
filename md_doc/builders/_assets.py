@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,31 @@ logger = logging.getLogger(__name__)
 _EMU_PER_PX = 9525
 
 _MERMAID_IMG_RE = re.compile(r"mermaid://(\d+)")
+
+
+# cairo caches font faces per family. When a font is registered after a family
+# has already been drawn (a long-running process such as the editor), the cache
+# must be dropped, which is only safe while no cairo drawing is in progress, so
+# rasterising is serialised and the reset happens under the same lock.
+_RASTER_LOCK = threading.Lock()
+_cairo_font_generation = 0
+
+
+def _refresh_cairo_fonts() -> None:
+    global _cairo_font_generation
+    from .. import mermaid
+
+    if mermaid.font_generation() == _cairo_font_generation:
+        return
+    _cairo_font_generation = mermaid.font_generation()
+    try:
+        import cairocffi
+
+        reset = getattr(cairocffi.cairo, "cairo_debug_reset_static_data", None)
+        if reset is not None:
+            reset()
+    except Exception as exc:  # pragma: no cover - platform dependent
+        logger.debug("cairo font cache not reset: %s", exc)
 
 
 def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
@@ -36,18 +62,25 @@ def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
     if svg_match:
         svg = svg_match.group(0)
 
-    m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    surface_m = re.search(r'data-surface="(#[0-9a-fA-F]{3,8})"', svg)
+    surface = surface_m.group(1) if surface_m else "white"
+    m = re.search(r'viewBox="[\d.\-]+ [\d.\-]+ ([\d.]+) ([\d.]+)"', svg)
     if m:
         vb_w, vb_h = float(m.group(1)), float(m.group(2))
     else:
         vb_w, vb_h = 800.0, 600.0
 
     try:
-        png = cairosvg.svg2png(
-            bytestring=svg.encode("utf-8"),
-            output_width=int(vb_w * scale),
-            output_height=int(vb_h * scale),
-        )
+        with _RASTER_LOCK:
+            _refresh_cairo_fonts()
+            png = cairosvg.svg2png(
+                bytestring=svg.encode("utf-8"),
+                output_width=int(vb_w * scale),
+                output_height=int(vb_h * scale),
+                # Diagrams are transparent (they sit on the page in PDF); pictures in
+                # Word/PowerPoint get a white card so they read on any slide background.
+                background_color=surface,
+            )
     except Exception as exc:  # pragma: no cover - depends on system cairo
         logger.warning("Mermaid SVG rasterization failed: %s", exc)
         return None
@@ -79,9 +112,8 @@ def _render_mermaid_to_images(
             return m.group(0)  # leave original code block
         images.append(png)
         idx = len(images) - 1
-        # SVG diagrams fill their containing block in PDF; preserve that sizing
-        # rather than treating viewBox coordinates as natural raster pixels.
-        width = "280" if "max-width:280px" in svg else "100%"
+        # Natural size, as in the PDF; the builder caps it at the text width.
+        width = str(int(png[1]))
         return f'<p><img src="mermaid://{idx}" width="{width}"></p>'
 
     return _MERMAID_BLOCK_RE.sub(_replace, html), images

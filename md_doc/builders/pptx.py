@@ -968,12 +968,16 @@ def build(
     theme = theme or {}
     mermaid_theme = None
     try:
-        from .pdf import _resolve_css
-        from ..mermaid import extract_theme_from_css
+        from .pdf import _resolve_css, _resolve_logo
+        from ..mermaid import diagram_theme
 
         css = _resolve_css(config, repo_root, doc_path=doc_path)
-        if css and css.exists():
-            mermaid_theme = extract_theme_from_css(css.read_text(encoding="utf-8"))
+        mermaid_theme = diagram_theme(
+            css.read_text(encoding="utf-8") if css and css.exists() else None,
+            config,
+            lambda value: _resolve_logo(value, repo_root, doc_path),
+            column_px=880,
+        )
     except Exception:
         mermaid_theme = None
     html, images = _render_mermaid_to_images(html, mermaid_theme)

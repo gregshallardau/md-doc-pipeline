@@ -1025,7 +1025,7 @@ which installs `cairosvg`; without it the code block stays as text).
 
 | Diagram | Keyword |
 |---------|---------|
-| Flowchart (8 node shapes, 4 edge styles, labels, subgraphs) | `flowchart` / `graph` |
+| Flowchart (13 node shapes, 4 edge styles, labels, classes, subgraphs) | `flowchart` / `graph` |
 | Pie and donut | `pie`, `donut` |
 | Bar chart | `bar` / `xychart-beta` |
 | Gauge | `gauge` |
@@ -1035,6 +1035,30 @@ which installs `cairosvg`; without it the code block stays as text).
 | Mind map | `mindmap` |
 | Entity-relationship | `erDiagram` |
 | State | `stateDiagram`, `stateDiagram-v2` |
+| Class (UML) | `classDiagram` |
+| User journey | `journey` |
+| Git graph | `gitGraph` |
+| Quadrant chart | `quadrantChart` |
+| Sankey | `sankey`, `sankey-beta` |
+| Radar | `radar-beta` |
+| Treemap | `treemap-beta` |
+| Packet | `packet`, `packet-beta` |
+| Block | `block`, `block-beta` |
+| Kanban | `kanban` |
+| Architecture | `architecture-beta` |
+| C4 | `C4Context`, `C4Container`, `C4Component`, `C4Dynamic`, `C4Deployment` |
+| Requirement | `requirementDiagram` |
+| ZenUML | `zenuml` |
+| Use case (UML) | `usecase-beta` |
+| Swimlanes | `swimlane-beta` |
+| Agent flow | `agentflow-beta` |
+| Tree view | `treeView-beta` |
+| Ishikawa (fishbone) | `ishikawa-beta` |
+| Venn | `venn-beta` |
+| Cynefin | `cynefin-beta` |
+| Wardley map | `wardley-beta` |
+| Railroad (syntax) | `railroad-ebnf-beta`, `railroad-abnf-beta`, `railroad-peg-beta`, `railroad-beta` |
+| Event modeling | `eventmodeling` |
 
 ````markdown
 ```mermaid
@@ -1056,6 +1080,116 @@ flowchart LR
 
 Keep labels short. Examples of every type are in
 `examples/feature-showcase/diagram-gallery.md`.
+
+**Flowchart syntax.** Everything in the usual Mermaid flowchart grammar that affects the
+drawing is supported:
+
+| Syntax | Result |
+|--------|--------|
+| `A --> B`, `A --- B`, `A -.-> B`, `A ==> B` | solid, plain line, dotted and thick edges (extra dashes are fine) |
+| `A -- text --> B`, `A -->\|text\| B`, `A -. text .-> B`, `A == text ==> B` | labelled edges, quoted or not |
+| `A --o B`, `A --x B`, `A <--> B`, `A o--o B` | circle and cross ends, two-way arrows |
+| `A --> B & C`, `B & C --> D` | fan out and in |
+| `A([x])`, `A((x))`, `A[(x)]`, `A{{x}}`, `A[[x]]`, `A>x]`, `A[/x/]`, `A[\x\]`, `A[/x\]`, `A[\x/]` | stadium, circle, cylinder, hexagon, subroutine, flag, parallelograms, trapezoids |
+| `classDef name fill:#d4edda,stroke:#28a745,color:#14532d`, `A:::name`, `class A,B name`, `style A fill:#fff` | per-node overrides (`fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`) |
+| `linkStyle 0,2 stroke:#dc3545,stroke-width:2px`, `linkStyle default ...` | per-edge overrides, numbered in the order edges appear |
+| `subgraph id [Title]`, `subgraph "Title"`, nested `subgraph` | framed groups |
+| `A@{ shape: doc, label: "Spec" }` | Mermaid 11 shape names and aliases (`rect`, `rounded`, `stadium`, `diam`, `hex`, `cyl`, `doc`, `circle`, `lean-r`, `subproc`, ...) |
+| `A --> Group`, `Group --> B` | edges to and from a subgraph attach to its first or last member |
+
+Nodes are laid out in ranks with crossings minimised, long and looping edges run in their own
+lanes, and edges leaving one node fan out instead of sharing a line. Override individual nodes
+with `classDef` or `style`.
+
+**How diagrams look.** Every diagram type shares one design system, so a document's diagrams
+read as a set:
+
+- *Size.* A diagram renders at its natural size, with 12px labels that sit beside body text.
+  When a flowchart, state, ER or class diagram would be wider than the text column, long node
+  labels wrap, and if it is still too wide it is laid out in the other direction (left-to-right
+  becomes top-down) instead of shrinking its text. Turn that off for one diagram with
+  `%%{init: {"flowchart": {"autoFit": false}}}%%`. Word and PowerPoint use the same sizes.
+- *Fonts.* Diagrams use the theme's `body` font. Boxes are sized by measuring text with the font
+  file that will actually draw it, so wide faces such as DejaVu Sans never overflow. Fonts added
+  with the [`fonts`](#configuration) key are used in diagrams too, including the images embedded
+  in Word and PowerPoint.
+- *Structural diagrams* (flowchart, state, sequence, ER, timeline, mind map) take their colours
+  from the theme: light brand-tinted cards with a hairline border, the primary colour for start
+  and end shapes and ER headers, and the accent for decisions.
+- *Data charts* (pie, donut, bar, Gantt) use a fixed eight-colour categorical palette, in an
+  order chosen so neighbouring colours stay distinguishable with colour-vision deficiency. Past
+  eight slices the smallest fold into "Other". Labels and values are always in text colours,
+  never the series colour.
+- Bars are thin with rounded ends, gridlines are solid hairlines, axis ticks are round numbers
+  (0, 50, 100), large numbers are compacted (1.3K, 2.5M), and values are labelled only where
+  they fit.
+
+**Other diagram syntax.**
+
+| Diagram | Supported beyond the basics |
+|---------|------------------------------|
+| Sequence | `participant A as Alice`, `actor`, `autonumber`, `Note left of / right of / over A,B`, `loop` / `alt` / `else` / `opt` / `par` / `and` / `critical` / `break` / `rect` blocks, `activate` / `deactivate` and `->>+` / `-->>-`, arrows `->>` `-->>` `->` `-->` `-x` `--x` `-)` `--)` `<<->>` |
+| Pie / donut | `pie showData title …` on the first line; legend with percentages (and values with `showData`) |
+| Bar | `xychart-beta`, `title`, `x-axis "Title" [..]`, `y-axis "Title" 0 --> 200`, several `bar [..]` and `line [..]` series, `horizontal` |
+| Gauge | `title`, `value`, `min`, `max`, `label`, written as `value 72` or `value: 72` |
+| Gantt | `done`, `active`, `crit` and `milestone` tags, `after id`, durations or end dates; bars coloured by section on a calendar-aligned axis |
+| ER | attribute keys (`int id PK`, `string ref FK`, `PK,FK`), identifying `--` and non-identifying `..` links, crow's-foot ends for every cardinality |
+| Timeline | `title`, `section`, several events per period (`2022 : A : B`, or a line starting with `:`) |
+| Mind map | node shapes `((x))`, `(x)`, `[x]`, `{{x}}`, `))x((`; branches balanced either side of the root, one colour per branch |
+| Class | `class X { ... }` bodies or `X : +member`, visibility `+ - # ~`, static `$` (underlined), abstract `*` (italic), generics `List~int~`, `<<interface>>` and other stereotypes, `direction`, `namespace`, `note for X "..."`, relationships `<\|--` `*--` `o--` `-->` `--` `..>` `..\|>` `..` (either way round) with cardinalities `"1" --> "*"` and `: labels` |
+| User journey | `title`, `section`, `Task: score: Actor, Actor` (score 1-5 drawn as a satisfaction curve in good-to-bad status colours, actors as dots with a legend) |
+| Git graph | `commit` (`id`, `tag`, `type: HIGHLIGHT \| REVERSE`, `msg`), `branch` (`order`), `checkout` / `switch`, `merge` (`id`, `tag`), `cherry-pick id: "..."`, `gitGraph TB:` for a vertical graph |
+| Quadrant | `title`, `x-axis Low --> High`, `y-axis`, `quadrant-1`..`4`, points `Name: [x, y]` with `radius`, `color`, `stroke-color`, `stroke-width` or `:::class` + `classDef`; labels move to stay clear of each other |
+| Sankey | CSV rows `source,target,value` (quote names containing commas); config `sankey`: `showValues`, `nodeAlignment`, `linkColor` (`source`, `target` or a hex colour), `nodeWidth`, `nodePadding`, `nodeColors` |
+| Radar | `title`, `axis id["Label"], ...`, `curve id["Label"]{1, 2, 3}` or `{axis: value, ...}`, `max`, `min`, `ticks`, `graticule circle \| polygon`, `showLegend` |
+| Treemap | quoted section names and `"Leaf": value` lines, nested by indentation; config `treemap.valueFormat` (`,`, `$`, `$,.2f`, `.1%`) |
+| Packet | `start-end: "Field"`, `bit: "Flag"`, `+bits: "Field"`, `title`; config `packet`: `bitsPerRow`, `showBits`, `bitOrder: descending` |
+| Block | `columns N`, `id:span`, `space` / `space:N`, flowchart node shapes, nested `block:id:span ... end`, block arrows `id<["label"]>(right \| left \| up \| down \| x \| y)`, edges with labels, `style`, `classDef`, `class` |
+| Kanban | columns `id[Title]` (or bare titles), indented tasks `id[Text]@{ ticket: ..., assigned: ..., priority: 'Very High' \| 'High' \| 'Low' \| 'Very Low' }` |
+| Architecture | `group id(icon)[Title] in parent`, `service id(icon)[Title] in group`, `junction id`, edges `a:R --> L:b` (sides `L R T B`, `<`/`>` arrows, `{group}`), `align row \| column`; icons `cloud`, `database`, `disk`, `internet`, `server` (other icon names show a generic tile) |
+| C4 | `Person`, `System`, `Container`, `Component` with `Db` / `Queue` / `_Ext` variants, `Boundary`, `Enterprise_Boundary`, `System_Boundary`, `Container_Boundary`, `Deployment_Node` / `Node` blocks, `Rel`, `BiRel`, `Rel_U/D/L/R`, `Rel_Back`, `RelIndex`, `$named` arguments, `UpdateLayoutConfig($c4ShapeInRow, $c4BoundaryInRow)`; colours follow the C4 roles in your brand primary, grey for external |
+| Requirement | `requirement`, `functionalRequirement`, `interfaceRequirement`, `performanceRequirement`, `physicalRequirement`, `designConstraint` and `element` blocks; `a - satisfies -> b` and `b <- satisfies - a` with `contains`, `copies`, `derives`, `satisfies`, `verifies`, `refines`, `traces` |
+| Use case | `actor Name`, `Id("Use case")` ellipses, `Id[Label]` boxes, `systemBoundary Name ... end`, `A --> B`, `A ..> : include B` / `: extend B` (drawn as «include» / «extend»), `A --\|> B` generalisation, `direction LR \| TB` |
+| Swimlanes | `swimlane-beta LR \| TB`; each top-level `subgraph` is a lane, steps sit in their lane in flow order; full flowchart node and edge syntax |
+| Agent flow | `agentflow-beta TB \| LR`, `flow id["Agent"] ... end` groups, `global ... end`, typed shapes `@{ shape: task \| tool \| input \| decision \| refdoc \| action }`, `id@{ view: collapsed }` folds a flow into one node, `--x` failure edges in red |
+| Tree view | indented lines or pasted `tree` output (`├──`, `└──`); names ending `/` are folders, `## note` adds a description, `:::highlight` marks a row, `icon(...)`; config `treeView.showIcons` |
+| Ishikawa | first line is the effect; indented categories alternate above and below the spine, with causes and sub-causes nested under them |
+| Venn | `title`, `set Id["Label"]:size`, `union A,B["Label"]:size` (two or more sets), indented `text Id["Label"]` items, `style Id fill:...,color:...,stroke:...,fill-opacity:...` |
+| Cynefin | `title`, `complex` / `complicated` / `clear` / `chaotic` / `confusion` blocks of quoted items, transitions `complex --> complicated : "Label"`; config `cynefin.showDomainDescriptions`, `cynefin.boundaryAmplitude` |
+| Wardley map | `title`, `size [w, h]`, `evolution A -> B -> C` (with `@0.3` widths and `Label / Sub` pairs), `anchor` and `component Name [visibility, evolution]` with `label [dx, dy]` and `(inertia)`, `(build)`, `(buy)`, `(outsource)`, `(market)`; links `->`, `-.->`, `+>`, `+<`, `+<>`, `+'label'>`, `A -> B; label`; `evolve`, `pipeline X { ... }`, `note`, `annotations` / `annotation N,[v, e] "text"`, `accelerator`, `deaccelerator` |
+| Railroad | EBNF (`=` or `::=`, `\|`, `,`, `[ ]`, `{ }`, `?`, `*`, `+`, `A - B`, `? special ?`, comments), ABNF (`/`, `*A`, `1*A`, `2*4A`, `%x41-5A`, `;` comments), PEG (`<-`, `/`, `&A`, `!A`, `.`, `#` comments) and IR constructors (`sequence`, `choice`, `optional`, `zeroOrMore`, `oneOrMore`, `terminal`, `nonterminal`, `special`); long rules wrap onto several rows |
+| Event modeling | `tf` / `timeframe` and `rf` / `resetframe NN type Name`, types `ui`, `pcr` / `processor`, `cmd` / `command`, `rmo` / `readmodel`, `evt` / `event`; `Namespace.Name` adds a lane, inline `{ data }`, `[[DataBlock]]` with `data Name { ... }`, `->> NN` extra links; flows are inferred frame to frame unless a reset frame breaks them |
+| ZenUML | drawn as a sequence diagram: `@Actor` / `@Database` annotators, `A as Alice`, `A->B: msg`, sync calls `A.method(args) { ... }`, `x = A.method()`, `return`, `@return`, `new A()`, `if` / `else if` / `else`, `while` / `for` / `loop`, `opt`, `par`, `try` / `catch` / `finally` |
+
+**Themes, dark mode and titles.** A diagram can carry Mermaid's own configuration, either as
+`%%{init: {...}}%%` or as a front-matter `config:` block:
+
+````markdown
+```mermaid
+---
+title: Order flow
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#7a1f5c"
+---
+flowchart LR
+    A --> B
+```
+````
+
+- `theme: dark` draws the diagram for a dark background, using lifted brand colours and the dark
+  steps of the data palette. A theme whose `body` or `@page` background is dark switches every
+  diagram to dark mode automatically, and Word/PowerPoint images get the dark background.
+- `theme: neutral` (greys) and `theme: forest` (greens) replace the brand colours;
+  `theme: default` keeps them.
+- `themeVariables`: `primaryColor`, `secondaryColor` (accent), `primaryBorderColor`,
+  `primaryTextColor` / `textColor`, `lineColor`, `fontFamily`, `background` and `darkMode`.
+- A front-matter `title` is drawn above any diagram.
+
+Every Mermaid diagram type is drawn, including the beta ones listed above. A diagram type
+Mermaid adds later is left as an ordinary code block, with a warning in the build log, rather
+than drawn incorrectly.
 
 <a id="markdown-values-and-placeholders"></a>
 
@@ -1980,7 +2114,9 @@ asset cascade and becomes `url("file://…")`.
 
 - **Mermaid diagrams** take their colours from the theme as hex literals: primary from
   `.cover-title { color }`, else `h1 { color }`, else `th { background }`; accent from `h2`,
-  `a` or `.cover-label`; muted from `h3` or `em`; text from `body`.
+  `a` or `.cover-label`; text colour and font from `body`. Card fills, borders and frames are
+  tints derived from these. Data charts keep a fixed accessible palette (see
+  [Diagrams](#markdown-diagrams-mermaid)).
 - **PDF form grids** use the same primary colour (see [Forms](#themes-forms)).
 
 `var(--x)`, `rgb()` and named colours are not read for these. Use hex literals.

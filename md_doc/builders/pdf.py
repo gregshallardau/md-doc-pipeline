@@ -2039,14 +2039,9 @@ def build(
     html_body = _apply_table_col_widths(html_body, config_col_weights)
 
     # Render Mermaid diagram blocks to inline SVGs, themed from the CSS
-    from ..mermaid import process_html as _process_mermaid, extract_theme_from_css
+    from ..mermaid import diagram_theme, process_html as _process_mermaid
 
-    mermaid_theme = None
-    if css_text:
-        try:
-            mermaid_theme = extract_theme_from_css(css_text)
-        except Exception:
-            pass  # fall back to default theme
+    mermaid_theme = diagram_theme(css_text, config, resolve_config_path)
     html_body = _process_mermaid(html_body, theme=mermaid_theme)
 
     primary_color = mermaid_theme.get("primary") if mermaid_theme else None
