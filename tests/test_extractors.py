@@ -162,6 +162,20 @@ class TestSuggestFrontmatter:
         assert 'output_filename: "Client Proposal"' in text
         assert "outputs: [pdf, docx]" in text and text.endswith("---\n\n")
 
+    def test_records_where_the_content_came_from(self):
+        from datetime import date
+
+        from md_doc.config_schema import validate_config
+        from md_doc.extractors import suggest_frontmatter
+
+        text = suggest_frontmatter("Client Proposal.docx", [], today=date(2026, 10, 22))
+        assert 'imported_from: "Client Proposal.docx"' in text
+        assert 'imported_on: "2026-10-22"' in text
+        import yaml
+
+        data = yaml.safe_load(text.split("---")[1])
+        assert not [m for m in validate_config(data) if "Unknown" in m[1]]
+
     def test_template_with_fields_builds_a_fillable_dotx(self):
         from md_doc.extractors import suggest_frontmatter
 

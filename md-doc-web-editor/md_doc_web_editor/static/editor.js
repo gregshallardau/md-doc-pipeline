@@ -2778,6 +2778,13 @@
       .replace(/[^A-Za-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .toLowerCase() || "import";
+  // Paths already in the workspace, plus any set aside by this import.
+  const importTaken = () => new Set(state.files.map((file) => file.path));
+  function freeImportPath(path, taken) {
+    if (!taken.has(path)) return path;
+    const [, base, ext = ""] = path.match(/^(.*?)(\.[^./]+)?$/);
+    for (let n = 2; ; n++) if (!taken.has(`${base}-${n}${ext}`)) return `${base}-${n}${ext}`;
+  }
   const stripImportImages = (markdown) =>
     markdown.replace(/!\[[^\]]*\]\(import-image-\d+\.\w+\)\n*/g, "");
   // Appends the fields that _merge_fields.yml does not already describe.
@@ -2871,7 +2878,7 @@
     const fields = result.fields;
     dialog(
       "Review imported Markdown",
-      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" checked> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new"> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(dir)}${escape(importStem(item.name))}.md"><label><input type="checkbox" id="import-frontmatter" checked> Add starter frontmatter to a new document (title, output name, formats)</label>${count ? `<br><label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}${fields.length ? `<br><label><input type="checkbox" id="import-fields" checked> Add ${fields.length} merge field${fields.length === 1 ? "" : "s"} to _merge_fields.yml: <code>${escape(fields.join(", "))}</code></label>` : ""}`,
+      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" checked> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new"> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(freeImportPath(dir + importStem(item.name) + ".md", importTaken()))}"><p id="import-path-note" style="color:var(--danger,#b42318)" aria-live="polite"></p><label><input type="checkbox" id="import-frontmatter" checked> Add starter frontmatter to a new document (title, output name, formats)</label>${count ? `<br><label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}${fields.length ? `<br><label><input type="checkbox" id="import-fields" checked> Add ${fields.length} merge field${fields.length === 1 ? "" : "s"} to _merge_fields.yml: <code>${escape(fields.join(", "))}</code></label>` : ""}`,
       [
         { label: "Back", run: () => importDocument() },
         {
@@ -2883,6 +2890,8 @@
               document.querySelector('input[name="import-mode"]:checked')?.value === "insert";
             const path = $("import-path").value.trim();
             if (!insert && !path) throw new Error("Enter a path for the new document");
+            if (!insert && importTaken().has(path))
+              throw new Error(`${path} already exists. Choose another name.`);
             const images = $("import-images")?.checked ?? false;
             const edited = $("import-preview").value;
             let added = 0;
@@ -2924,10 +2933,17 @@
       ],
       true,
     );
+    const noteExisting = () => {
+      const path = $("import-path").value.trim();
+      $("import-path-note").textContent = importTaken().has(path)
+        ? `${path} already exists. Choose another name.`
+        : "";
+    };
+    $("import-path").addEventListener("input", noteExisting);
   }
   function importBatch(items) {
     const dir = importDirOf(state.active ?? "");
-    const used = new Set();
+    const used = importTaken();
     const rows = items.map((item, index) => {
       if (item.error) {
         return `<tr><td></td><td>${escape(item.name)}</td><td colspan="2" style="color:var(--danger,#b42318)">${escape(item.error)}</td></tr>`;
@@ -2935,6 +2951,7 @@
       let path = `${dir}${importStem(item.name)}.md`;
       if (used.has(path))
         path = `${dir}${importStem(item.name)}-${item.name.split(".").pop().toLowerCase()}.md`;
+      path = freeImportPath(path, used);
       used.add(path);
       const { images, fields } = item.result;
       const notes = [
@@ -2962,6 +2979,20 @@
             };
             const done = [];
             const failed = [];
+            const taken = importTaken();
+            const chosen = new Set();
+            const clashes = [];
+            for (const box of document.querySelectorAll("[data-import-row]:checked")) {
+              const path = document
+                .querySelector(`[data-import-path="${box.dataset.importRow}"]`)
+                .value.trim();
+              if (path && (taken.has(path) || chosen.has(path))) clashes.push(path);
+              chosen.add(path);
+            }
+            if (clashes.length)
+              throw new Error(
+                `Already taken: ${clashes.join(", ")}. Rename them or untick the file.`,
+              );
             for (const box of document.querySelectorAll("[data-import-row]:checked")) {
               const item = items[Number(box.dataset.importRow)];
               const path = document

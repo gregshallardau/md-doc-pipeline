@@ -3430,6 +3430,8 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `status` | string | — | `draft`, `final` or `superseded`; shown in the register. |
 | `outputs` | list | `[pdf]` | Formats to build: `pdf`, `docx`, `dotx`, `pptx`. |
 | `output_filename` | string | source name | Output file name for every format; Jinja2 allowed; extension added. |
+| `imported_from` | string | — | Informational: the file this document was imported from (set by the editor import; builders ignore it). |
+| `imported_on` | string | — | Informational: the date of that import, `YYYY-MM-DD` (quote it). |
 | `output_dir` | string | next to source | Directory for outputs, mirroring the source tree; `--output` wins. |
 | `pdf_forms` | boolean | `false` | Interactive PDF form fields; output gets a `-form` suffix. |
 | `include_md_in_share` | boolean | `false` | Include `.md` sources when syncing. |
@@ -4144,16 +4146,21 @@ several.
 
 1. **Convert** the file.
 2. **Review** the Markdown in an editable preview, then either **insert it at the cursor** of
-   the open document or **save it as a new document**.
+   the open document or **save it as a new document**. If the suggested file name is taken,
+   the next free one is filled in and a taken name is flagged as you type.
 
 **Several files** go to a batch review: each file becomes a new document, with a path you can
 edit, and a file that fails to convert or already exists is reported without stopping the
-rest. Existing files are never overwritten.
+rest. Existing files are never overwritten: a path that is already taken is flagged, the
+next free name (`client-letter-2.md`) is suggested, and Import refuses, leaving the dialog open,
+until every selected path is free and unique, so you can rename or untick the file.
 
 Options, in both cases:
 
 - **Starter frontmatter** (new documents): `title` and `output_filename` from the source file
-  name, so rebuilding gives `Client Proposal.dotx` again rather than a slugged name, plus
+  name, so rebuilding gives `Client Proposal.dotx` again rather than a slugged name;
+  `imported_from` and `imported_on` record the source file name and the date (a browser
+  never reveals the folder a file came from, so only the name is recorded); plus
   `outputs` for the kind of file (`[pdf, docx]`; `[dotx]` with `dotx_field_type: form` for a
   template or anything with merge fields; `[pptx]` with `slide_split: h1` for a deck). The
   new file name itself comes from the source name, lower-cased with hyphens.

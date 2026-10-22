@@ -122,6 +122,8 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "date",
         "outputs",
         "output_filename",
+        "imported_from",
+        "imported_on",
         "output_dir",
         "pdf_forms",
         "include_md_in_share",

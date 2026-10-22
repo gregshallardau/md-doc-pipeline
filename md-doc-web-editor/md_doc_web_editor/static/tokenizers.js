@@ -21,7 +21,7 @@
         'title', 'product', 'version', 'codename', 'author', 'date',
         'status', 'document_type',
         // Output control
-        'outputs', 'output_filename', 'output_dir',
+        'outputs', 'output_filename', 'output_dir', 'imported_from', 'imported_on',
         'pdf_forms', 'dotx_field_type', 'body_text_align', 'include_md_in_share',
         // Cover page
         'cover_page', 'cover_label', 'cover_text_align', 'cover_background',

@@ -7,6 +7,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from markitdown import MarkItDown
@@ -255,15 +256,22 @@ def extract_file(file_path: str, keep_images: bool = False) -> str:
     return extract_document(file_path, keep_images).markdown
 
 
-def suggest_frontmatter(filename: str, fields: list[str]) -> str:
+def suggest_frontmatter(filename: str, fields: list[str], today: date | None = None) -> str:
     """Starter YAML frontmatter for a document imported from *filename*.
 
     ``output_filename`` keeps the original name, so rebuilding the imported
     document produces ``Client Proposal.dotx`` again rather than a slugged name.
+    ``imported_from`` and ``imported_on`` record where the content came from (a browser
+    only reports the file name, not its folder).
     """
     stem = Path(filename).stem.strip() or "Imported document"
     suffix = Path(filename).suffix.lower()
-    lines = [f"title: {json.dumps(stem)}", f"output_filename: {json.dumps(stem)}"]
+    lines = [
+        f"title: {json.dumps(stem)}",
+        f"output_filename: {json.dumps(stem)}",
+        f"imported_from: {json.dumps(Path(filename).name)}",
+        f'imported_on: "{(today or date.today()).isoformat()}"',
+    ]
     if suffix == ".pptx":
         lines += ["outputs: [pptx]", "slide_split: h1"]
     elif suffix == ".dotx" or fields:
