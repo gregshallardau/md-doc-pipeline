@@ -7,13 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- **Folder-aware import and a folder right-click menu in the editor.** The last folder you
-  clicked is highlighted and used as the destination for imports and new documents; right-click
-  a folder for *Import documents here* and *New document here*.
-- **Import in the web editor.** Upload one or more files, review the Markdown in a preview,
-  then insert it at the cursor or save new documents (batch review for several). Embedded
-  Word images are saved under `assets/`, merge fields can be added to `_merge_fields.yml`,
-  and new documents get starter frontmatter (title, original output name, formats).
+- **Popup menus instead of dialogs in the editor.** The **+** button opens a scaffold menu and
+  creates the document straight away; right-clicking a folder (or the root) offers import and
+  new-document/folder actions, and right-clicking a file offers rename, move, duplicate and
+  trash. The last folder clicked is highlighted and is where new files go.
+- **Import in the web editor, without dialogs.** Pick files from the upload button, a folder's
+  right-click menu, a drag onto a folder, or the command palette; they are converted and saved
+  at once, the first opens, and a toast offers Undo. *Import into this document* (palette, or
+  drop on the editor) inserts at the cursor. Embedded Word images go under `assets/`, merge
+  fields are added to `_merge_fields.yml`, new documents get starter frontmatter (title,
+  original output name, `imported_from`, `imported_on`), and taken names get `-2`. The three
+  options are under Settings.
 - **`md-doc extract` reads more.** `.dotx`, `.pptx`, `.html` and (with `uv sync --extra xlsx`)
   `.xlsx`, and Word merge fields, text form fields and plain-text content controls come
   back as `[[field]]`; the command lists the fields it found.

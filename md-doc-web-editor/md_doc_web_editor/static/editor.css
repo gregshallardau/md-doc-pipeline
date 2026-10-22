@@ -427,6 +427,10 @@ kbd {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.tree-folder > summary.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
 .tree-folder > summary:hover {
   background: var(--surface-hover);
 }

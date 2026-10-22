@@ -4138,46 +4138,48 @@ md-doc extract report.pdf --dest workspace/acme/reports/
 
 ### Importing in the web editor
 
-In the web editor, the upload button above the file tree (or **Import documents** on the
-welcome page) converts files with the same converter as `md-doc extract`. Choose one file or
-several.
+Importing has no dialogs. Pick files and they are converted and saved straight away with the
+same converter as `md-doc extract`; the first one opens in the editor and a toast reports what
+happened, with an **Undo**. Start an import any of these ways:
 
-**One file** is a two-step import, and nothing is written until you confirm:
+- the upload button above the file tree,
+- **right-click a folder** (or the workspace root) → **Import documents here**,
+- **drag files onto a folder** in the tree,
+- the command palette (`Ctrl K`) → **Import documents**.
 
-1. **Convert** the file.
-2. **Review** the Markdown in an editable preview, then either **insert it at the cursor** of
-   the open document or **save it as a new document**. If the suggested file name is taken,
-   the next free one is filled in and a taken name is flagged as you type.
-
-**Several files** go to a batch review: each file becomes a new document, with a path you can
-edit, and a file that fails to convert or already exists is reported without stopping the
-rest. Existing files are never overwritten: a path that is already taken is flagged, the
-next free name (`client-letter-2.md`) is suggested, and Import refuses, leaving the dialog open,
-until every selected path is free and unique, so you can rename or untick the file.
+To put the converted text into the document you are editing instead, use the command palette →
+**Import into this document**, or drop the files onto the editor. It is inserted at the cursor
+(`Ctrl Z` undoes it).
 
 **Where it goes:** new documents land in the folder you last clicked in the file tree (it is
-highlighted), or in the open document's folder if you opened a file more recently. **Right-click
-a folder** (or the workspace root) and choose **Import documents here** to import straight into
-it; the same menu has **New document here**. When you have just picked a folder, the dialog
-defaults to saving a new document there rather than inserting into the open one. The path is
-still editable in the review step.
+highlighted), or in the open document's folder if you opened a file more recently. The same
+folder is used by the **+** button (a menu of report, fillable form, slide deck and blank
+document; it creates `untitled.md`, or the next free name, and opens it) and the folder
+right-click menu (**New … here**).
 
-Options, in both cases:
+**Name clashes:** a file name that is already taken gets the next free one (`client-letter-2.md`)
+and the toast says so. Nothing is overwritten.
+
+**Undo** moves everything the import wrote (documents, images, a newly created
+`_merge_fields.yml`) to `.editor-trash`. Lines appended to an existing `_merge_fields.yml` stay.
+
+What each import adds is set under **Settings → When importing documents**; all three are on by
+default:
 
 - **Starter frontmatter** (new documents): `title` and `output_filename` from the source file
   name, so rebuilding gives `Client Proposal.dotx` again rather than a slugged name;
   `imported_from` and `imported_on` record the source file name and the date (a browser
-  never reveals the folder a file came from, so only the name is recorded); plus
-  `outputs` for the kind of file (`[pdf, docx]`; `[dotx]` with `dotx_field_type: form` for a
-  template or anything with merge fields; `[pptx]` with `slide_split: h1` for a deck). The
-  new file name itself comes from the source name, lower-cased with hyphens.
+  never reveals the folder a file came from, so only the name is recorded); plus `outputs`
+  for the kind of file (`[pdf, docx]`; `[dotx]` with `dotx_field_type: form` for a template or
+  anything with merge fields; `[pptx]` with `slide_split: h1` for a deck). The new file name
+  itself comes from the source name, lower-cased with hyphens.
 - **Images** embedded in a Word file are saved into an `assets/` folder next to the document
   and linked with relative paths. A numeric suffix avoids overwriting existing images.
 - **Merge fields** found in a Word file are added to `_merge_fields.yml` in the document's
   folder (created if missing). Fields already described there are left alone.
 
 PDF conversion is approximate, especially for tables and multi-column layouts, so check the
-preview.
+result in the editor.
 
 ---
 
