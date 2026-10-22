@@ -178,7 +178,8 @@ def test_state_diagram_markers_and_reciprocal_edges_do_not_collide():
         "stateDiagram-v2\n [*] --> Idle\n Idle --> Run : go\n Run --> Idle : stop\n Run --> [*]"
     )
     svg = m.render_state_svg(sd)
-    assert svg.count("<circle") == 4  # filled start dot + end marker (3 circles)
+    drawn = svg.split("</defs>")[1]
+    assert drawn.count("<circle") == 4  # filled start dot + end marker (3 circles)
     paths = [line for line in svg.splitlines() if line.startswith("<path") and "arr" in line]
     assert len(paths) == len(set(paths)) == 4  # go/stop edges take separate lanes
 
@@ -261,3 +262,103 @@ def test_branch_turns_are_staggered():
         if line.startswith("<path") and "arr" in line
     }
     assert len(turns) >= 3  # horizontal runs sit at different heights, not one trunk
+
+
+def _edges(src):
+    return [(e.src, e.dst, e.label, e.style, e.head, e.tail) for e in m.parse(src).edges]
+
+
+def test_text_labelled_edges_keep_their_nodes():
+    assert _edges(
+        "flowchart TD\n A -- some text --> B\n B -. dotted label .-> C\n C == thick ==> D"
+    ) == [
+        ("A", "B", "some text", "solid", "arrow", "none"),
+        ("B", "C", "dotted label", "dotted", "arrow", "none"),
+        ("C", "D", "thick", "thick", "arrow", "none"),
+    ]
+
+
+def test_circle_cross_and_bidirectional_edges():
+    assert _edges("flowchart TD\n A --o B\n B --x C\n C <--> D\n D o--o E\n E --- F") == [
+        ("A", "B", "", "solid", "circle", "none"),
+        ("B", "C", "", "solid", "cross", "none"),
+        ("C", "D", "", "solid", "arrow", "arrow"),
+        ("D", "E", "", "solid", "circle", "circle"),
+        ("E", "F", "", "solid", "none", "none"),
+    ]
+
+
+def test_operators_inside_labels_and_names_are_not_edges():
+    edges = _edges('flowchart TD\n A["a --> b"] --> B\n C-->|yes (really)|D\n Box-->I')
+    assert [(e[0], e[1], e[2]) for e in edges] == [
+        ("A", "B", ""),
+        ("C", "D", "yes (really)"),
+        ("Box", "I", ""),
+    ]
+
+
+def test_ampersand_fans_out_and_in():
+    assert [(e[0], e[1]) for e in _edges("flowchart TD\n A --> B & C\n B & C --> D")] == [
+        ("A", "B"),
+        ("A", "C"),
+        ("B", "D"),
+        ("C", "D"),
+    ]
+
+
+def test_classdef_style_and_linkstyle_are_applied():
+    fc = m.parse(
+        "flowchart TD\n A[Ok]:::good --> B[Bad]:::bad\n"
+        " classDef good fill:#d4edda,stroke:#28a745\n classDef bad fill:#f8d7da\n"
+        " style A stroke-width:4px\n linkStyle 0 stroke:#dc3545"
+    )
+    assert fc.nodes["A"].css == {"fill": "#d4edda", "stroke": "#28a745", "stroke-width": "4px"}
+    assert fc.nodes["B"].css == {"fill": "#f8d7da"}
+    assert fc.edges[0].css == {"stroke": "#dc3545"}
+    svg = m.render_svg(fc)
+    assert 'fill="#d4edda"' in svg and 'stroke="#dc3545"' in svg
+    assert 'id="arr-dc3545"' in svg  # arrowhead matches the edge colour
+
+
+def test_subgraph_heading_forms_and_nesting():
+    fc = m.parse(
+        'flowchart LR\n subgraph one [First]\n A --> B\n subgraph inner["In ner"]\n X\n end\n end\n'
+        ' subgraph "Quoted Title"\n C --> D\n end\n B --> C'
+    )
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+    assert by_id["one"].label == "First" and by_id["one"].children == ["inner"]
+    assert by_id["inner"].node_ids == ["X"]
+    assert by_id["Quoted_Title"].label == "Quoted Title"
+    m.layout(fc)
+    outer, inner = by_id["one"], by_id["inner"]
+    assert outer.x <= inner.x and outer.x + outer.w >= inner.x + inner.w  # frame wraps child
+
+
+def test_extra_shapes_parse_and_render():
+    fc = m.parse("flowchart TD\n A>Flag] --> B[/Para/]\n B --> C[\\Alt\\]\n C --> D[/Trap\\]")
+    assert [fc.nodes[n].shape for n in "ABCD"] == [
+        "flag",
+        "parallelogram",
+        "parallelogram_alt",
+        "trapezoid",
+    ]
+    assert m.render_svg(fc).count("<polygon") >= 4
+
+
+def test_front_matter_and_init_directives_are_ignored():
+    for pre in ("---\ntitle: T\n---\n", "%%{init: {'theme':'forest'}}%%\n"):
+        assert m._detect_diagram_type(pre + "sequenceDiagram\n A->>B: hi") == "sequence"
+        assert "<svg" in m.render_to_svg(pre + "flowchart TD\n A --> B")
+
+
+@pytest.mark.parametrize("kind", ["classDiagram", "journey", "gitGraph"])
+def test_unsupported_diagram_types_fail_cleanly(kind):
+    with pytest.raises(m.UnsupportedDiagramError):
+        m.render_to_svg(f"{kind}\n  anything")
+    html = f'<pre><code class="language-mermaid">{kind}\n x</code></pre>'
+    assert m.process_html(html) == html  # the PDF path keeps the code block
+
+
+def test_edge_corners_are_rounded():
+    svg = m.render_to_svg("flowchart TD\n A --> B\n A --> C")
+    assert " Q " in svg

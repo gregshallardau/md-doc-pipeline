@@ -898,7 +898,7 @@ which installs `cairosvg`; without it the code block stays as text).
 
 | Diagram | Keyword |
 |---------|---------|
-| Flowchart (8 node shapes, 4 edge styles, labels, subgraphs) | `flowchart` / `graph` |
+| Flowchart (13 node shapes, 4 edge styles, labels, classes, subgraphs) | `flowchart` / `graph` |
 | Pie and donut | `pie`, `donut` |
 | Bar chart | `bar` / `xychart-beta` |
 | Gauge | `gauge` |
@@ -929,6 +929,29 @@ flowchart LR
 
 Keep labels short. Examples of every type are in
 `examples/feature-showcase/diagram-gallery.md`.
+
+**Flowchart syntax.** Everything in the usual Mermaid flowchart grammar that affects the
+drawing is supported:
+
+| Syntax | Result |
+|--------|--------|
+| `A --> B`, `A --- B`, `A -.-> B`, `A ==> B` | solid, plain line, dotted and thick edges (extra dashes are fine) |
+| `A -- text --> B`, `A -->\|text\| B`, `A -. text .-> B`, `A == text ==> B` | labelled edges, quoted or not |
+| `A --o B`, `A --x B`, `A <--> B`, `A o--o B` | circle and cross ends, two-way arrows |
+| `A --> B & C`, `B & C --> D` | fan out and in |
+| `A([x])`, `A((x))`, `A[(x)]`, `A{{x}}`, `A[[x]]`, `A>x]`, `A[/x/]`, `A[\x\]`, `A[/x\]`, `A[\x/]` | stadium, circle, cylinder, hexagon, subroutine, flag, parallelograms, trapezoids |
+| `classDef name fill:#d4edda,stroke:#28a745,color:#14532d`, `A:::name`, `class A,B name`, `style A fill:#fff` | per-node overrides (`fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`) |
+| `linkStyle 0,2 stroke:#dc3545,stroke-width:2px`, `linkStyle default ...` | per-edge overrides, numbered in the order edges appear |
+| `subgraph id [Title]`, `subgraph "Title"`, nested `subgraph` | framed groups |
+
+Nodes are laid out in ranks with crossings minimised, long and looping edges run in their own
+lanes, and edges leaving one node fan out instead of sharing a line. Nodes use the theme's
+primary colour (decisions use the accent); override individual nodes with `classDef` or `style`.
+A leading YAML front-matter block or `%%{init: ...}%%` line is accepted and ignored.
+
+Diagram types that have no renderer here (`classDiagram`, `journey`, `gitGraph`,
+`quadrantChart`, `sankey`, `block`, `C4*` and similar) are left as an ordinary code block, with a
+warning in the build log, rather than drawn incorrectly.
 
 <a id="markdown-values-and-placeholders"></a>
 

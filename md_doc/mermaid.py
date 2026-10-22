@@ -29,11 +29,16 @@ Supported flowchart syntax
     subgraph id["Label"]          grouped nodes
       ...
     end
-    style A fill:#abc,stroke:#def inline style (parsed but uses theme)
+    A -- text --> B               text-labelled edge (also -. text .->, == text ==>)
+    A --o B / A --x B / A <--> B  circle end, cross end, two-way arrow
+    A --> B & C                   fan out / in
+    A:::name, classDef, class,
+    style A fill:#abc, linkStyle  per-node and per-edge overrides
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections import defaultdict
@@ -43,6 +48,9 @@ from datetime import date, datetime, timedelta
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,6 +64,8 @@ class Node:
     y: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    classes: list[str] = field(default_factory=list)
+    css: dict[str, str] = field(default_factory=dict)  # resolved style overrides
 
 
 @dataclass
@@ -63,7 +73,10 @@ class Edge:
     src: str
     dst: str
     label: str = ""
-    style: str = "solid"  # solid | dotted | thick | none (no arrow)
+    style: str = "solid"  # solid | dotted | thick | none (plain line, no arrow)
+    head: str = "arrow"  # end marker: arrow | circle | cross | none
+    tail: str = "none"  # start marker (bidirectional edges): arrow | circle | cross | none
+    css: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -71,6 +84,7 @@ class Subgraph:
     id: str
     label: str
     node_ids: list[str] = field(default_factory=list)
+    children: list[str] = field(default_factory=list)  # ids of nested subgraphs
     x: float = 0.0
     y: float = 0.0
     w: float = 0.0
@@ -211,18 +225,6 @@ DEFAULT_THEME: dict[str, str] = {
     "node_stroke": "#1b4f72",
     "diamond_fill": "#fef5e7",
     "diamond_stroke": "#e67e22",
-    "stadium_fill": "#eaf5ea",
-    "stadium_stroke": "#27ae60",
-    "rounded_fill": "#e8f0fe",
-    "rounded_stroke": "#2e86c1",
-    "circle_fill": "#fce4ec",
-    "circle_stroke": "#c62828",
-    "cylinder_fill": "#e0f2f1",
-    "cylinder_stroke": "#00796b",
-    "hexagon_fill": "#fff3e0",
-    "hexagon_stroke": "#e65100",
-    "subroutine_fill": "#f3e5f5",
-    "subroutine_stroke": "#7b1fa2",
     "subgraph_fill": "#f8f9fa",
     "subgraph_stroke": "#dee2e6",
     "subgraph_label": "#495057",
@@ -309,7 +311,6 @@ def extract_theme_from_css(css_text: str) -> dict[str, str]:
     # Node fill — lighten primary if we have one
     if primary:
         theme["node_fill"] = _lighten(primary, 0.85)
-        theme["rounded_fill"] = _lighten(primary, 0.88)
     if accent:
         theme["diamond_fill"] = _lighten(accent, 0.88)
 
@@ -364,6 +365,12 @@ _NODE_PATTERNS = [
     # A["label"] — rect (must be after [["]] and [(")])
     (re.compile(r'^([A-Za-z_]\w*)\["([^"]+)"\]$'), "rect"),
     (re.compile(r"^([A-Za-z_]\w*)\['([^']+)'\]$"), "rect"),
+    # Slanted shapes and flag
+    (re.compile(r"^([A-Za-z_]\w*)\[/(.*?)\\\]$"), "trapezoid"),  # A[/label\]
+    (re.compile(r"^([A-Za-z_]\w*)\[\\(.*?)/\]$"), "trapezoid_alt"),  # A[\label/]
+    (re.compile(r"^([A-Za-z_]\w*)\[/(.*?)/\]$"), "parallelogram"),  # A[/label/]
+    (re.compile(r"^([A-Za-z_]\w*)\[\\(.*?)\\\]$"), "parallelogram_alt"),  # A[\label\]
+    (re.compile(r"^([A-Za-z_]\w*)>([^\]]+)\]$"), "flag"),  # A>label]
     # ---- Unquoted labels (the common Mermaid form, e.g. A[Plan]) ----
     # Ordered specific-first so multi-char delimiters win over single-char ones.
     (re.compile(r"^([A-Za-z_]\w*)\(\[([^\]]+)\]\)$"), "stadium"),  # A([label])
@@ -376,35 +383,64 @@ _NODE_PATTERNS = [
     (re.compile(r"^([A-Za-z_]\w*)\[([^\]]+)\]$"), "rect"),  # A[label]
 ]
 
-# Edge patterns — order: longest operators first
-# Matches: ==> | -.-> | --> | --- and optional pipe labels or quoted labels
-_EDGE_OPERATORS = [
-    # Thick arrow ==>
-    (re.compile(r"==>\s*"), "thick", True),
-    # Dotted arrow -.->
-    (re.compile(r"-\.->\s*"), "dotted", True),
-    # Solid arrow with pipe label -->|"label"|  or  -->|label|
-    (re.compile(r'-->\|"([^"]+)"\|\s*'), "solid", True),
-    (re.compile(r"-->\|([^|]+)\|\s*"), "solid", True),
-    # Thick with label  ==>|"label"|
-    (re.compile(r'==>\|"([^"]+)"\|\s*'), "thick", True),
-    (re.compile(r"==>\|([^|]+)\|\s*"), "thick", True),
-    # Dotted with label  -.->|"label"|
-    (re.compile(r'-\.->\|"([^"]+)"\|\s*'), "dotted", True),
-    (re.compile(r"-\.->\|([^|]+)\|\s*"), "dotted", True),
-    # Labelled arrow -- "label" -->
-    (re.compile(r'--\s*"([^"]*)"\s*-->\s*'), "solid", True),
-    # Labelled arrow -- label -->  (unquoted single-word)
-    (re.compile(r'--\s*([^\s"]+)\s*-->\s*'), "solid", True),
-    # Labelled thick == "label" ==>
-    (re.compile(r'==\s*"([^"]*)"\s*==>\s*'), "thick", True),
-    # Labelled dotted -. "label" .->
-    (re.compile(r'-\.\s*"([^"]*)"\s*\.->\s*'), "dotted", True),
-    # Plain solid arrow -->
-    (re.compile(r"-->\s*"), "solid", True),
-    # No-arrow line ---
-    (re.compile(r"---\s*"), "none", False),
-]
+# Edge operators. One regex covers every Mermaid link form:
+#   plain      -->  ---  --o  --x  ==>  ===  -.->  -.-   (any extra length)
+#   text       -- text -->   == text ==>   -. text .->
+#   both ways  <-->  o--o  x--x
+# optionally followed by a pipe label:  -->|label|
+_EDGE_RE = re.compile(
+    r"""
+    (?:(?P<lhead><)|(?<!\w)(?P<lmark>[ox])(?=[-=.]))?
+    (?:
+        (?P<tdash>--|==|-\.)[ \t]+(?P<text>[^<>|]*?\S)[ \t]+
+        (?P<tend>-{2,}>|-{3,}|-{2}[ox](?=\s|$)|={2,}>|={3,}|={2}[ox](?=\s|$)
+                 |\.-+>|\.-+(?![>\w])|\.-[ox](?=\s|$))
+      |
+        (?P<plain>-{2,}>|-{3,}|-{2,}[ox](?=\s|$)|={2,}>|={3,}|={2,}[ox](?=\s|$)
+                 |-\.+-?>|-\.+-(?![>\w]))
+    )
+    (?:\|(?P<pipe>[^|]*)\|)?
+    [ \t]*
+    """,
+    re.VERBOSE,
+)
+
+
+def _mask(text: str) -> str:
+    """Blank out quoted text and bracketed node labels so operators inside them are ignored."""
+    out: list[str] = []
+    depth = 0
+    quote = False
+    for i, ch in enumerate(text):
+        if quote:
+            out.append("\0")
+            quote = ch != '"'
+        elif ch == '"':
+            out.append("\0")
+            quote = True
+        elif ch in "([{" or (ch == ">" and i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_")):
+            depth += 1
+            out.append(ch if depth == 1 else "\0")
+        elif ch in ")]}":
+            out.append(ch if depth == 1 else "\0")
+            depth = max(depth - 1, 0)
+        else:
+            out.append("\0" if depth else ch)
+    return "".join(out)
+
+
+def _end_marker(op: str) -> str:
+    return {">": "arrow", "o": "circle", "x": "cross"}.get(op[-1:], "none")
+
+
+def _parse_css(text: str) -> dict[str, str]:
+    """Parse ``fill:#f9f,stroke:#333,stroke-width:2px`` into a dict."""
+    out: dict[str, str] = {}
+    for decl in re.split(r",(?![^(]*\))", text):
+        if ":" in decl:
+            key, value = decl.split(":", 1)
+            out[key.strip().lower()] = value.strip().rstrip(";")
+    return out
 
 
 def _ensure_node(fc: Flowchart, token: str) -> str:
@@ -413,6 +449,21 @@ def _ensure_node(fc: Flowchart, token: str) -> str:
     if not token:
         return ""
 
+    classes: list[str] = []
+    while True:
+        cm = re.match(r"^(.*?)\s*:::\s*([\w-]+)$", token)
+        if not cm:
+            break
+        token = cm.group(1).strip()
+        classes.insert(0, cm.group(2))
+
+    nid = _ensure_node_token(fc, token)
+    if nid in fc.nodes:
+        fc.nodes[nid].classes.extend(c for c in classes if c not in fc.nodes[nid].classes)
+    return nid
+
+
+def _ensure_node_token(fc: Flowchart, token: str) -> str:
     for pattern, shape in _NODE_PATTERNS:
         m = pattern.match(token)
         if m:
@@ -431,159 +482,160 @@ def _ensure_node(fc: Flowchart, token: str) -> str:
     return nid
 
 
+def _slug(text: str) -> str:
+    return re.sub(r"\W+", "_", text).strip("_") or "group"
+
+
 def parse(source: str) -> Flowchart:
     """Parse Mermaid flowchart source into a Flowchart model."""
     fc = Flowchart()
-    lines = source.strip().splitlines()
     subgraph_stack: list[Subgraph] = []
+    class_defs: dict[str, dict[str, str]] = {}
+    class_assign: list[tuple[list[str], list[str]]] = []
+    node_styles: dict[str, dict[str, str]] = defaultdict(dict)
+    link_styles: list[tuple[list[int] | None, dict[str, str]]] = []
 
-    for raw_line in lines:
-        line = raw_line.strip()
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip().rstrip(";").strip()
         if not line or line.startswith("%%"):
             continue
 
-        # Direction line
-        dir_m = re.match(r"^(?:flowchart|graph)\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE)
+        dir_m = re.match(r"^(?:flowchart|graph)(?:\s+(LR|TD|TB|RL|BT))?\s*$", line, re.IGNORECASE)
         if dir_m:
-            fc.direction = dir_m.group(1).upper()
+            if dir_m.group(1):
+                fc.direction = dir_m.group(1).upper()
+            continue
+        if re.match(r"^direction\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE) or line.startswith(
+            ("click ", "accTitle", "accDescr")
+        ):
             continue
 
-        # Skip style/classDef/class lines (we use our own theme)
-        if line.startswith("style ") or line.startswith("classDef ") or line.startswith("class "):
+        # Styling statements
+        m = re.match(r"^style\s+(\S+)\s+(.+)$", line)
+        if m:
+            for nid in m.group(1).split(","):
+                node_styles[nid.strip()].update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            for name in m.group(1).split(","):
+                class_defs.setdefault(name.strip(), {}).update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^class\s+(\S+)\s+(\S+)$", line)
+        if m:
+            class_assign.append(
+                (
+                    [x.strip() for x in m.group(1).split(",")],
+                    [x.strip() for x in m.group(2).split(",")],
+                )
+            )
+            continue
+        m = re.match(r"^linkStyle\s+(default|[\d,\s]+?)\s+(.+)$", line)
+        if m:
+            idxs = None if m.group(1) == "default" else [int(x) for x in m.group(1).split(",")]
+            link_styles.append((idxs, _parse_css(m.group(2))))
             continue
 
-        # Skip linkStyle lines
-        if line.startswith("linkStyle "):
-            continue
-
-        # Skip direction inside subgraph
-        if re.match(r"^direction\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE):
-            continue
-
-        # Subgraph open
-        sg_m = re.match(r'^subgraph\s+(\w+)\["([^"]+)"\]\s*$', line)
-        if not sg_m:
-            sg_m = re.match(r"^subgraph\s+(\w+)\[([^\]]+)\]\s*$", line)
-        if not sg_m:
-            sg_m = re.match(r"^subgraph\s+(\S+)\s*$", line)
-        if sg_m:
-            sg_id = sg_m.group(1)
-            sg_label = sg_m.group(2) if (sg_m.lastindex or 0) >= 2 else sg_id
+        # Subgraphs: `subgraph id`, `subgraph id [Title]`, `subgraph "Title"`, `subgraph Title`
+        m = re.match(r"^subgraph\s+(.+)$", line)
+        if m:
+            rest = m.group(1).strip()
+            tm = re.match(r'^([A-Za-z_][\w-]*)\s*\[\s*"?(.*?)"?\s*\]$', rest)
+            if tm:
+                sg_id, sg_label = tm.group(1), tm.group(2)
+            else:
+                sg_label = rest.strip('"')
+                sg_id = _slug(sg_label)
             sg = Subgraph(id=sg_id, label=sg_label)
+            if subgraph_stack:
+                subgraph_stack[-1].children.append(sg.id)
             subgraph_stack.append(sg)
+            fc.subgraphs.append(sg)  # outer groups first so they are drawn behind inner ones
             continue
-
-        # Subgraph close
         if line == "end":
             if subgraph_stack:
-                sg = subgraph_stack.pop()
-                fc.subgraphs.append(sg)
+                subgraph_stack.pop()
             continue
 
-        # Try to parse as edge chain
-        has_edge = any(op_re.search(line) for op_re, _, _ in _EDGE_OPERATORS)
-        if has_edge:
-            before = set(fc.nodes)
+        before = set(fc.nodes)
+        if any(True for _ in _EDGE_RE.finditer(_mask(line))):
             _parse_edge_line(fc, line)
-            # Assign nodes first introduced on this edge line to the current
-            # subgraph (Mermaid scopes a node to where it's first mentioned).
-            if subgraph_stack:
-                for nid in fc.nodes:
-                    if nid not in before and nid not in subgraph_stack[-1].node_ids:
-                        subgraph_stack[-1].node_ids.append(nid)
-            continue
-
-        # Standalone node definition
-        matched = False
-        for pattern, shape in _NODE_PATTERNS:
-            m = pattern.match(line)
-            if m:
-                nid, label = m.group(1), m.group(2).strip()
-                fc.nodes[nid] = Node(id=nid, label=label, shape=shape)
-                if subgraph_stack:
+        else:
+            _ensure_node(fc, line)
+        # Mermaid scopes a node to the group where it is first mentioned.
+        if subgraph_stack:
+            for nid in fc.nodes:
+                if nid not in before and nid not in subgraph_stack[-1].node_ids:
                     subgraph_stack[-1].node_ids.append(nid)
-                matched = True
-                break
-        if not matched and re.match(r"^[A-Za-z_]\w*$", line):
-            # Plain node ID
-            if line not in fc.nodes:
-                fc.nodes[line] = Node(id=line, label=line, shape="rect")
-            if subgraph_stack:
-                subgraph_stack[-1].node_ids.append(line)
 
-    # Assign nodes to subgraphs based on edges
-    _assign_subgraph_nodes(fc)
-
+    _apply_styles(fc, class_defs, class_assign, node_styles, link_styles)
     return fc
 
 
-def _assign_subgraph_nodes(fc: Flowchart) -> None:
-    """Ensure subgraph node_ids are populated from edges parsed within them."""
-    # Collect all nodes already assigned to subgraphs
-    assigned: set[str] = set()
-    for sg in fc.subgraphs:
-        assigned.update(sg.node_ids)
-
-    # For subgraphs with no nodes, try to infer from edges
-    # (This is a simplistic approach — in a real parser, we'd track
-    # which lines were inside which subgraph block)
+def _apply_styles(
+    fc: Flowchart,
+    class_defs: dict[str, dict[str, str]],
+    class_assign: list[tuple[list[str], list[str]]],
+    node_styles: dict[str, dict[str, str]],
+    link_styles: list[tuple[list[int] | None, dict[str, str]]],
+) -> None:
+    """Resolve classDef / class / style / linkStyle into per-node and per-edge overrides."""
+    assigned: dict[str, list[str]] = defaultdict(list)
+    for ids, names in class_assign:
+        for nid in ids:
+            assigned[nid].extend(names)
+    for nid, node in fc.nodes.items():
+        css = dict(class_defs.get("default", {}))
+        for name in [*node.classes, *assigned.get(nid, [])]:
+            css.update(class_defs.get(name, {}))
+        css.update(node_styles.get(nid, {}))
+        node.css = css
+    for idxs, css in link_styles:
+        for i in range(len(fc.edges)) if idxs is None else idxs:
+            if 0 <= i < len(fc.edges):
+                fc.edges[i].css.update(css)
 
 
 def _parse_edge_line(fc: Flowchart, line: str) -> None:
-    """Parse a line containing one or more chained edges."""
-    parts: list[str] = []
-    labels: list[str] = []
-    styles: list[str] = []
-    has_arrows: list[bool] = []
-
-    remaining = line
-    while True:
-        best_match = None
-        best_start = len(remaining)
-        best_op = None
-
-        for op_re, style, has_arrow in _EDGE_OPERATORS:
-            m = op_re.search(remaining)
-            if m and m.start() < best_start:
-                best_match = m
-                best_start = m.start()
-                best_op = (op_re, style, has_arrow)
-
-        if best_match is None or best_op is None:
-            parts.append(remaining.strip())
-            break
-
-        parts.append(remaining[: best_match.start()].strip())
-        _, style, has_arrow = best_op
-
-        # Extract label from capture groups
+    """Parse a line holding one or more chained edges (``A --> B & C -.-> D``)."""
+    masked = _mask(line)
+    spans: list[tuple[int, int]] = []
+    ops: list[Edge] = []
+    pos = 0
+    for m in _EDGE_RE.finditer(masked):
+        spans.append((pos, m.start()))
+        pos = m.end()
+        op = m.group("plain") or m.group("tend") or ""
         label = ""
-        for i in range(1, best_match.lastindex + 1 if best_match.lastindex else 1):
-            try:
-                g = best_match.group(i)
-                if g:
-                    label = g
-                    break
-            except IndexError:
-                break
+        if m.group("text") is not None:
+            label = line[m.start("text") : m.end("text")]
+        elif m.group("pipe") is not None:
+            label = line[m.start("pipe") : m.end("pipe")]
+        label = re.sub(r"<br\s*/?>", " ", label.strip().strip('"').strip())
+        style = "thick" if "=" in op else "dotted" if "." in op else "solid"
+        tail = (
+            "arrow"
+            if m.group("lhead")
+            else {"o": "circle", "x": "cross"}.get(m.group("lmark") or "", "none")
+        )
+        ops.append(Edge("", "", label, style, _end_marker(op), tail))
+    spans.append((pos, len(line)))
 
-        labels.append(label)
-        styles.append(style)
-        has_arrows.append(has_arrow)
-        remaining = remaining[best_match.end() :]
+    groups: list[list[str]] = []
+    for start, end in spans:
+        chunk, mchunk = line[start:end], masked[start:end]
+        cuts = [i for i, c in enumerate(mchunk) if c == "&"]
+        pieces, last = [], 0
+        for cut in [*cuts, len(chunk)]:
+            pieces.append(chunk[last:cut])
+            last = cut + 1
+        ids = [nid for nid in (_ensure_node(fc, piece) for piece in pieces) if nid in fc.nodes]
+        groups.append(ids)
 
-    # Register nodes and create edges
-    node_ids: list[str] = []
-    for part in parts:
-        if part:
-            nid = _ensure_node(fc, part)
-            if nid:
-                node_ids.append(nid)
-
-    for i in range(len(node_ids) - 1):
-        label = labels[i] if i < len(labels) else ""
-        style = styles[i] if i < len(styles) else "solid"
-        fc.edges.append(Edge(src=node_ids[i], dst=node_ids[i + 1], label=label, style=style))
+    for i, op in enumerate(ops):
+        for src in groups[i]:
+            for dst in groups[i + 1]:
+                fc.edges.append(Edge(src, dst, op.label, op.style, op.head, op.tail))
 
 
 # ---------------------------------------------------------------------------
@@ -1252,7 +1304,7 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
         if node.shape in ("start", "end"):
             node.w = node.h = 20
             continue
-        lines = node.label.split("\n") if "\n" in node.label else node.label.split("<br>")
+        lines = re.split(r"<br\s*/?>|\n", node.label)
         max_chars = max(len(line) for line in lines)
         num_lines = len(lines)
 
@@ -1268,6 +1320,14 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             node.h = diameter
         elif node.shape == "hexagon":
             node.w = max(node.w + 24, 110)
+        elif node.shape in (
+            "parallelogram",
+            "parallelogram_alt",
+            "trapezoid",
+            "trapezoid_alt",
+            "flag",
+        ):
+            node.w += 2 * _SLANT_INSET
         elif node.shape == "cylinder":
             node.h = max(node.h + 16, 56)
 
@@ -1349,18 +1409,27 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     for nid in [n for n, node in fc.nodes.items() if node.shape == "dummy"]:
         del fc.nodes[nid]
 
-    # Compute subgraph bounding boxes
-    for sg in fc.subgraphs:
-        if not sg.node_ids:
+    # Subgraph frames: inner ones first so an outer frame can wrap its children
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+    sg_pad = 12
+    for sg in reversed(fc.subgraphs):
+        boxes = [
+            (member.x, member.y, member.x + member.w, member.y + member.h)
+            for nid in sg.node_ids
+            if (member := fc.nodes.get(nid)) is not None
+        ]
+        boxes += [
+            (c.x, c.y, c.x + c.w, c.y + c.h)
+            for cid in sg.children
+            if (c := by_id.get(cid)) is not None and c.w > 0
+        ]
+        if not boxes:
             continue
-        sg_nodes = [fc.nodes[nid] for nid in sg.node_ids if nid in fc.nodes]
-        if not sg_nodes:
-            continue
-        sg_pad = 12
-        sg.x = min(n.x for n in sg_nodes) - sg_pad
-        sg.y = min(n.y for n in sg_nodes) - sg_pad - 18  # extra for label
-        sg.w = max(n.x + n.w for n in sg_nodes) - sg.x + sg_pad
-        sg.h = max(n.y + n.h for n in sg_nodes) - sg.y + sg_pad
+        x0 = min(b[0] for b in boxes) - sg_pad
+        y0 = min(b[1] for b in boxes) - sg_pad - 18  # room for the title
+        sg.x, sg.y = x0, y0
+        sg.w = max(b[2] for b in boxes) + sg_pad - x0
+        sg.h = max(b[3] for b in boxes) + sg_pad - y0
 
 
 # ---------------------------------------------------------------------------
@@ -1375,17 +1444,40 @@ def _escape(text: str) -> str:
     )
 
 
-def _make_arrow_defs(t: dict[str, str], prefix: str = "") -> str:
-    """Generate SVG marker definitions for arrows."""
+def _color_suffix(color: str | None) -> str:
+    return "-" + re.sub(r"\W", "", color) if color else ""
+
+
+def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...] = ()) -> str:
+    """SVG marker definitions: arrow, thick arrow, circle and cross ends (+ start variants).
+
+    Markers use fixed user-space sizes so arrowheads look the same on thin and thick
+    lines, and one set is emitted per distinct edge colour.
+    """
     muted = t.get("muted", "#5d6d7e")
-    return f"""<defs>
-  <marker id="{prefix}arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <polygon points="0 0, 8 3, 0 6" fill="{muted}"/>
-  </marker>
-  <marker id="{prefix}arr-thick" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-    <polygon points="0 0, 10 3.5, 0 7" fill="{muted}"/>
-  </marker>
-</defs>"""
+    out = ["<defs>"]
+    for color in (None, *colors):
+        c = color or muted
+        sfx = _color_suffix(color)
+        common = 'markerUnits="userSpaceOnUse" orient="auto"'
+        out += [
+            f'<marker id="{prefix}arr{sfx}" markerWidth="10" markerHeight="8" refX="9" refY="4" {common}>'
+            f'<polygon points="0 0.5, 9 4, 0 7.5" fill="{c}"/></marker>',
+            f'<marker id="{prefix}arr-thick{sfx}" markerWidth="13" markerHeight="10" refX="12" refY="5" {common}>'
+            f'<polygon points="0 0.5, 12 5, 0 9.5" fill="{c}"/></marker>',
+            f'<marker id="{prefix}arr-s{sfx}" markerWidth="10" markerHeight="8" refX="1" refY="4" {common}>'
+            f'<polygon points="10 0.5, 1 4, 10 7.5" fill="{c}"/></marker>',
+            f'<marker id="{prefix}circle{sfx}" markerWidth="10" markerHeight="10" refX="9" refY="5" {common}>'
+            f'<circle cx="5" cy="5" r="3.6" fill="#ffffff" stroke="{c}" stroke-width="1.4"/></marker>',
+            f'<marker id="{prefix}circle-s{sfx}" markerWidth="10" markerHeight="10" refX="1" refY="5" {common}>'
+            f'<circle cx="5" cy="5" r="3.6" fill="#ffffff" stroke="{c}" stroke-width="1.4"/></marker>',
+            f'<marker id="{prefix}cross{sfx}" markerWidth="10" markerHeight="10" refX="9" refY="5" {common}>'
+            f'<path d="M2 2 L8 8 M8 2 L2 8" stroke="{c}" stroke-width="1.6" fill="none"/></marker>',
+            f'<marker id="{prefix}cross-s{sfx}" markerWidth="10" markerHeight="10" refX="1" refY="5" {common}>'
+            f'<path d="M2 2 L8 8 M8 2 L2 8" stroke="{c}" stroke-width="1.6" fill="none"/></marker>',
+        ]
+    out.append("</defs>")
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -1421,7 +1513,8 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     width = max(max_x, 200)
     height = max(max_y, 100)
 
-    parts.append(_make_arrow_defs(t))
+    edge_colors = tuple(sorted({e.css["stroke"] for e in fc.edges if "stroke" in e.css}))
+    parts.append(_make_arrow_defs(t, colors=edge_colors))
     parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
 
     # Draw subgraphs (behind everything)
@@ -1450,6 +1543,7 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
                 fc.waypoints.get(edge_idx),
                 ports.get((edge_idx, "out")),
                 ports.get((edge_idx, "in")),
+                edge,
             )
         )
 
@@ -1466,7 +1560,7 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
 
 
 def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
-    """Render a subgraph background rectangle with label."""
+    """Render a subgraph frame: a softly tinted panel with its title."""
     if sg.w <= 0 or sg.h <= 0:
         return ""
     font = t.get("font", DEFAULT_THEME["font"])
@@ -1474,14 +1568,67 @@ def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
     stroke = t.get("subgraph_stroke", "#dee2e6")
     label_color = t.get("subgraph_label", "#495057")
 
-    parts = [
-        f'<rect x="{sg.x}" y="{sg.y}" width="{sg.w}" height="{sg.h}" '
-        f'rx="6" fill="{fill}" stroke="{stroke}" stroke-width="1.2" stroke-dasharray="4 2"/>',
-        f'<text x="{sg.x + 8}" y="{sg.y + 14}" '
-        f'font-family="{font}" font-size="10" font-weight="700" '
-        f'fill="{label_color}">{_escape(sg.label)}</text>',
-    ]
-    return "\n".join(parts)
+    return "\n".join(
+        [
+            f'<rect x="{sg.x}" y="{sg.y}" width="{sg.w}" height="{sg.h}" '
+            f'rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1"/>',
+            f'<text x="{sg.x + 10}" y="{sg.y + 15}" '
+            f'font-family="{font}" font-size="10" font-weight="700" '
+            f'fill="{label_color}">{_escape(sg.label)}</text>',
+        ]
+    )
+
+
+_SHADOW_SHAPES = ("rect", "rounded", "stadium", "subroutine")
+_SLANT_INSET = 14.0
+
+
+def _node_polygon(node: Node) -> str | None:
+    """Vertex list for polygon-shaped nodes (None for other shapes)."""
+    x, y, w, h = node.x, node.y, node.w, node.h
+    cy = y + h / 2
+    i = _SLANT_INSET
+    pts: list[tuple[float, float]] | None = {
+        "diamond": [(x + w / 2, y), (x + w, cy), (x + w / 2, y + h), (x, cy)],
+        "hexagon": [
+            (x + 12, y),
+            (x + w - 12, y),
+            (x + w, cy),
+            (x + w - 12, y + h),
+            (x + 12, y + h),
+            (x, cy),
+        ],
+        "parallelogram": [(x + i, y), (x + w, y), (x + w - i, y + h), (x, y + h)],
+        "parallelogram_alt": [(x, y), (x + w - i, y), (x + w, y + h), (x + i, y + h)],
+        "trapezoid": [(x + i, y), (x + w - i, y), (x + w, y + h), (x, y + h)],
+        "trapezoid_alt": [(x, y), (x + w, y), (x + w - i, y + h), (x + i, y + h)],
+        "flag": [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x + i, cy)],
+    }.get(node.shape)
+    return " ".join(f"{px},{py}" for px, py in pts) if pts else None
+
+
+def _apply_node_css(parts: list[str], css: dict[str, str]) -> list[str]:
+    """Apply ``style`` / ``classDef`` overrides to a node's SVG elements."""
+    out: list[str] = []
+    for part in parts:
+        if 'fill-opacity="0.07"' in part:  # the soft shadow keeps its own look
+            out.append(part)
+            continue
+        if part.startswith("<text"):
+            if "color" in css:
+                part = re.sub(r'fill="[^"]*"', f'fill="{css["color"]}"', part, count=1)
+        else:
+            for prop in ("fill", "stroke", "stroke-width", "stroke-dasharray"):
+                if prop not in css or (prop == "stroke" and 'stroke="none"' in part):
+                    continue
+                if re.search(rf'(?<![\w-]){prop}="', part):
+                    part = re.sub(
+                        rf'(?<![\w-]){prop}="[^"]*"', f'{prop}="{css[prop]}"', part, count=1
+                    )
+                else:
+                    part = re.sub(r"/>$", f' {prop}="{css[prop]}"/>', part)
+        out.append(part)
+    return out
 
 
 def _render_node(node: Node, t: dict[str, str]) -> str:
@@ -1490,6 +1637,7 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     cx = node.x + node.w / 2
     cy = node.y + node.h / 2
     parts: list[str] = []
+    sw = 1.5
 
     if node.shape in ("start", "end"):
         primary = t.get("primary", "#1b4f72")
@@ -1500,116 +1648,53 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
         return "\n".join(parts)
 
     if node.shape == "diamond":
-        fill = t.get("diamond_fill", "#fef5e7")
-        stroke = t.get("diamond_stroke", "#e67e22")
-        points = f"{cx},{node.y} {node.x + node.w},{cy} {cx},{node.y + node.h} {node.x},{cy}"
+        fill, stroke = t["diamond_fill"], t["diamond_stroke"]
+    else:
+        fill, stroke = t["node_fill"], t["node_stroke"]
+    style = f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}"'
+
+    corner = {"rect": 6, "rounded": 12, "subroutine": 4, "stadium": node.h / 2}.get(node.shape)
+    if node.shape in _SHADOW_SHAPES:
         parts.append(
-            f'<polygon points="{points}" fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
+            f'<rect x="{node.x + 1.2}" y="{node.y + 2}" width="{node.w}" height="{node.h}" '
+            f'rx="{corner}" fill="#000000" fill-opacity="0.07"/>'
         )
 
-    elif node.shape == "stadium":
-        fill = t.get("stadium_fill", "#eaf5ea")
-        stroke = t.get("stadium_stroke", "#27ae60")
-        r = node.h / 2
-        parts.append(
-            f'<rect x="{node.x}" y="{node.y}" width="{node.w}" height="{node.h}" '
-            f'rx="{r}" fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
-
-    elif node.shape == "rounded":
-        fill = t.get("rounded_fill", "#e8f0fe")
-        stroke = t.get("rounded_stroke", "#2e86c1")
-        parts.append(
-            f'<rect x="{node.x}" y="{node.y}" width="{node.w}" height="{node.h}" '
-            f'rx="12" fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
-
+    poly = _node_polygon(node)
+    if poly:
+        parts.append(f'<polygon points="{poly}" {style} stroke-linejoin="round"/>')
     elif node.shape == "circle":
-        fill = t.get("circle_fill", "#fce4ec")
-        stroke = t.get("circle_stroke", "#c62828")
         r = min(node.w, node.h) / 2
-        parts.append(
-            f'<circle cx="{cx}" cy="{cy}" r="{r}" '
-            f'fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
-
+        parts.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" {style}/>')
     elif node.shape == "cylinder":
-        fill = t.get("cylinder_fill", "#e0f2f1")
-        stroke = t.get("cylinder_stroke", "#00796b")
         ry = 8  # ellipse cap height
         body_top = node.y + ry
         body_h = node.h - 2 * ry
-        # Body rectangle
         parts.append(
             f'<rect x="{node.x}" y="{body_top}" width="{node.w}" height="{body_h}" '
             f'fill="{fill}" stroke="none"/>'
         )
-        # Side lines
-        parts.append(
-            f'<line x1="{node.x}" y1="{body_top}" x2="{node.x}" y2="{body_top + body_h}" '
-            f'stroke="{stroke}" stroke-width="1.8"/>'
-        )
-        parts.append(
-            f'<line x1="{node.x + node.w}" y1="{body_top}" x2="{node.x + node.w}" y2="{body_top + body_h}" '
-            f'stroke="{stroke}" stroke-width="1.8"/>'
-        )
-        # Top ellipse (filled)
-        parts.append(
-            f'<ellipse cx="{cx}" cy="{body_top}" rx="{node.w / 2}" ry="{ry}" '
-            f'fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
-        # Bottom ellipse (half visible)
-        parts.append(
-            f'<ellipse cx="{cx}" cy="{body_top + body_h}" rx="{node.w / 2}" ry="{ry}" '
-            f'fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
-
-    elif node.shape == "hexagon":
-        fill = t.get("hexagon_fill", "#fff3e0")
-        stroke = t.get("hexagon_stroke", "#e65100")
-        inset = 12
-        points = (
-            f"{node.x + inset},{node.y} "
-            f"{node.x + node.w - inset},{node.y} "
-            f"{node.x + node.w},{cy} "
-            f"{node.x + node.w - inset},{node.y + node.h} "
-            f"{node.x + inset},{node.y + node.h} "
-            f"{node.x},{cy}"
-        )
-        parts.append(
-            f'<polygon points="{points}" fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
-
-    elif node.shape == "subroutine":
-        fill = t.get("subroutine_fill", "#f3e5f5")
-        stroke = t.get("subroutine_stroke", "#7b1fa2")
+        for lx in (node.x, node.x + node.w):
+            parts.append(
+                f'<line x1="{lx}" y1="{body_top}" x2="{lx}" y2="{body_top + body_h}" '
+                f'stroke="{stroke}" stroke-width="{sw}"/>'
+            )
+        for ey in (body_top, body_top + body_h):
+            parts.append(f'<ellipse cx="{cx}" cy="{ey}" rx="{node.w / 2}" ry="{ry}" {style}/>')
+    else:  # rect / rounded / stadium / subroutine
         parts.append(
             f'<rect x="{node.x}" y="{node.y}" width="{node.w}" height="{node.h}" '
-            f'rx="4" fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
+            f'rx="{corner if corner is not None else 6}" {style}/>'
         )
-        # Double vertical lines inset
-        inset = 8
-        parts.append(
-            f'<line x1="{node.x + inset}" y1="{node.y}" '
-            f'x2="{node.x + inset}" y2="{node.y + node.h}" '
-            f'stroke="{stroke}" stroke-width="1"/>'
-        )
-        parts.append(
-            f'<line x1="{node.x + node.w - inset}" y1="{node.y}" '
-            f'x2="{node.x + node.w - inset}" y2="{node.y + node.h}" '
-            f'stroke="{stroke}" stroke-width="1"/>'
-        )
-
-    else:  # rect (default)
-        fill = t.get("node_fill", "#d6eaf8")
-        stroke = t.get("node_stroke", "#1b4f72")
-        parts.append(
-            f'<rect x="{node.x}" y="{node.y}" width="{node.w}" height="{node.h}" '
-            f'rx="6" fill="{fill}" stroke="{stroke}" stroke-width="1.8"/>'
-        )
+        if node.shape == "subroutine":
+            for lx in (node.x + 8, node.x + node.w - 8):
+                parts.append(
+                    f'<line x1="{lx}" y1="{node.y}" x2="{lx}" y2="{node.y + node.h}" '
+                    f'stroke="{stroke}" stroke-width="1"/>'
+                )
 
     # Label (support multi-line via \n or <br>)
-    label = node.label.replace("<br>", "\n")
+    label = re.sub(r"<br\s*/?>", "\n", node.label)
     lines = label.split("\n")
     line_height = 14
     start_y = cy - (len(lines) - 1) * line_height / 2
@@ -1622,6 +1707,8 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
             f'fill="{t.get("body", "#1a1a2e")}">{_escape(line_text.strip())}</text>'
         )
 
+    if node.css:
+        parts = _apply_node_css(parts, node.css)
     return "\n".join(parts)
 
 
@@ -1682,6 +1769,25 @@ def _assign_ports(fc: Flowchart) -> dict[tuple[int, str], _Port]:
     return ports
 
 
+def _round_polyline(pts: list[tuple[float, float]], radius: float = 7.0) -> str:
+    """SVG path through ``pts`` with the corners rounded (never past half a segment)."""
+    clean = [pts[0]]
+    for pt in pts[1:]:
+        if abs(pt[0] - clean[-1][0]) > 0.01 or abs(pt[1] - clean[-1][1]) > 0.01:
+            clean.append(pt)
+    d = f"M {clean[0][0]:g},{clean[0][1]:g}"
+    for prev, vert, nxt in zip(clean, clean[1:], clean[2:]):
+        d1 = math.hypot(prev[0] - vert[0], prev[1] - vert[1])
+        d2 = math.hypot(nxt[0] - vert[0], nxt[1] - vert[1])
+        r = min(radius, d1 / 2, d2 / 2)
+        a = (vert[0] + (prev[0] - vert[0]) * r / d1, vert[1] + (prev[1] - vert[1]) * r / d1)
+        b = (vert[0] + (nxt[0] - vert[0]) * r / d2, vert[1] + (nxt[1] - vert[1]) * r / d2)
+        d += f" L {a[0]:g},{a[1]:g} Q {vert[0]:g},{vert[1]:g} {b[0]:g},{b[1]:g}"
+    if len(clean) > 1:
+        d += f" L {clean[-1][0]:g},{clean[-1][1]:g}"
+    return d
+
+
 def _routed_path(
     src: Node,
     dst: Node,
@@ -1724,7 +1830,7 @@ def _routed_path(
 
     pts = [start, *via, end]
     last = len(pts) - 2
-    d = f"M {pts[0][0]},{pts[0][1]}"
+    verts = [pts[0]]
     mid = 0.0
     straight_only = True
     for k, (p, q) in enumerate(zip(pts, pts[1:])):
@@ -1735,12 +1841,11 @@ def _routed_path(
         if k == last:
             mid -= direction * in_port.away
         if abs(p[mx] - q[mx]) < 1.5 and len(pts) == 2:
-            d += f" L {q[0]},{q[1]}"
+            verts.append(q)
             continue
         straight_only = False
-        a1 = pt(mid, p[mx])
-        a2 = pt(mid, q[mx])
-        d += f" L {a1[0]},{a1[1]} L {a2[0]},{a2[1]} L {q[0]},{q[1]}"
+        verts += [pt(mid, p[mx]), pt(mid, q[mx]), q]
+    d = _round_polyline(verts)
 
     if straight_only:
         return d, None
@@ -1762,23 +1867,34 @@ def _render_edge(
     via: list[tuple[float, float]] | None = None,
     out_port: _Port | None = None,
     in_port: _Port | None = None,
+    edge: Edge | None = None,
 ) -> str:
     """Render an edge between two nodes."""
     font = t.get("font", DEFAULT_THEME["font"])
     muted = t.get("muted", "#5d6d7e")
     parts: list[str] = []
+    css = edge.css if edge else {}
+    head = "none" if style == "none" else (edge.head if edge else "arrow")
+    tail = edge.tail if edge else "none"
 
-    # Edge styling
-    stroke_attrs = f'stroke="{muted}" stroke-width="1.5" fill="none"'
-    marker = ' marker-end="url(#arr)"'
-
+    stroke = css.get("stroke", muted)
+    width = css.get("stroke-width", "3" if style == "thick" else "1.5")
+    stroke_attrs = f'stroke="{stroke}" stroke-width="{width}" fill="none"'
     if style == "dotted":
-        stroke_attrs = f'stroke="{muted}" stroke-width="1.5" fill="none" stroke-dasharray="5 3"'
-    elif style == "thick":
-        stroke_attrs = f'stroke="{muted}" stroke-width="3" fill="none"'
-        marker = ' marker-end="url(#arr-thick)"'
-    elif style == "none":
-        marker = ""  # no arrowhead
+        stroke_attrs += ' stroke-dasharray="5 3"'
+    if "stroke-dasharray" in css:
+        stroke_attrs += f' stroke-dasharray="{css["stroke-dasharray"]}"'
+    stroke_attrs += ' stroke-linejoin="round"'
+
+    sfx = _color_suffix(css.get("stroke"))
+
+    def marker_id(kind: str, start: bool = False) -> str:
+        base = {"arrow": "arr-thick" if style == "thick" and not start else "arr"}.get(kind, kind)
+        return f"{base}{'-s' if start else ''}{sfx}"
+
+    marker = f' marker-end="url(#{marker_id(head)})"' if head != "none" else ""
+    if tail != "none":
+        marker += f' marker-start="url(#{marker_id(tail, True)})"'
 
     is_h = direction in ("LR", "RL")
     d, label_xy = _routed_path(src, dst, via or [], is_h, label, out_port, in_port, lane)
@@ -2959,8 +3075,45 @@ _MERMAID_BLOCK_RE = re.compile(
 )
 
 
+class UnsupportedDiagramError(ValueError):
+    """Raised for Mermaid diagram types this renderer cannot draw."""
+
+
+# Mermaid diagram keywords with no renderer here; the original code block is kept.
+_UNSUPPORTED_TYPES = (
+    "classDiagram",
+    "journey",
+    "gitGraph",
+    "quadrantChart",
+    "requirementDiagram",
+    "sankey",
+    "block",
+    "packet",
+    "kanban",
+    "architecture",
+    "C4Context",
+    "C4Container",
+    "C4Component",
+    "C4Dynamic",
+    "C4Deployment",
+    "zenuml",
+    "radar",
+    "treemap",
+)
+
+
+def _strip_preamble(source: str) -> str:
+    """Drop a YAML front-matter block and ``%%{init: ...}%%`` directives before the diagram."""
+    text = source.strip()
+    fm = re.match(r"^---\s*\n.*?\n---[ \t]*\n", text + "\n", re.DOTALL)
+    if fm:
+        text = text[fm.end() :]
+    return re.sub(r"^\s*%%\{.*?\}%%[ \t]*\n?", "", text, flags=re.DOTALL).strip()
+
+
 def _detect_diagram_type(source: str) -> str:
     """Detect the diagram type from Mermaid source."""
+    source = _strip_preamble(source)
     for line in source.strip().splitlines():
         line = line.strip()
         if not line or line.startswith("%%"):
@@ -2981,16 +3134,14 @@ def _detect_diagram_type(source: str) -> str:
             return "timeline"
         if re.match(r"^mindmap\b", line, re.IGNORECASE):
             return "mindmap"
-        if re.match(r"^classDiagram\b", line, re.IGNORECASE):
-            return "class"
+        if re.match(rf"^(?:{'|'.join(_UNSUPPORTED_TYPES)})\b", line, re.IGNORECASE):
+            return "unsupported"
         if re.match(r"^stateDiagram", line, re.IGNORECASE):
             return "state"
         if re.match(r"^erDiagram\b", line, re.IGNORECASE):
             return "er"
         if re.match(r"^gantt\b", line, re.IGNORECASE):
             return "gantt"
-        if re.match(r"^journey\b", line, re.IGNORECASE):
-            return "journey"
         break
     return "flowchart"  # default
 
@@ -3001,8 +3152,12 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
     Dispatches on the detected diagram type. Used by both the HTML pipeline
     (PDF) and the docx builder (which rasterizes the SVG for embedding).
     """
+    source = _strip_preamble(source)
     diagram_type = _detect_diagram_type(source)
 
+    if diagram_type == "unsupported":
+        kind = source.split(None, 1)[0] if source else "diagram"
+        raise UnsupportedDiagramError(f"'{kind}' diagrams are not supported")
     if diagram_type == "pie":
         return render_pie_svg(parse_pie(source), theme)
     elif diagram_type == "donut":
@@ -3047,7 +3202,11 @@ def process_html(html: str, theme: dict[str, str] | None = None) -> str:
 
     def _replace(m: re.Match) -> str:
         source = _unescape_mermaid_source(m.group(1))
-        svg = render_to_svg(source, theme)
+        try:
+            svg = render_to_svg(source, theme)
+        except UnsupportedDiagramError as exc:
+            logger.warning("Mermaid: %s; leaving the source as a code block", exc)
+            return m.group(0)
         return f'<div class="mermaid-diagram" style="text-align:center;margin:8pt 0 12pt 0;">{svg}</div>'
 
     return _MERMAID_BLOCK_RE.sub(_replace, html)
