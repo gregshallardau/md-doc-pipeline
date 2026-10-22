@@ -208,3 +208,56 @@ def test_lr_branches_are_ordered_without_overlap():
     )
     m.layout(fc)
     assert _overlaps(fc) == []
+
+
+_DENSE = """flowchart TD
+    A[Request] --> B{Auth?}
+    B -->|ok| C[Load profile]
+    B -->|fail| D[Reject]
+    C --> E[Fetch orders]
+    C --> F[Fetch prefs]
+    C --> G[Fetch billing]
+    E --> H[Merge]
+    F --> H
+    G --> H
+    E --> I[Recommend]
+    F --> I
+    H --> J{Valid?}
+    I --> J
+    J -->|yes| K[Render]
+    J -->|no| L[Fallback]
+    L --> K
+    K --> M[Respond]
+    D --> M
+    A --> M
+    G --> K
+    L --> C
+"""
+
+
+def test_dense_chart_ordering_reduces_crossings():
+    fc = m.parse(_DENSE)
+    m.layout(fc)
+    assert fc.crossings <= 3
+    assert fc.crossings < fc.crossings_unordered
+    assert _overlaps(fc) == []
+
+
+def test_edges_leaving_one_node_use_separate_ports():
+    svg = m.render_to_svg("flowchart TD\n A --> B\n A --> C\n A --> D\n A --> E")
+    starts = {
+        line.split('d="M ')[1].split(" L")[0]
+        for line in svg.splitlines()
+        if line.startswith("<path") and "arr" in line
+    }
+    assert len(starts) == 4  # each edge leaves from its own point on the node
+
+
+def test_branch_turns_are_staggered():
+    svg = m.render_to_svg("flowchart TD\n A --> B\n A --> C\n A --> D\n A --> E")
+    turns = {
+        line.split(" L ")[1].split(",")[1]
+        for line in svg.splitlines()
+        if line.startswith("<path") and "arr" in line
+    }
+    assert len(turns) >= 3  # horizontal runs sit at different heights, not one trunk

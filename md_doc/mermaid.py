@@ -85,6 +85,8 @@ class Flowchart:
     subgraphs: list[Subgraph] = field(default_factory=list)
     # edge index -> lane points (node-centre coordinates) for edges that span levels
     waypoints: dict[int, list[tuple[float, float]]] = field(default_factory=dict)
+    crossings: int = 0  # edge crossings between adjacent levels after ordering
+    crossings_unordered: int = 0  # same, before ordering (for comparison)
 
 
 @dataclass
@@ -1067,6 +1069,86 @@ def _compute_levels(fc: Flowchart) -> dict[str, int]:
     return levels
 
 
+def _crossings_between(
+    upper: list[str], lower: list[str], children_map: dict[str, list[str]]
+) -> int:
+    """Count edge crossings between two adjacent levels for the given orderings."""
+    pos = {n: i for i, n in enumerate(lower)}
+    edges = [(i, pos[c]) for i, u in enumerate(upper) for c in children_map.get(u, []) if c in pos]
+    return sum(
+        1
+        for a in range(len(edges))
+        for b in range(a + 1, len(edges))
+        if (edges[a][0] - edges[b][0]) * (edges[a][1] - edges[b][1]) < 0
+    )
+
+
+def _total_crossings(order: dict[int, list[str]], children_map: dict[str, list[str]]) -> int:
+    lv = sorted(order)
+    return sum(_crossings_between(order[a], order[b], children_map) for a, b in zip(lv, lv[1:]))
+
+
+def _minimize_crossings(
+    level_groups: dict[int, list[str]],
+    children_map: dict[str, list[str]],
+    parents_map: dict[str, list[str]],
+) -> dict[int, list[str]]:
+    """Order the nodes within each level to reduce edge crossings.
+
+    Alternating barycentre sweeps (down by parents, up by children) followed by
+    adjacent-swap refinement; the best ordering seen is kept.
+    """
+    order = {lvl: list(nids) for lvl, nids in level_groups.items()}
+    levels = sorted(order)
+    best = {lvl: list(nids) for lvl, nids in order.items()}
+    best_count = _total_crossings(order, children_map)
+
+    def local(lvl: int) -> int:
+        total = 0
+        if lvl - 1 in order:
+            total += _crossings_between(order[lvl - 1], order[lvl], children_map)
+        if lvl + 1 in order:
+            total += _crossings_between(order[lvl], order[lvl + 1], children_map)
+        return total
+
+    for sweep in range(24):
+        if best_count == 0:
+            break
+        down = sweep % 2 == 0
+        step = 1 if down else -1
+        for lvl in levels[1:] if down else reversed(levels[:-1]):
+            ref = {n: i for i, n in enumerate(order[lvl - step])}
+            nbrs = parents_map if down else children_map
+            here = {n: i for i, n in enumerate(order[lvl])}
+
+            def _bary(
+                n: str, ref: dict[str, int] = ref, here: dict[str, int] = here, nbrs=nbrs
+            ) -> float:
+                ks = [ref[x] for x in nbrs.get(n, []) if x in ref]
+                return sum(ks) / len(ks) if ks else float(here[n])
+
+            order[lvl].sort(key=_bary)
+
+        improved = True
+        while improved:
+            improved = False
+            for lvl in levels:
+                row = order[lvl]
+                for i in range(len(row) - 1):
+                    before = local(lvl)
+                    row[i], row[i + 1] = row[i + 1], row[i]
+                    if local(lvl) < before:
+                        improved = True
+                    else:
+                        row[i], row[i + 1] = row[i + 1], row[i]
+
+        count = _total_crossings(order, children_map)
+        if count < best_count:
+            best = {lvl: list(nids) for lvl, nids in order.items()}
+            best_count = count
+    return best
+
+
 def _layout_layered(
     fc: Flowchart,
     levels: dict[str, int],
@@ -1076,7 +1158,7 @@ def _layout_layered(
     horizontal: bool,
     padding: float,
     gap: float,
-) -> None:
+) -> int:
     """Place nodes level by level, minimising crossings and overlaps.
 
     ``major_pos`` is the position of each level along the flow axis. Within a
@@ -1098,20 +1180,8 @@ def _layout_layered(
             if levels.get(src, 0) < levels.get(k, 0):
                 parents_map[k].append(src)
 
-    order: dict[int, list[str]] = {}
-    index: dict[str, int] = {}
-    for lvl in sorted(level_groups):
-        nids = list(level_groups[lvl])
-        if lvl > 0:
-
-            def _bary(n: str, nids: list[str] = nids) -> float:
-                ps = [index[p] for p in parents_map.get(n, []) if p in index]
-                return sum(ps) / len(ps) if ps else float(nids.index(n))
-
-            nids.sort(key=_bary)
-        order[lvl] = nids
-        for i, n in enumerate(nids):
-            index[n] = i
+    order = _minimize_crossings(level_groups, children_map, parents_map)
+    crossings = _total_crossings(order, children_map)
 
     center: dict[str, float] = {}
 
@@ -1167,6 +1237,7 @@ def _layout_layered(
             node.x, node.y = major_pos[levels[n]], pos
         else:
             node.x, node.y = pos, major_pos[levels[n]]
+    return crossings
 
 
 def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
@@ -1264,9 +1335,11 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             major_pos[lvl] = cursor
             cursor += max(fc.nodes[n].h for n in level_groups[lvl]) + gap_major
 
-    _layout_layered(
+    baseline = _total_crossings(level_groups, children_map)
+    fc.crossings = _layout_layered(
         fc, levels, level_groups, children_map, major_pos, is_horizontal, padding, gap_minor
     )
+    fc.crossings_unordered = baseline
 
     # Hand the lane positions to the edge router and drop the helper nodes
     fc.waypoints = {
@@ -1356,6 +1429,7 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         parts.append(_render_subgraph(sg, t))
 
     # Draw edges (behind nodes)
+    ports = _assign_ports(fc)
     for edge_idx, edge in enumerate(fc.edges):
         src = fc.nodes.get(edge.src)
         dst = fc.nodes.get(edge.dst)
@@ -1366,7 +1440,16 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
             lane = -7.0 if edge.src < edge.dst else 7.0
         parts.append(
             _render_edge(
-                src, dst, edge.label, fc.direction, t, edge.style, lane, fc.waypoints.get(edge_idx)
+                src,
+                dst,
+                edge.label,
+                fc.direction,
+                t,
+                edge.style,
+                lane,
+                fc.waypoints.get(edge_idx),
+                ports.get((edge_idx, "out")),
+                ports.get((edge_idx, "in")),
             )
         )
 
@@ -1542,38 +1625,125 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
+_PORT_SHAPES = ("rect", "rounded", "stadium", "subroutine")
+_PORT_STEP = 5.0  # spacing between staggered edge turns
+
+
+@dataclass
+class _Port:
+    """Where an edge meets a node side, and how far out its turn is staggered."""
+
+    offset: float = 0.0  # shift along the node side
+    away: float = 0.0  # stagger of the turn, measured away from the node
+
+
+def _assign_ports(fc: Flowchart) -> dict[tuple[int, str], _Port]:
+    """Spread the edges meeting each node side across it, ordered by where they go.
+
+    Edges are sorted by the position of their far end so fanned-out lines don't
+    cross their neighbours, and the one reaching furthest turns closest to the
+    node, so branches nest instead of overlapping on a shared trunk.
+    """
+    horizontal = fc.direction in ("LR", "RL")
+
+    def major(n: Node) -> float:
+        return n.x + n.w / 2 if horizontal else n.y + n.h / 2
+
+    def minor(pt: tuple[float, float]) -> float:
+        return pt[1] if horizontal else pt[0]
+
+    groups: dict[tuple[str, str], list[tuple[int, str, float]]] = defaultdict(list)
+    for i, e in enumerate(fc.edges):
+        src, dst = fc.nodes.get(e.src), fc.nodes.get(e.dst)
+        if not src or not dst or abs(major(src) - major(dst)) < 1:
+            continue
+        via = fc.waypoints.get(i)
+        src_c = (src.x + src.w / 2, src.y + src.h / 2)
+        dst_c = (dst.x + dst.w / 2, dst.y + dst.h / 2)
+        fwd = major(src) < major(dst)
+        out_far = minor(via[0]) if via else minor(dst_c)
+        in_far = minor(via[-1]) if via else minor(src_c)
+        groups[(e.src, "a" if fwd else "b")].append((i, "out", out_far))
+        groups[(e.dst, "b" if fwd else "a")].append((i, "in", in_far))
+
+    ports: dict[tuple[int, str], _Port] = {}
+    for (nid, _side), items in groups.items():
+        node = fc.nodes[nid]
+        centre = minor((node.x + node.w / 2, node.y + node.h / 2))
+        extent = node.h if horizontal else node.w
+        n = len(items)
+        ranked = sorted(items, key=lambda it: -abs(it[2] - centre))
+        away = {(it[0], it[1]): k * _PORT_STEP for k, it in enumerate(ranked)}
+        for k, (i, role, _far) in enumerate(sorted(items, key=lambda it: (it[2], it[0]))):
+            offset = 0.0
+            if node.shape in _PORT_SHAPES and n > 1:
+                offset = ((k + 1) / (n + 1) - 0.5) * extent * 0.8
+            ports[(i, role)] = _Port(offset, away[(i, role)] - (n - 1) * _PORT_STEP / 2)
+    return ports
+
+
 def _routed_path(
     src: Node,
     dst: Node,
     via: list[tuple[float, float]],
     horizontal: bool,
     label: str,
+    out_port: _Port | None = None,
+    in_port: _Port | None = None,
+    lane: float = 0.0,
 ) -> tuple[str, tuple[float, float] | None]:
-    """Orthogonal path from ``src`` to ``dst`` passing through the lane points ``via``.
+    """Orthogonal path from ``src`` to ``dst``, through the lane points ``via``.
 
-    Returns the SVG path data and the position for the edge label, which sits on
-    the final segment so it never lands on another edge's trunk.
+    Returns the SVG path data and a position for the edge label (``None`` when
+    the edge is a straight line, so the caller uses the midpoint). The label sits
+    on the final segment so it never lands on another edge's trunk.
     """
-    if horizontal:
-        fwd = src.x + src.w / 2 <= dst.x + dst.w / 2
-        start = (src.x + (src.w if fwd else 0), src.y + src.h / 2)
-        end = (dst.x + (0 if fwd else dst.w), dst.y + dst.h / 2)
-    else:
-        fwd = src.y + src.h / 2 <= dst.y + dst.h / 2
-        start = (src.x + src.w / 2, src.y + (src.h if fwd else 0))
-        end = (dst.x + dst.w / 2, dst.y + (0 if fwd else dst.h))
+    out_port, in_port = out_port or _Port(), in_port or _Port()
+    sc = (src.x + src.w / 2, src.y + src.h / 2)
+    dc = (dst.x + dst.w / 2, dst.y + dst.h / 2)
+    ax = 0 if horizontal else 1  # flow axis index (0 = x, 1 = y)
+    mx = 1 - ax  # minor axis index
+
+    def pt(major: float, minor: float) -> tuple[float, float]:
+        return (major, minor) if horizontal else (minor, major)
+
+    same_row = abs(sc[ax] - dc[ax]) < 1
+    if same_row:  # side to side along the minor axis
+        right = sc[mx] <= dc[mx]
+        extent_s = src.h if horizontal else src.w
+        extent_d = dst.h if horizontal else dst.w
+        start = pt(sc[ax], sc[mx] + (extent_s / 2 if right else -extent_s / 2))
+        end = pt(dc[ax], dc[mx] + (-extent_d / 2 if right else extent_d / 2))
+        return f"M {start[0]},{start[1]} L {end[0]},{end[1]}", None
+
+    fwd = sc[ax] < dc[ax]
+    half_s = (src.w if horizontal else src.h) / 2
+    half_d = (dst.w if horizontal else dst.h) / 2
+    start = pt(sc[ax] + (half_s if fwd else -half_s), sc[mx] + out_port.offset + lane)
+    end = pt(dc[ax] + (-half_d if fwd else half_d), dc[mx] + in_port.offset + lane)
 
     pts = [start, *via, end]
+    last = len(pts) - 2
     d = f"M {pts[0][0]},{pts[0][1]}"
     mid = 0.0
-    for (px, py), (qx, qy) in zip(pts, pts[1:]):
-        if horizontal:
-            mid = (px + qx) / 2
-            d += f" L {mid},{py} L {mid},{qy} L {qx},{qy}"
-        else:
-            mid = (py + qy) / 2
-            d += f" L {px},{mid} L {qx},{mid} L {qx},{qy}"
+    straight_only = True
+    for k, (p, q) in enumerate(zip(pts, pts[1:])):
+        direction = 1.0 if q[ax] >= p[ax] else -1.0
+        mid = (p[ax] + q[ax]) / 2 + lane
+        if k == 0:
+            mid += direction * out_port.away
+        if k == last:
+            mid -= direction * in_port.away
+        if abs(p[mx] - q[mx]) < 1.5 and len(pts) == 2:
+            d += f" L {q[0]},{q[1]}"
+            continue
+        straight_only = False
+        a1 = pt(mid, p[mx])
+        a2 = pt(mid, q[mx])
+        d += f" L {a1[0]},{a1[1]} L {a2[0]},{a2[1]} L {q[0]},{q[1]}"
 
+    if straight_only:
+        return d, None
     if horizontal:
         label_xy = ((mid + end[0]) / 2, end[1] - 5)
     else:
@@ -1590,6 +1760,8 @@ def _render_edge(
     style: str = "solid",
     lane: float = 0.0,
     via: list[tuple[float, float]] | None = None,
+    out_port: _Port | None = None,
+    in_port: _Port | None = None,
 ) -> str:
     """Render an edge between two nodes."""
     font = t.get("font", DEFAULT_THEME["font"])
@@ -1609,49 +1781,8 @@ def _render_edge(
         marker = ""  # no arrowhead
 
     is_h = direction in ("LR", "RL")
-    label_xy: tuple[float, float] | None = None  # set for elbow edges
-
-    if via:
-        d, label_xy = _routed_path(src, dst, via, is_h, label)
-        parts.append(f'<path d="{d}" {stroke_attrs}{marker}/>')
-    elif is_h:
-        if src.x + src.w / 2 < dst.x + dst.w / 2:
-            x1, y1 = src.x + src.w, src.y + src.h / 2
-            x2, y2 = dst.x, dst.y + dst.h / 2
-        else:
-            x1, y1 = src.x, src.y + src.h / 2
-            x2, y2 = dst.x + dst.w, dst.y + dst.h / 2
-        y1 += lane
-        y2 += lane
-
-        if abs(y1 - y2) < 2:
-            parts.append(f'<path d="M {x1},{y1} L {x2},{y2}" {stroke_attrs}{marker}/>')
-        else:
-            mid_x = (x1 + x2) / 2 + lane
-            parts.append(
-                f'<path d="M {x1},{y1} L {mid_x},{y1} L {mid_x},{y2} L {x2},{y2}" '
-                f"{stroke_attrs}{marker}/>"
-            )
-            label_xy = ((mid_x + x2) / 2, y2 - 5)
-    else:
-        if src.y + src.h / 2 < dst.y + dst.h / 2:
-            x1, y1 = src.x + src.w / 2, src.y + src.h
-            x2, y2 = dst.x + dst.w / 2, dst.y
-        else:
-            x1, y1 = src.x + src.w / 2, src.y
-            x2, y2 = dst.x + dst.w / 2, dst.y + dst.h
-        x1 += lane
-        x2 += lane
-
-        if abs(x1 - x2) < 2:
-            parts.append(f'<path d="M {x1},{y1} L {x2},{y2}" {stroke_attrs}{marker}/>')
-        else:
-            mid_y = (y1 + y2) / 2 + lane
-            parts.append(
-                f'<path d="M {x1},{y1} L {x1},{mid_y} L {x2},{mid_y} L {x2},{y2}" '
-                f"{stroke_attrs}{marker}/>"
-            )
-            label_xy = (x2 + len(label) * 2.75 + 8, (mid_y + y2) / 2 + 3)
+    d, label_xy = _routed_path(src, dst, via or [], is_h, label, out_port, in_port, lane)
+    parts.append(f'<path d="{d}" {stroke_attrs}{marker}/>')
 
     # Edge label
     if label:
