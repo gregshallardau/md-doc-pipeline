@@ -41,7 +41,12 @@ from typing import Any
 from docx import Document
 from docx.enum.section import WD_ORIENT, WD_SECTION_START
 from docx.enum.table import WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
+from docx.enum.text import (
+    WD_ALIGN_PARAGRAPH,
+    WD_COLOR_INDEX,
+    WD_LINE_SPACING,
+    WD_TAB_ALIGNMENT,
+)
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Mm, Pt, RGBColor
@@ -537,9 +542,22 @@ def _render_cell_html(
             self._link_text = ""
             self._label = False
             self._cap = False
+            self._review: str | None = None  # CriticMarkup: "ins", "del" or "hl"
 
         def handle_starttag(self, tag: str, attrs: list) -> None:
             tag = tag.lower()
+            if "critic-" in (dict(attrs).get("class") or ""):
+                # Cells show review marks as formatting (Word tracked changes
+                # cannot be built from a flattened cell).
+                if tag == "span" and "critic-bar" in (dict(attrs).get("class") or ""):
+                    builder = getattr(write_text, "__self__", None)
+                    cell = paragraph._p.getparent()
+                    if builder is not None and hasattr(builder, "_bar_cells"):
+                        if cell is not None and cell not in builder._bar_cells:
+                            builder._bar_cells.append(cell)
+                    return
+                self._review = {"ins": "ins", "del": "del", "mark": "hl"}.get(tag)
+                return
             if tag == "span" and "docx-cap" in (dict(attrs).get("class") or ""):
                 self._cap = True
             elif tag == "label" and label_style:
@@ -580,7 +598,9 @@ def _render_cell_html(
 
         def handle_endtag(self, tag: str) -> None:
             tag = tag.lower()
-            if tag in ("strong", "b"):
+            if tag in ("ins", "del", "mark"):
+                self._review = None
+            elif tag in ("strong", "b"):
                 self._bold = bold_override  # back to cell default
             elif tag in ("em", "i"):
                 self._italic = False
@@ -612,7 +632,18 @@ def _render_cell_html(
             if self._label and label_style:
                 self._write_label(data)
                 return
+            before = len(paragraph.runs)
             write_text(paragraph, data, bold=self._bold, italic=self._italic, code=self._code)
+            if self._review:
+                for run in paragraph.runs[before:]:
+                    if self._review == "del":
+                        run.font.strike = True
+                        run.font.color.rgb = RGBColor(0xCF, 0x22, 0x2E)
+                    elif self._review == "ins":
+                        run.font.underline = True
+                        run.font.color.rgb = RGBColor(0x1A, 0x7F, 0x37)
+                    else:
+                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
         def _write_caption(self, data: str) -> None:
             """Caption under a write-in rule: small bold uppercase, themed colour."""
@@ -699,6 +730,7 @@ class _DocxBuilder(HTMLParser):
         section_bar: dict[str, Any] | None = None,
         layout_css: Path | None = None,
         form_document: bool = False,
+        review_author: str = "Reviewer",
     ) -> None:
         super().__init__()
         self.convert_charrefs = True
@@ -734,6 +766,16 @@ class _DocxBuilder(HTMLParser):
         self._sup = False
         self._sub = False
         self._strike = False
+        # CriticMarkup (review_markup: show): tracked insertions/deletions,
+        # highlights and Word comments. ``_critic`` is "ins", "del" or None.
+        self._review_author = review_author
+        self._review_stamp = ""
+        self._critic: str | None = None
+        self._hl = False
+        self._hl_runs: list[Any] = []
+        self._bar_paragraphs: list[Any] = []
+        self._bar_cells: list[Any] = []  # w:tc elements holding a change-bar marker
+        self._rev_id = 0
         self._list_stack: list[str] = []
         self._list_num_ids: list[int | None] = []
         self._list_counters: list[int] = []
@@ -1287,6 +1329,121 @@ class _DocxBuilder(HTMLParser):
             run.font.subscript = True
         if strike:
             run.font.strike = True
+        if self._critic or self._hl or self._hl_runs:
+            self._mark_review_run(run)
+
+    def _mark_review_run(self, run: Any) -> None:
+        """Make *run* a tracked insertion/deletion and/or a highlight (CriticMarkup)."""
+        if self._hl:
+            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            self._hl_runs.append(run)
+        else:
+            self._hl_runs = []  # a comment only anchors to the highlight right before it
+        if not self._critic:
+            return
+        from ..critic import review_stamp
+
+        self._rev_id += 1
+        wrapper = OxmlElement("w:ins" if self._critic == "ins" else "w:del")
+        wrapper.set(qn("w:id"), str(9000 + self._rev_id))
+        wrapper.set(qn("w:author"), self._review_author)
+        wrapper.set(qn("w:date"), self._review_stamp or review_stamp())
+        run._r.addprevious(wrapper)
+        wrapper.append(run._r)
+        if self._critic == "del":
+            for text in run._r.findall(qn("w:t")):
+                text.tag = qn("w:delText")
+
+    def _add_change_bar(self) -> None:
+        """Queue the current paragraph for a change bar (see ``apply_change_bars``)."""
+        paragraph = self._current_para()
+        if all(p._p is not paragraph._p for p in self._bar_paragraphs):
+            self._bar_paragraphs.append(paragraph)
+
+    def apply_change_bars(self) -> None:
+        """Word's "simple markup" change bar: a red bar in the right-hand margin.
+
+        Paragraph indents differ (lists, callouts) but the right edge is the same for
+        all of them, so a right border keeps every bar in one vertical strip, as the PDF
+        does (a shaded callout's shading stretches to meet its bar). A changed table row
+        gets a red right edge on its last cell, which stays at the table's edge.
+        Run after the whole document is built, because paragraph styling (callouts)
+        replaces any border set earlier.
+        """
+        targets = [p._p for p in self._bar_paragraphs]
+
+        def box_style(element: Any) -> tuple[str, str] | None:
+            """(left-rule colour, fill) of a callout paragraph, else None."""
+            if element.tag != qn("w:p") or element.pPr is None:
+                return None
+            left = element.pPr.xpath("./w:pBdr/w:left/@w:color")
+            fill = element.pPr.xpath("./w:shd/@w:fill")
+            return (left[0], fill[0] if fill else "") if left else None
+
+        # A change in a callout flags the whole box (as the PDF does), so the paragraphs
+        # of one box keep identical borders and Word keeps drawing it as one block.
+        for element in list(targets):
+            style = box_style(element)
+            if style is None:
+                continue
+            for step in ("getprevious", "getnext"):
+                neighbour = getattr(element, step)()
+                while neighbour is not None and box_style(neighbour) == style:
+                    if neighbour not in targets:
+                        targets.append(neighbour)
+                    neighbour = getattr(neighbour, step)()
+
+        for element in targets:
+            pPr = element.get_or_add_pPr()
+            border = pPr.find(qn("w:pBdr"))
+            if border is None:
+                border = OxmlElement("w:pBdr")
+                _insert_ppr_in_order(pPr, border, ["shd", *_PPR_AFTER_SHD])
+            if border.find(qn("w:right")) is not None:
+                continue
+            bar = OxmlElement("w:right")
+            bar.set(qn("w:val"), "single")
+            bar.set(qn("w:sz"), "18")
+            bar.set(qn("w:space"), "14")
+            bar.set(qn("w:color"), "CF222E")
+            border.append(bar)
+
+        for cell in self._bar_cells:
+            row = cell.getparent()
+            last = [c for c in row if c.tag == qn("w:tc")][-1]
+            tcPr = last.get_or_add_tcPr()
+            borders = tcPr.find(qn("w:tcBorders"))
+            if borders is None:
+                borders = OxmlElement("w:tcBorders")
+                later = [qn(f"w:{t}") for t in ("shd", "noWrap", "tcMar", "vAlign", "hideMark")]
+                anchor = next((c for c in tcPr if c.tag in later), None)
+                if anchor is not None:
+                    anchor.addprevious(borders)
+                else:
+                    tcPr.append(borders)
+            for old in borders.findall(qn("w:right")):
+                borders.remove(old)
+            bar = OxmlElement("w:right")
+            bar.set(qn("w:val"), "single")
+            bar.set(qn("w:sz"), "18")
+            bar.set(qn("w:space"), "0")
+            bar.set(qn("w:color"), "CF222E")
+            borders.append(bar)
+        self._bar_paragraphs = []
+        self._bar_cells = []
+
+    def _add_review_comment(self, text: str) -> None:
+        """A Word comment anchored to the highlight just written (else the last run)."""
+        text = text.strip()
+        if not text:
+            return
+        paragraph = self._current_para()
+        runs = list(self._hl_runs)
+        if not runs:
+            runs = [paragraph.runs[-1]] if paragraph.runs else [paragraph.add_run("")]
+        initials = "".join(w[0] for w in self._review_author.split()[:2]).upper() or "R"
+        self.doc.add_comment(runs, text=text, author=self._review_author, initials=initials)
+        self._hl_runs = []
 
     def _write_text(
         self,
@@ -1402,6 +1559,21 @@ class _DocxBuilder(HTMLParser):
             for k, v in attrs:
                 attr_str += f' {k}="{v}"' if v is not None else f" {k}"
             self._current_cell_html += f"<{tag}{attr_str}>"
+            return
+
+        critic_class = dict(attrs).get("class") or ""
+        if "critic-" in critic_class:
+            if tag == "ins":
+                self._critic = "ins"
+            elif tag == "del":
+                self._critic = "del"
+            elif tag == "mark":
+                self._hl = True
+                self._hl_runs = []
+            elif tag == "span" and "critic-comment" in critic_class:
+                self._add_review_comment(dict(attrs).get("data-comment") or "")
+            elif tag == "span" and "critic-bar" in critic_class:
+                self._add_change_bar()
             return
 
         if tag in ("h1", "h2", "h3", "h4"):
@@ -1788,7 +1960,16 @@ class _DocxBuilder(HTMLParser):
             self._sub = False
 
         elif tag in ("del", "s", "strike"):
-            self._strike = False
+            if tag == "del" and self._critic == "del":
+                self._critic = None
+            else:
+                self._strike = False
+
+        elif tag == "ins" and self._critic == "ins":
+            self._critic = None
+
+        elif tag == "mark" and self._hl:
+            self._hl = False
 
         elif tag in ("th", "td"):
             if self._in_table:
@@ -3130,7 +3311,7 @@ def _extract_title(md_content: str) -> str | None:
     match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
     if not match:
         return None
-    title = match.group(1).strip()
+    title = re.sub(r"<[^>]+>", "", match.group(1)).strip()  # review marks in show mode
     title = re.sub(r"\*\*(.+?)\*\*", r"\1", title)
     title = re.sub(r"\*(.+?)\*", r"\1", title)
     title = re.sub(r"`(.+?)`", r"\1", title)
@@ -4034,6 +4215,21 @@ def _emit_footer_segment(paragraph: Any, text: str, lead_tabs: int = 0) -> list[
     return runs
 
 
+def _add_review_legend(doc: Document, mode: str, summary: dict[str, int], author: str) -> None:
+    """A one-paragraph key above a marked-up document (what the markup means)."""
+    from ..critic import legend_text
+
+    text = legend_text(mode, summary, author)
+    if not text:
+        return
+    paragraph = doc.add_paragraph()
+    run = paragraph.add_run(text)
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+    paragraph.paragraph_format.space_after = Pt(8)
+    run.font.italic = True
+
+
 def _add_footer(
     doc: Document,
     config: dict[str, Any],
@@ -4480,7 +4676,15 @@ def build(
         ft = str(config.get("dotx_field_type", "form")).lower()
         field_type = ft if ft in ("form", "merge") else "form"
 
-    body = _strip_frontmatter(rendered_md)
+    from ..critic import (
+        counts as review_marks,
+        mode_for,
+        prepare as prepare_review_markup,
+        review_author,
+    )
+
+    review_counts = review_marks(_strip_frontmatter(rendered_md))
+    body = prepare_review_markup(_strip_frontmatter(rendered_md), config, "docx")
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     # Same defaults as the PDF builder so the cover carries identical metadata
     # (the PDF always shows an author and a date).
@@ -4655,6 +4859,7 @@ def build(
         section_bar=section_bar,
         layout_css=layout_css_path,
         form_document=coerce_bool(config.get("pdf_forms", False)),
+        review_author=review_author(config),
     )
 
     if cover_page:
@@ -4667,6 +4872,9 @@ def build(
             theme,
         )
 
+    if mode_for(config, "docx") in ("show", "simple"):
+        _add_review_legend(doc, mode_for(config, "docx"), review_counts, review_author(config))
+
     # Content after the cover starts the pagination baseline — the first body
     # heading must not force an extra page break on top of the cover's.
     builder.mark_content_start()
@@ -4674,6 +4882,7 @@ def build(
     # formats break pages at the same places.
     html = _keep_heading_with_next(_merge_joined_field_boxes(html))
     builder.feed(html)
+    builder.apply_change_bars()
     from ..toc import insert_word_caption_lists, insert_word_toc_fields
 
     insert_word_toc_fields(doc, config)

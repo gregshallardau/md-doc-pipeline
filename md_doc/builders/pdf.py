@@ -40,8 +40,20 @@ from ..forms import collapse_select_markup  # noqa: E402
 from ..renderer import BLANK_MARKER_RE  # noqa: E402
 from ._assets import _drop_empty_table_headers, apply_theme_config_defaults  # noqa: E402
 from ..table_layout import soften_long_tokens  # noqa: E402
+from ..critic import (  # noqa: E402
+    counts as review_marks,
+    legend_html,
+    margin_notes,
+    prepare as prepare_review_markup,
+    review_author,
+    review_mode,
+    review_page,
+    review_page_css,
+    spread_margin_notes,
+)
 from ..pdf_features import (  # noqa: E402
     chain_finishers,
+    change_bars_finisher,
     color_profile_css,
     expand_directives,
     font_face_css,
@@ -149,7 +161,7 @@ def _extract_title(md_content: str) -> str | None:
     match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
     if not match:
         return None
-    title = match.group(1).strip()
+    title = re.sub(r"<[^>]+>", "", match.group(1)).strip()  # review marks in show mode
     title = re.sub(r"\*\*(.+?)\*\*", r"\1", title)
     title = re.sub(r"\*(.+?)\*", r"\1", title)
     title = re.sub(r"`(.+?)`", r"\1", title)
@@ -1875,6 +1887,8 @@ def build(
 
     # Strip frontmatter (already processed by renderer)
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", rendered_md, count=1, flags=re.DOTALL)
+    review_counts = review_marks(body)
+    body = prepare_review_markup(body, config, "pdf")
 
     title: str = config.get("title") or _extract_title(body) or out_path.stem
     author: str = config.get("author", "Document Producer")
@@ -1975,6 +1989,20 @@ def build(
     )
     html_body = _drop_empty_table_headers(html_body)
     html_body = postprocess_html(html_body, config)
+    if review_mode(config) in ("show", "simple", "hybrid"):
+        author_name = review_author(config)
+        # Comments live in a review column beside the page, so the document itself keeps
+        # its own styling; the key joins them there (or is a slim line when none exist).
+        html_body = margin_notes(html_body, author_name)
+        html_body = (
+            legend_html(
+                review_mode(config),
+                review_counts,
+                author_name,
+                margin=_has_review_column(config, review_counts),
+            )
+            + html_body
+        )
     html_body = re.sub(
         r"<table\b.*?</table>", lambda m: soften_long_tokens(m.group(0)), html_body, flags=re.DOTALL
     )
@@ -2030,12 +2058,14 @@ def build(
 
     page_margins_mm = (25.0, 20.0)
     page_size_mm = (210.0, 297.0)
+    page_bottom_mm = 20.0
     theme_body_justify = False
     if css_text:
         try:
             geom = _page_geometry(css_text)
             page_margins_mm = (geom["left"], geom["right"])
             page_size_mm = (geom["w"], geom["h"])
+            page_bottom_mm = geom["bottom"]
         except Exception:
             pass
         if not str(config.get("body_text_align", "")).strip():
@@ -2047,6 +2077,14 @@ def build(
                 )
             except Exception:
                 theme_body_justify = False
+
+    # Margin comments: widen the page for a review column (same text area, same page
+    # breaks) and scale the PDF back to the paper width, shrinking the document.
+    review_geometry = None
+    if _has_review_column(config, review_counts):
+        review_geometry = review_page(page_size_mm, page_margins_mm, page_bottom_mm)
+        page_size_mm = review_geometry["size"]
+        page_margins_mm = (page_margins_mm[0], review_geometry["margin_right"])
 
     html_body = _keep_heading_with_next(_group_label_with_textarea(html_body), split_tables=True)
     html_body, section_css = pdf_sections(html_body, page_size_mm)
@@ -2080,7 +2118,8 @@ def build(
         theme_body_justify=theme_body_justify,
         theme_css_text=css_text,
         extra_head=font_face_css(config, resolve_config_path)
-        + color_profile_css(config, resolve_config_path),
+        + color_profile_css(config, resolve_config_path)
+        + (review_page_css(review_geometry) if review_geometry else ""),
     )
 
     if section_css:
@@ -2094,6 +2133,10 @@ def build(
         doc_path=doc_path,
     )
     zoom = pdf_zoom(config)
+    if review_geometry:
+        base_url = str(doc_path.resolve().parent if doc_path is not None else out_path.parent)
+        html = spread_margin_notes(html, lambda markup: _measure_layout(markup, base_url))
+        zoom = (zoom or 1.0) * review_geometry["zoom"]
     if zoom is not None:
         wp_kwargs["zoom"] = zoom
     finishers: list[Any] = []
@@ -2103,6 +2146,8 @@ def build(
         field_meta = _collect_form_field_meta(html_body)
         if field_meta:
             finishers.append(_make_forms_finisher(field_meta))
+    if "critic-changed" in html:  # review_markup: simple — change bars in the margin
+        finishers.append(change_bars_finisher(zoom or 1.0))
     finishers.append(layout_check_finisher(strict=coerce_bool(config.get("pdf_layout_check"))))
     wp_kwargs["finisher"] = chain_finishers(*finishers)
     _write_pdf(
@@ -2110,6 +2155,26 @@ def build(
         str(doc_path.resolve().parent if doc_path is not None else out_path.parent),
         out_path,
         wp_kwargs,
+    )
+
+
+def _has_review_column(config: dict[str, Any], marks: dict[str, int]) -> bool:
+    """Does this build need the margin review column?
+
+    Comments always live in it; ``hybrid`` also puts every change there.
+    """
+    mode = review_mode(config)
+    if mode in ("show", "simple"):
+        return bool(marks["comments"])
+    return mode == "hybrid" and bool(marks["comments"] or marks["changes"])
+
+
+def _measure_layout(html: str, base_url: str) -> Any:
+    """Lay *html* out without writing a PDF (used to place margin notes)."""
+    from weasyprint.text.fonts import FontConfiguration
+
+    return weasyprint.HTML(string=html, base_url=base_url, url_fetcher=_make_url_fetcher()).render(
+        font_config=FontConfiguration()
     )
 
 

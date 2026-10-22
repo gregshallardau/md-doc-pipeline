@@ -18,6 +18,7 @@ import difflib
 from typing import Any, Iterable
 
 from .config import is_boolish
+from .critic import MODES as REVIEW_MODES
 from .pdf_features import (
     BAR_LAYOUTS,
     CHAPTER_BREAKS,
@@ -103,6 +104,7 @@ ENUM_KEYS: dict[str, set[str]] = {
     "heading_number_style": set(NUMBER_STYLES),
     "image_fit": set(IMAGE_FITS),
     "print_marks": set(PRINT_MARKS),
+    "review_markup": set(REVIEW_MODES),
     "header_layout": set(BAR_LAYOUTS),
     "footer_layout": set(BAR_LAYOUTS),
 }
@@ -232,6 +234,10 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "bleed",
         "header_layout",
         "footer_layout",
+        # review markup (CriticMarkup)
+        "review_markup",
+        "review_author",
+        "review_exports",
     }
     | BOOL_KEYS
 )
@@ -319,6 +325,19 @@ def validate_config(config: dict[str, Any]) -> list[Issue]:
                 ok = False
             if not ok:
                 issues.append(("error", "'pdf_zoom' must be a number from 0.1 to 10"))
+        elif key == "review_exports":
+            from .critic import VARIANTS
+
+            names = [str(item).strip().lower() for item in _norm_list(value)]
+            bad = [n for n in names if n not in VARIANTS]
+            if bad:
+                issues.append(
+                    (
+                        "error",
+                        f"'review_exports' has unknown variant(s) {bad}; "
+                        f"expected any of {sorted(VARIANTS)}",
+                    )
+                )
         elif key in {"pdf_attachments", "pdf_xmp"}:
             if not all(isinstance(item, str) for item in _norm_list(value)):
                 issues.append(("error", f"'{key}' must be a path or a list of paths"))
