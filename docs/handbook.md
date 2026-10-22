@@ -3756,6 +3756,7 @@ documents' closest shared parent folder (named after its first heading) and ever
 by `{% include "name.md" %}`. Every affected document is rendered before and after; if any output
 differs, all files are restored. Only identical text matches, so make the varying part a
 `{{ variable }}` first. See [`{% include %}`](#authoring--include----template-fragments).
+The web editor has the same tool in its **Shared content** panel.
 
 | Option | Description |
 |--------|-------------|

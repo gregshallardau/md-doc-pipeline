@@ -19,6 +19,7 @@
     "chevron-down": "m7 9 5 5 5-5",
     "chevron-right": "m9 6 6 6-6 6",
     "chevron-left": "m15 6-6 6 6 6",
+    layers: "M12 3 3 8l9 5 9-5Z M3 12l9 5 9-5 M3 16l9 5 9-5",
     list: "M9 6h12 M9 12h12 M9 18h12 M3 6h.01 M3 12h.01 M3 18h.01",
     git: "M6 3v12a4 4 0 0 0 4 4h6 M18 5v9 M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4",
     external: "M14 3h7v7 M21 3l-9 9 M10 3H3v18h18v-7",
@@ -1907,6 +1908,7 @@
       files: "FILES",
       search: "SEARCH",
       outline: "OUTLINE",
+      shared: "SHARED CONTENT",
       git: "SOURCE CONTROL",
     };
     $("sidebar-title").textContent = titles[name];
@@ -1914,6 +1916,7 @@
       "md-doc-tree",
       "search-panel",
       "outline-panel",
+      "shared-panel",
       "git-panel",
     ])
       $(id).hidden =
@@ -1923,6 +1926,7 @@
             files: "md-doc-tree",
             search: "search-panel",
             outline: "outline-panel",
+            shared: "shared-panel",
             git: "git-panel",
           }[name];
     $("file-filter").hidden = name !== "files";
@@ -1932,6 +1936,7 @@
     $("workbench").classList.remove("nav-hidden");
     if (window.innerWidth <= 850) $("workbench").classList.toggle("mobile-nav");
     if (name === "search") $("workspace-query").focus();
+    if (name === "shared") openShared();
     if (name === "git") loadGit().catch((error) => toast(error.message, true));
     applyLayout();
   }
@@ -3297,6 +3302,7 @@
       ["Save document", "save", "Ctrl S"],
       ["Focus mode", "focus", ""],
       ["Studio settings", "settings", ""],
+      ["Find repeated text", "shared", ""],
       ["Source control", "git", ""],
       ["Insert form or diagram", "insert-menu", ""],
     ];
@@ -3314,8 +3320,8 @@
           run: () =>
             action === "save"
               ? save()
-              : action === "git"
-                ? nav("git")
+              : action === "git" || action === "shared"
+                ? nav(action)
                 : actions[action](),
         });
       }
@@ -3410,6 +3416,289 @@
     } catch (error) {
       toast(error.message, true);
     }
+  }
+  // ── Shared content: find repeated text and move it into a template ───────
+  const shared = {
+    scope: "workspace",
+    minDocs: 2,
+    minChars: 80,
+    result: null,
+    busy: false,
+    error: "",
+  };
+  function sharedFolder() {
+    const index = (state.active || "").lastIndexOf("/");
+    return index > 0 ? state.active.slice(0, index) : "";
+  }
+  function sharedScanPath() {
+    return shared.scope === "folder" ? sharedFolder() : "";
+  }
+  function openShared() {
+    if (!shared.result && !shared.busy) scanShared();
+    else renderShared();
+  }
+  async function scanShared() {
+    shared.busy = true;
+    shared.error = "";
+    renderShared();
+    try {
+      const query = new URLSearchParams({
+        path: sharedScanPath(),
+        min_docs: shared.minDocs,
+        min_chars: shared.minChars,
+      });
+      shared.result = await api("/api/refactor/scan?" + query);
+    } catch (error) {
+      shared.error = error.message;
+    } finally {
+      shared.busy = false;
+      renderShared();
+    }
+  }
+  function renderShared() {
+    const container = $("shared-panel");
+    container.replaceChildren();
+    container.append(
+      el(
+        "p",
+        "inspector-note",
+        "Find text that appears word for word in several documents and move it into one shared template.",
+      ),
+    );
+    const scope = el("select", "input");
+    scope.setAttribute("aria-label", "Where to look");
+    const folder = sharedFolder();
+    scope.append(new Option("Whole workspace", "workspace"));
+    if (folder) scope.append(new Option("Folder: " + folder, "folder"));
+    scope.value = shared.scope === "folder" && folder ? "folder" : "workspace";
+    shared.scope = scope.value;
+    scope.onchange = () => {
+      shared.scope = scope.value;
+      shared.result = null;
+      scanShared();
+    };
+    container.append(el("label", "field-label", "LOOK IN"), scope);
+    const advanced = el("details", "shared-advanced");
+    advanced.append(el("summary", null, "Sensitivity"));
+    const row = el("div", "shared-sensitivity");
+    for (const [key, label, min, max] of [
+      ["minDocs", "Documents at least", 2, 100],
+      ["minChars", "Characters at least", 10, 10000],
+    ]) {
+      const wrap = el("label", null, label);
+      const input = el("input", "input");
+      input.type = "number";
+      input.min = min;
+      input.max = max;
+      input.value = shared[key];
+      input.onchange = () => {
+        shared[key] = Math.min(max, Math.max(min, Number(input.value) || min));
+        input.value = shared[key];
+        scanShared();
+      };
+      wrap.append(input);
+      row.append(wrap);
+    }
+    advanced.append(row);
+    container.append(advanced);
+    const rescan = el(
+      "button",
+      "button wide",
+      shared.busy ? "Scanning…" : "Scan again",
+    );
+    rescan.disabled = shared.busy;
+    rescan.onclick = () => scanShared();
+    container.append(rescan);
+    if (shared.error) {
+      container.append(el("p", "shared-error", shared.error));
+      return;
+    }
+    if (!shared.result) return;
+    const { groups, scanned } = shared.result;
+    container.append(
+      el(
+        "label",
+        "field-label",
+        groups.length
+          ? `${groups.length} REPEATED SECTION${groups.length === 1 ? "" : "S"} · ${scanned} DOCUMENTS`
+          : `NOTHING REPEATED · ${scanned} DOCUMENTS`,
+      ),
+    );
+    if (!groups.length)
+      container.append(
+        el(
+          "p",
+          "inspector-note",
+          "No section appears in more than one document. Lower the sensitivity to catch shorter passages. Text that differs by a name or date is not matched until the varying part is a {{ variable }}.",
+        ),
+      );
+    for (const group of groups) {
+      const card = el("div", "shared-card");
+      const head = el("div", "shared-card-head");
+      head.append(
+        el("strong", null, group.name),
+        el("span", "shared-badge", `${group.copies} copies`),
+      );
+      card.append(
+        head,
+        el(
+          "p",
+          "shared-meta",
+          `${new Set(group.occurrences.map((o) => o.path)).size} documents · ${group.lines} lines`,
+        ),
+        el("pre", "shared-preview", group.preview),
+      );
+      const review = el("button", "button primary wide", "Review and extract…");
+      review.onclick = () => reviewShared(group);
+      card.append(review);
+      container.append(card);
+    }
+  }
+  function reviewShared(group) {
+    const body = el("div", "shared-review");
+    body.append(
+      el(
+        "p",
+        null,
+        "This text appears in several documents. Choose where to replace it with an include of one shared template.",
+      ),
+    );
+    const folder = group.target.slice(0, group.target.lastIndexOf("/") + 1);
+    const nameInput = el("input", "input");
+    nameInput.value = group.name;
+    nameInput.setAttribute("aria-label", "Template name");
+    const where = el("p", "shared-where");
+    const syncWhere = () => {
+      where.textContent = "Saved as " + folder + nameInput.value.trim() + ".md";
+    };
+    nameInput.oninput = syncWhere;
+    syncWhere();
+    const nameRow = el("div", "shared-name-row");
+    nameRow.append(nameInput, el("span", null, ".md"));
+    body.append(el("label", null, "Template name"), nameRow, where);
+    body.append(el("label", null, "Shared text"));
+    body.append(el("pre", "shared-text", group.text));
+    body.append(el("label", null, "Replace in"));
+    const list = el("div", "shared-docs");
+    const boxes = [];
+    const update = () => {
+      const count = boxes.filter((box) => box.checked).length;
+      const button = $("dialog-actions").lastElementChild;
+      button.disabled = count < 2;
+      button.textContent = `Extract from ${count} document${count === 1 ? "" : "s"}`;
+    };
+    for (const occurrence of group.occurrences) {
+      const buffer = state.buffers.get(occurrence.path);
+      const unsaved = buffer && dirty(buffer);
+      const row = el("div", "shared-doc");
+      const label = el("label");
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = !unsaved;
+      box.disabled = Boolean(unsaved);
+      box.dataset.path = occurrence.path;
+      box.onchange = update;
+      boxes.push(box);
+      label.append(
+        box,
+        el("span", null, occurrence.path),
+        el(
+          "small",
+          null,
+          unsaved
+            ? "unsaved changes — save first"
+            : `lines ${occurrence.line}–${occurrence.endLine}`,
+        ),
+      );
+      const open = el("button", "text-button", "Open");
+      open.type = "button";
+      open.onclick = () => {
+        $("form-dialog").close();
+        openFile(occurrence.path, occurrence.line);
+      };
+      row.append(label, open);
+      list.append(row);
+    }
+    body.append(list);
+    body.append(
+      el(
+        "p",
+        "shared-note",
+        'Each copy becomes {% include "name.md" %}. Every document is rendered before and after, and nothing is written if any output would change. Earlier versions stay in each folder’s .editor-history.',
+      ),
+    );
+    dialog(
+      "Extract shared text",
+      body,
+      [
+        { label: "Cancel", run: (node) => node.close() },
+        {
+          label: "Extract",
+          primary: true,
+          run: async (node) => {
+            const chosen = group.occurrences.filter((o) =>
+              boxes.some((box) => box.checked && box.dataset.path === o.path),
+            );
+            const blocked = chosen.find((o) => {
+              const buffer = state.buffers.get(o.path);
+              return buffer && dirty(buffer);
+            });
+            if (blocked)
+              throw new Error("Save or discard changes in " + blocked.path);
+            const result = await api("/api/refactor/apply", {
+              method: "POST",
+              body: JSON.stringify({
+                path: sharedScanPath(),
+                min_docs: shared.minDocs,
+                min_chars: shared.minChars,
+                key: group.key,
+                name: nameInput.value,
+                documents: chosen.map((o) => o.path),
+                revisions: Object.fromEntries(
+                  chosen.map((o) => [o.path, o.revision]),
+                ),
+              }),
+            });
+            node.close();
+            await finishShared(result);
+          },
+        },
+      ],
+      true,
+    );
+    update();
+  }
+  async function reloadBuffer(buffer) {
+    const data = await api("/api/file?path=" + encodeURIComponent(buffer.path));
+    buffer.content = buffer.saved = data.content;
+    buffer.revision = data.revision;
+    buffer.edited = false;
+    if (buffer.model) {
+      state.switching = true;
+      try {
+        buffer.model.setValue(data.content);
+      } finally {
+        state.switching = false;
+      }
+    }
+    if (state.active === buffer.path) {
+      if (!buffer.model && state.fallback) state.fallback.value = data.content;
+      schedulePreview(0);
+    }
+  }
+  async function finishShared(result) {
+    for (const change of result.changed) {
+      const buffer = state.buffers.get(change.path);
+      if (buffer) await reloadBuffer(buffer);
+    }
+    persist();
+    await loadTree();
+    toast(
+      `Moved the text into ${result.template} and linked ${result.changed.length} documents`,
+      false,
+      { label: "Open template", run: () => openFile(result.template) },
+    );
+    scanShared();
   }
   async function loadGit() {
     const data = await api("/api/git/status");

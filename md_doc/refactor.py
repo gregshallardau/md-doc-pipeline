@@ -14,6 +14,7 @@ differs by a client name is not detected until the varying part is a
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from collections.abc import Callable
@@ -52,6 +53,16 @@ class Occurrence:
     first: int  # block index
     last: int  # block index, inclusive
 
+    @property
+    def start_line(self) -> int:
+        """First line of the run, 1-based."""
+        return self.doc.blocks[self.first].start + 1
+
+    @property
+    def end_line(self) -> int:
+        """Last line of the run, 1-based."""
+        return self.doc.blocks[self.last].end
+
 
 @dataclass
 class Group:
@@ -61,6 +72,7 @@ class Group:
     occurrences: list[Occurrence]
     text: str  # fragment content
     chars: int
+    key: str  # stable id of the shared text, to find the group again on a rescan
 
     @property
     def docs(self) -> list[Path]:
@@ -87,8 +99,18 @@ def _split_blocks(lines: list[str], offset: int) -> list[Block]:
     return blocks
 
 
+def _read_text(path: Path) -> str:
+    """Read without newline translation so CRLF files are written back as CRLF."""
+    return path.read_bytes().decode("utf-8")
+
+
+def _write_text(path: Path, text: str) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as stream:
+        stream.write(text)
+
+
 def _read_doc(path: Path) -> Doc:
-    content = path.read_text(encoding="utf-8")
+    content = _read_text(path)
     frontmatter, _ = _strip_frontmatter(content)
     lines = content.split("\n")
     offset = frontmatter.count("\n")
@@ -220,6 +242,7 @@ def find_shared_sections(
                 occurrences=occurrences,
                 text=text.rstrip("\n") + "\n",
                 chars=sum(len(norms[b]) for b in key),
+                key=hashlib.sha256(" ".join(norms[b] for b in key).encode()).hexdigest()[:16],
             )
         )
 
@@ -235,22 +258,26 @@ def apply_groups(
     groups: list[Group],
     repo_root: Path | None = None,
     on_progress: Callable[[str], None] | None = None,
+    write: Callable[[Path, str], None] | None = None,
 ) -> list[Path]:
     """Write fragments and splice includes into the documents.
 
     Every affected document is rendered before and after; if any output
     differs, all files are restored and ``RuntimeError`` is raised.
+    ``write(path, text)`` replaces the default plain file write (the editor
+    passes one that keeps recovery copies); it also performs the rollback.
     Returns the fragment files written.
     """
+    write = write or _write_text
     affected = sorted({o.doc.path for g in groups for o in g.occurrences})
     before = {p: _rendered(p, repo_root) for p in affected}
-    originals = {p: p.read_text(encoding="utf-8") for p in affected}
+    originals = {p: _read_text(p) for p in affected}
     created: list[Path] = []
 
     try:
         for g in groups:
             g.target.parent.mkdir(parents=True, exist_ok=True)
-            g.target.write_text(g.text, encoding="utf-8")
+            write(g.target, g.text)
             created.append(g.target)
 
         edits: dict[Path, list[tuple[int, int, str]]] = {}
@@ -258,14 +285,15 @@ def apply_groups(
             for o in g.occurrences:
                 start = o.doc.blocks[o.first].start
                 end = o.doc.blocks[o.last].end
+                crlf = o.doc.lines[end - 1].endswith("\r")
                 edits.setdefault(o.doc.path, []).append(
-                    (start, end, '{% include "' + g.include + '" %}')
+                    (start, end, '{% include "' + g.include + '" %}' + ("\r" if crlf else ""))
                 )
         for path, spans in edits.items():
             lines = originals[path].split("\n")
             for start, end, repl in sorted(spans, reverse=True):
                 lines[start:end] = [repl]
-            path.write_text("\n".join(lines), encoding="utf-8")
+            write(path, "\n".join(lines))
             if on_progress:
                 on_progress(str(path))
 
@@ -274,7 +302,7 @@ def apply_groups(
                 raise RuntimeError(f"rendered output of {p} would change")
     except Exception:
         for p, text in originals.items():
-            p.write_text(text, encoding="utf-8")
+            write(p, text)
         for f in created:
             f.unlink(missing_ok=True)
         raise
