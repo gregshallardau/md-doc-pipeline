@@ -3596,7 +3596,7 @@ Place these **before** the subcommand: `md-doc --debug build workspace/`.
 | [`new`](#commands-new) | Scaffold a folder or a document. |
 | [`theme`](#commands-theme) | Create a brand theme or a colour override. |
 | [`export`](#commands-export) | Build only notes marked `export: true` and collect the outputs. |
-| [`extract`](#commands-extract) | Convert a PDF or DOCX back to Markdown. |
+| [`extract`](#commands-extract) | Convert Word, PowerPoint, Excel, HTML or PDF back to Markdown. |
 | [`sync`](#commands-sync) | Upload built files to Azure, S3 or a local folder. |
 | [`register`](#commands-register) | Write a document register (JSON, Markdown, CSV). |
 | [`workspaces`](#commands-workspaces) | List named remote workspaces. |
@@ -3732,7 +3732,7 @@ the [export guide](#exporting) for the frontmatter keys and destination rules.
 md-doc extract FILE_PATH [--dest DESTINATION] [--force]
 ```
 
-Converts a PDF or DOCX to Markdown, written to `DESTINATION` (default `templates/`) with the
+Converts a Word, PowerPoint, Excel, HTML or PDF file to Markdown, written to `DESTINATION` (default `templates/`) with the
 source name and a `.md` extension. `--force` overwrites without prompting. See the
 [extraction guide](#extracting).
 
@@ -3922,7 +3922,7 @@ See the [CLI reference](#commands) for every option and the
 
 ## Extracting
 
-The `md-doc extract` command converts PDF and DOCX files to Markdown snippets, perfect for:
+The `md-doc extract` command converts Word, PowerPoint, Excel, HTML and PDF files to Markdown snippets, perfect for:
 - Extracting reusable content from external documents
 - Converting proposals into template fragments
 - Breaking down multi-page contracts into manageable sections
@@ -3941,6 +3941,18 @@ md-doc extract <FILE> [OPTIONS]
 Word tracked changes and comments in a `.docx` come out as [review markup](#markdown-review-markup)
 (`{++added++}`, `{--deleted--}`, `{~~old~>new~~}`, `{==text==}{>>comment<<}`), so a reviewed
 document keeps its edits.
+
+<a id="extracting-merge-fields"></a>
+
+#### Merge fields come back as `[[fields]]`
+
+Extracting a `.docx` or `.dotx` reverses what the `.dotx` builder does: Word merge fields
+(`MERGEFIELD`), text form fields (`FORMTEXT`, named in the field's properties) and plain-text
+content controls (named by their tag, else their title) come out as `[[field_name]]`, ready
+to rebuild as a fillable `.dotx`. Names with spaces become underscores (`First Name` →
+`First_Name`). A form field with no name, and checkbox, dropdown and date controls, stay as
+the text Word shows. `md-doc extract` lists the fields it found, and the editor can add them to
+`_merge_fields.yml` (see [Importing in the web editor](#extracting-importing-in-the-web-editor)).
 
 <a id="extracting-minimal-example"></a>
 
@@ -4030,8 +4042,11 @@ md-doc extract contract-template.docx --dest workspace/acme/legal/
 | Format | Supported | Notes |
 |---|---|---|
 | **PDF** | ✅ Yes | Text extraction; images and complex layouts convert to text descriptions |
-| **DOCX** | ✅ Yes | Full content including tables, lists, formatting |
-| **Other** | ❌ No | Only PDF and DOCX are supported |
+| **DOCX / DOTX** | ✅ Yes | Full content including tables, lists, formatting; merge fields, form fields, tracked changes and comments are kept |
+| **PPTX** | ✅ Yes | One section per slide; the starter frontmatter sets `slide_split: h1` |
+| **XLSX** | ✅ Yes | Sheets become tables. Needs the optional extra: `uv sync --extra xlsx` |
+| **HTML** | ✅ Yes | Headings, lists, tables and links |
+| **Other** | ❌ No | Convert RTF, ODT and similar to one of the formats above first |
 
 ---
 
@@ -4087,24 +4102,38 @@ md-doc extract report.pdf --dest workspace/acme/reports/
 
 <a id="extracting-future-interactive-extraction-ui"></a>
 
+<a id="extracting-importing-in-the-web-editor"></a>
+
 ### Importing in the web editor
 
-In the web editor, the upload button above the file tree (or **Import Word or PDF** on
-the welcome page) converts a `.docx` or `.pdf` to Markdown using the same converter as
-`md-doc extract`. Word tracked changes and comments come through as review markup.
+In the web editor, the upload button above the file tree (or **Import documents** on the
+welcome page) converts files with the same converter as `md-doc extract`. Choose one file or
+several.
 
-The import is two steps, and nothing is written until you confirm:
+**One file** is a two-step import, and nothing is written until you confirm:
 
-1. **Convert** the chosen file.
-2. **Review** the Markdown in an editable preview, then either **insert it at the
-   cursor** of the open document or **save it as a new document**.
+1. **Convert** the file.
+2. **Review** the Markdown in an editable preview, then either **insert it at the cursor** of
+   the open document or **save it as a new document**.
 
-Images embedded in a Word file are saved into an `assets/` folder next to the target
-document and linked with relative paths (untick the option to drop them). Existing
-files are never overwritten; a numeric suffix is added instead. PDF conversion is
-approximate, especially for tables and multi-column layouts, so check the preview.
+**Several files** go to a batch review: each file becomes a new document, with a path you can
+edit, and a file that fails to convert or already exists is reported without stopping the
+rest. Existing files are never overwritten.
 
-Snippet management is still planned; use `md-doc extract` for batch workflows.
+Options, in both cases:
+
+- **Starter frontmatter** (new documents): `title` and `output_filename` from the source file
+  name, so rebuilding gives `Client Proposal.dotx` again rather than a slugged name, plus
+  `outputs` for the kind of file (`[pdf, docx]`; `[dotx]` with `dotx_field_type: form` for a
+  template or anything with merge fields; `[pptx]` with `slide_split: h1` for a deck). The
+  new file name itself comes from the source name, lower-cased with hyphens.
+- **Images** embedded in a Word file are saved into an `assets/` folder next to the document
+  and linked with relative paths. A numeric suffix avoids overwriting existing images.
+- **Merge fields** found in a Word file are added to `_merge_fields.yml` in the document's
+  folder (created if missing). Fields already described there are left alone.
+
+PDF conversion is approximate, especially for tables and multi-column layouts, so check the
+preview.
 
 ---
 
@@ -4117,7 +4146,7 @@ Snippet management is still planned; use `md-doc extract` for batch workflows.
 - Use absolute paths if relative paths don't work
 
 **"Unsupported file type"**
-- Only `.pdf` and `.docx` files are supported
+- Supported: `.docx`, `.dotx`, `.pptx`, `.xlsx`, `.html`, `.htm` and `.pdf`
 - Convert other formats (RTF, ODT, etc.) to one of these first
 
 **Extracted Markdown looks wrong**

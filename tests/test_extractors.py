@@ -56,3 +56,129 @@ class TestExtractFileNotFound:
 
         with pytest.raises(FileNotFoundError):
             extract_file(str(missing))
+
+
+def _docx_with(tmp_path, build, name="in.docx"):
+    from docx import Document
+
+    doc = Document()
+    build(doc)
+    path = tmp_path / name
+    doc.save(str(path))
+    return path
+
+
+class TestWordFields:
+    def test_merge_and_form_fields_become_double_bracket_fields(self, tmp_path):
+        from md_doc.builders.docx import _insert_form_field, _insert_merge_field
+        from md_doc.extractors import extract_document
+
+        def build(doc):
+            para = doc.add_paragraph("Dear ")
+            _insert_merge_field(para, '"First Name"')  # Word quotes names with spaces
+            para.add_run(" and ")
+            _insert_form_field(para, "company", 1)
+
+        result = extract_document(str(_docx_with(tmp_path, build)))
+        assert "Dear [[First_Name]] and [[company]]" in result.markdown
+        assert result.fields == ["First_Name", "company"]
+
+    def test_dotx_is_read_as_a_document(self, tmp_path):
+        from md_doc.builders.docx import _insert_form_field
+        from md_doc.extractors import extract_document
+
+        def build(doc):
+            _insert_form_field(doc.add_paragraph("Name: "), "contact_name", 1)
+
+        path = _docx_with(tmp_path, build, "letter.dotx")
+        assert extract_document(str(path)).fields == ["contact_name"]
+
+    def test_unnamed_form_field_is_left_as_text(self, tmp_path):
+        from md_doc.builders.docx import _insert_form_field
+        from md_doc.extractors import extract_document
+
+        def build(doc):
+            _insert_form_field(doc.add_paragraph(), "", 1)
+
+        assert extract_document(str(_docx_with(tmp_path, build))).fields == []
+
+    def test_simple_field_and_content_control(self, tmp_path):
+        from lxml import etree
+
+        from md_doc.extractors import _W, extract_document
+
+        def build(doc):
+            xml = (
+                f'<w:p xmlns:w="{_W}">'
+                '<w:fldSimple w:instr=" MERGEFIELD city \\* MERGEFORMAT "><w:r><w:t>x</w:t></w:r>'
+                "</w:fldSimple>"
+                '<w:sdt><w:sdtPr><w:tag w:val="job_title"/></w:sdtPr><w:sdtContent>'
+                "<w:r><w:t>Role</w:t></w:r></w:sdtContent></w:sdt>"
+                '<w:sdt><w:sdtPr><w:tag w:val="agree"/><w:checkbox/></w:sdtPr><w:sdtContent>'
+                "<w:r><w:t>BOX</w:t></w:r></w:sdtContent></w:sdt></w:p>"
+            )
+            doc.element.body.insert(0, etree.fromstring(xml))
+
+        result = extract_document(str(_docx_with(tmp_path, build)))
+        assert "[[city]]" in result.markdown and "[[job_title]]" in result.markdown
+        assert "BOX" in result.markdown and "agree" not in result.fields
+
+    def test_extract_file_still_returns_a_string(self, tmp_path):
+        from md_doc.builders.docx import _insert_merge_field
+
+        def build(doc):
+            _insert_merge_field(doc.add_paragraph(), "city")
+
+        assert "[[city]]" in extract_file(str(_docx_with(tmp_path, build)))
+
+
+class TestOtherFormats:
+    def test_html(self, tmp_path):
+        from md_doc.extractors import extract_document
+
+        page = tmp_path / "page.html"
+        page.write_text("<h1>Heading</h1><p>Some <b>bold</b> text [[name]].</p>")
+        result = extract_document(str(page))
+        assert "# Heading" in result.markdown and "**bold**" in result.markdown
+        assert result.fields == ["name"]
+
+    def test_pptx(self, tmp_path):
+        from pptx import Presentation
+
+        deck = Presentation()
+        slide = deck.slides.add_slide(deck.slide_layouts[0])
+        slide.shapes.title.text = "Quarterly review"
+        path = tmp_path / "deck.pptx"
+        deck.save(str(path))
+        assert "Quarterly review" in extract_file(str(path))
+
+
+class TestSuggestFrontmatter:
+    def test_keeps_the_original_name_for_output(self):
+        from md_doc.extractors import suggest_frontmatter
+
+        text = suggest_frontmatter("Client Proposal.docx", [])
+        assert 'title: "Client Proposal"' in text
+        assert 'output_filename: "Client Proposal"' in text
+        assert "outputs: [pdf, docx]" in text and text.endswith("---\n\n")
+
+    def test_template_with_fields_builds_a_fillable_dotx(self):
+        from md_doc.extractors import suggest_frontmatter
+
+        text = suggest_frontmatter("letter.dotx", ["a"])
+        assert "outputs: [dotx]" in text and "dotx_field_type: form" in text
+
+    def test_deck(self):
+        from md_doc.extractors import suggest_frontmatter
+
+        assert "slide_split: h1" in suggest_frontmatter("deck.pptx", [])
+
+    def test_xlsx(self, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        book = openpyxl.Workbook()
+        book.active.append(["Item", "Cost"])
+        book.active.append(["Widget", 5])
+        path = tmp_path / "prices.xlsx"
+        book.save(str(path))
+        text = extract_file(str(path))
+        assert "| Item | Cost |" in text and "Widget" in text

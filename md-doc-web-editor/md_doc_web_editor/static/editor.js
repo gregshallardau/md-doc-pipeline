@@ -2764,41 +2764,109 @@
     }
     return markdown;
   }
+  const IMPORT_TYPES = ".docx,.dotx,.pptx,.xlsx,.html,.htm,.pdf";
+  const importDirOf = (path) =>
+    path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+  const importStem = (name) =>
+    name
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^A-Za-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || "import";
+  const stripImportImages = (markdown) =>
+    markdown.replace(/!\[[^\]]*\]\(import-image-\d+\.\w+\)\n*/g, "");
+  // Appends the fields that _merge_fields.yml does not already describe.
+  async function addMergeFields(dir, fields) {  // fields: [[name, source file]]
+    const path = dir + "_merge_fields.yml";
+    let existing = null;
+    try {
+      existing = await api("/api/file?path=" + encodeURIComponent(path));
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
+    const known = new Set(
+      [...(existing?.content ?? "").matchAll(/^([\w]+)\s*:/gm)].map((m) => m[1]),
+    );
+    const missing = fields.filter(([name]) => !known.has(name));
+    if (!missing.length) return 0;
+    const lines = missing.map(([name, source]) => `${name}: Imported from ${source}\n`).join("");
+    if (existing) {
+      await api("/api/file", {
+        method: "PUT",
+        body: JSON.stringify({
+          path,
+          content: existing.content.replace(/\n*$/, "\n") + lines,
+          revision: existing.revision,
+        }),
+      });
+    } else {
+      await api("/api/files/action", {
+        method: "POST",
+        body: JSON.stringify({ action: "new", path, content: lines }),
+      });
+    }
+    return missing.length;
+  }
+  // Writes one converted document as a new file: images, starter frontmatter.
+  async function writeImported(item, markdown, path, { images, frontmatter }) {
+    const dir = importDirOf(path);
+    markdown = images
+      ? await storeImportedImages(markdown, item.result.images, dir, importStem(item.name))
+      : stripImportImages(markdown);
+    if (frontmatter) markdown = item.result.frontmatter + markdown;
+    await api("/api/files/action", {
+      method: "POST",
+      body: JSON.stringify({ action: "new", path, content: markdown.trimEnd() + "\n" }),
+    });
+  }
   function importDocument() {
     dialog(
-      "Import a document",
-      `<p>Convert a Word or PDF file to Markdown. You can review the result before anything is saved.</p><label for="import-file">Word or PDF file</label><input class="input" id="import-file" type="file" accept=".docx,.pdf">`,
+      "Import documents",
+      `<p>Convert Word, PowerPoint, Excel, HTML or PDF files to Markdown. Choose several to import them together. You can review the result before anything is saved.</p><label for="import-file">Files</label><input class="input" id="import-file" type="file" multiple accept="${IMPORT_TYPES}"><p id="import-status" aria-live="polite"></p>`,
       [
         { label: "Cancel", run: (d) => d.close() },
         {
           label: "Convert",
           primary: true,
           run: async () => {
-            const file = $("import-file").files[0];
-            if (!file) throw new Error("Choose a file to import");
-            const result = await api("/api/import", {
-              method: "POST",
-              body: JSON.stringify({
-                name: file.name,
-                data: await fileToBase64(file),
-                images: true,
-              }),
-            });
-            importPreview(file.name, result);
+            const files = [...$("import-file").files];
+            if (!files.length) throw new Error("Choose a file to import");
+            const items = [];
+            for (const [index, file] of files.entries()) {
+              $("import-status").textContent =
+                files.length > 1 ? `Converting ${index + 1} of ${files.length}…` : "Converting…";
+              try {
+                const result = await api("/api/import", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    name: file.name,
+                    data: await fileToBase64(file),
+                    images: true,
+                  }),
+                });
+                items.push({ name: file.name, result });
+              } catch (error) {
+                if (files.length === 1) throw error;
+                items.push({ name: file.name, error: error.message });
+              }
+            }
+            if (items.length === 1) importPreview(items[0]);
+            else importBatch(items);
           },
         },
       ],
     );
   }
-  function importPreview(filename, result) {
+  function importPreview(item) {
+    const { result } = item;
     const active = state.active;
     const canInsert = current()?.type === "md";
     const dir = active?.includes("/") ? active.slice(0, active.lastIndexOf("/") + 1) : "";
-    const stem = filename.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "-").toLowerCase() || "import";
     const count = result.images.length;
+    const fields = result.fields;
     dialog(
       "Review imported Markdown",
-      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" checked> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new"> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(dir)}${escape(stem)}.md">${count ? `<label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}`,
+      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" checked> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new"> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(dir)}${escape(importStem(item.name))}.md"><label><input type="checkbox" id="import-frontmatter" checked> Add starter frontmatter to a new document (title, output name, formats)</label>${count ? `<br><label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}${fields.length ? `<br><label><input type="checkbox" id="import-fields" checked> Add ${fields.length} merge field${fields.length === 1 ? "" : "s"} to _merge_fields.yml: <code>${escape(fields.join(", "))}</code></label>` : ""}`,
       [
         { label: "Back", run: () => importDocument() },
         {
@@ -2806,33 +2874,122 @@
           primary: true,
           run: async (d) => {
             const insert =
-              canInsert && document.querySelector('input[name="import-mode"]:checked')?.value === "insert";
+              canInsert &&
+              document.querySelector('input[name="import-mode"]:checked')?.value === "insert";
             const path = $("import-path").value.trim();
             if (!insert && !path) throw new Error("Enter a path for the new document");
-            const target = insert ? dir : path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
-            let markdown = $("import-preview").value;
-            const keep = $("import-images")?.checked ?? false;
-            if (keep) markdown = await storeImportedImages(markdown, result.images, target, stem);
-            else
-              markdown = markdown.replace(/!\[[^\]]*\]\(import-image-\d+\.\w+\)\n*/g, "");
+            const images = $("import-images")?.checked ?? false;
+            const edited = $("import-preview").value;
+            let added = 0;
             if (insert) {
+              const markdown = images
+                ? await storeImportedImages(edited, result.images, dir, importStem(item.name))
+                : stripImportImages(edited);
               if (state.mode === "write") setEditMode("source");
-              const range = state.editor.getSelection();
               state.editor.executeEdits("import", [
-                { range, text: markdown.trimEnd() + "\n", forceMoveMarkers: true },
+                {
+                  range: state.editor.getSelection(),
+                  text: markdown.trimEnd() + "\n",
+                  forceMoveMarkers: true,
+                },
               ]);
               state.editor.focus();
-              d.close();
-              toast("Imported at the cursor");
-              return;
+            } else {
+              await writeImported(item, edited, path, {
+                images,
+                frontmatter: $("import-frontmatter").checked,
+              });
             }
-            await api("/api/files/action", {
-              method: "POST",
-              body: JSON.stringify({ action: "new", path, content: markdown }),
-            });
+            if ($("import-fields")?.checked)
+              added = await addMergeFields(
+                insert ? dir : importDirOf(path),
+                fields.map((name) => [name, item.name]),
+              );
+            d.close();
+            if (!insert) {
+              await loadTree();
+              await openFile(path);
+            }
+            toast(
+              (insert ? "Imported at the cursor" : "Imported " + path) +
+                (added ? `; ${added} merge field${added === 1 ? "" : "s"} added` : ""),
+            );
+          },
+        },
+      ],
+      true,
+    );
+  }
+  function importBatch(items) {
+    const dir = importDirOf(state.active ?? "");
+    const used = new Set();
+    const rows = items.map((item, index) => {
+      if (item.error) {
+        return `<tr><td></td><td>${escape(item.name)}</td><td colspan="2" style="color:var(--danger,#b42318)">${escape(item.error)}</td></tr>`;
+      }
+      let path = `${dir}${importStem(item.name)}.md`;
+      if (used.has(path))
+        path = `${dir}${importStem(item.name)}-${item.name.split(".").pop().toLowerCase()}.md`;
+      used.add(path);
+      const { images, fields } = item.result;
+      const notes = [
+        images.length ? `${images.length} image${images.length === 1 ? "" : "s"}` : "",
+        fields.length ? `${fields.length} field${fields.length === 1 ? "" : "s"}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `<tr><td><input type="checkbox" data-import-row="${index}" checked aria-label="Import ${escape(item.name)}"></td><td>${escape(item.name)}</td><td><input class="input" data-import-path="${index}" value="${escape(path)}" aria-label="Path for ${escape(item.name)}"></td><td>${escape(notes)}</td></tr>`;
+    });
+    const hasImages = items.some((item) => item.result?.images.length);
+    const hasFields = items.some((item) => item.result?.fields.length);
+    dialog(
+      "Import " + items.length + " documents",
+      `<p>Each file becomes a new document. Existing files are never overwritten.</p><table style="width:100%"><thead><tr><th></th><th>File</th><th>Save as</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table><label><input type="checkbox" id="import-frontmatter" checked> Add starter frontmatter (title, output name, formats)</label>${hasImages ? `<br><label><input type="checkbox" id="import-images" checked> Save images to each document's assets folder</label>` : ""}${hasFields ? `<br><label><input type="checkbox" id="import-fields" checked> Add merge fields to _merge_fields.yml in each folder</label>` : ""}`,
+      [
+        { label: "Back", run: () => importDocument() },
+        {
+          label: "Import selected",
+          primary: true,
+          run: async (d) => {
+            const options = {
+              images: $("import-images")?.checked ?? false,
+              frontmatter: $("import-frontmatter").checked,
+            };
+            const done = [];
+            const failed = [];
+            for (const box of document.querySelectorAll("[data-import-row]:checked")) {
+              const item = items[Number(box.dataset.importRow)];
+              const path = document
+                .querySelector(`[data-import-path="${box.dataset.importRow}"]`)
+                .value.trim();
+              try {
+                if (!path) throw new Error("Enter a path");
+                await writeImported(item, item.result.markdown, path, options);
+                done.push({ item, path });
+              } catch (error) {
+                failed.push(`${item.name}: ${error.message}`);
+              }
+            }
+            let added = 0;
+            if ($("import-fields")?.checked) {
+              const byDir = new Map();
+              for (const { item, path } of done) {
+                const folder = importDirOf(path);
+                const entry = byDir.get(folder) ?? new Map();
+                item.result.fields.forEach((name) => entry.has(name) || entry.set(name, item.name));
+                byDir.set(folder, entry);
+              }
+              for (const [folder, entry] of byDir)
+                if (entry.size) added += await addMergeFields(folder, [...entry]);
+            }
             d.close();
             await loadTree();
-            await openFile(path);
+            if (done.length) await openFile(done[0].path);
+            toast(
+              `Imported ${done.length} of ${items.filter((i) => !i.error).length} documents` +
+                (added ? `; ${added} merge field${added === 1 ? "" : "s"} added` : ""),
+            );
+            if (failed.length) toast(failed.join("; "), true);
           },
         },
       ],

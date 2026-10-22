@@ -340,6 +340,30 @@ def test_import_returns_embedded_images_separately(project):
     assert base64.b64decode(image["data"]).startswith(b"\x89PNG")
 
 
+def test_import_reports_merge_fields_and_starter_frontmatter(project):
+    import base64
+    import docx
+
+    from md_doc.builders.docx import _insert_form_field
+
+    document = docx.Document()
+    _insert_form_field(document.add_paragraph("Dear "), "contact_name", 1)
+    content = io.BytesIO()
+    document.save(content)
+    data = base64.b64encode(content.getvalue()).decode()
+    with TestClient(create_app(project)) as client:
+        result = client.post("/api/import", json={"name": "Welcome Letter.dotx", "data": data})
+        assert result.status_code == 200
+        body = result.json()
+        assert "[[contact_name]]" in body["markdown"] and body["fields"] == ["contact_name"]
+        assert 'output_filename: "Welcome Letter"' in body["frontmatter"]
+        assert "outputs: [dotx]" in body["frontmatter"]
+        html = base64.b64encode(b"<h1>Page</h1><p>Text</p>").decode()
+        page = client.post("/api/import", json={"name": "p.html", "data": html})
+        assert "# Page" in page.json()["markdown"]
+        assert client.post("/api/import", json={"name": "p.exe", "data": html}).status_code == 400
+
+
 def test_cancelled_jobs_reap_worker_and_remove_snapshot(project):
     with TestClient(create_app(project)) as client:
         result = client.post("/api/preview/jobs", json={"path": "doc.md"}).json()

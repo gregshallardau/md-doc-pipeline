@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Import in the web editor.** Upload one or more files, review the Markdown in a preview,
+  then insert it at the cursor or save new documents (batch review for several). Embedded
+  Word images are saved under `assets/`, merge fields can be added to `_merge_fields.yml`,
+  and new documents get starter frontmatter (title, original output name, formats).
+- **`md-doc extract` reads more.** `.dotx`, `.pptx`, `.html` and (with `uv sync --extra xlsx`)
+  `.xlsx`, and Word merge fields, text form fields and plain-text content controls come
+  back as `[[field]]`; the command lists the fields it found.
 - **CriticMarkup review marks.** `{++add++}`, `{--delete--}`, `{~~old~>new~~}`,
   `{==highlight==}{>>comment<<}` in Markdown. `review_markup: accept | reject | show` (default
   `accept`; also `md-doc build --review`) applies, reverts or shows them: coloured marks and

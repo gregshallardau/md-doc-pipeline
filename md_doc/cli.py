@@ -2051,21 +2051,25 @@ def theme_override(directory: Path, force: bool) -> None:
     help="Overwrite existing output file without prompting.",
 )
 def extract(file_path: str, dest: str, force: bool) -> None:
-    """Extract Markdown from a PDF or DOCX file.
+    """Extract Markdown from a Word, PowerPoint, Excel, HTML or PDF file.
 
-    Converts a PDF or DOCX file to Markdown and saves it to the specified destination.
+    Converts the file to Markdown and saves it to the specified destination.
     Output filename is derived from the source filename (with .md extension).
+    Merge fields and form fields in a .docx or .dotx come out as [[field]] and are listed.
+    Excel (.xlsx) needs the optional extra: uv sync --extra xlsx
 
     \b
     Examples:
         md-doc extract proposal.pdf --dest templates/
         md-doc extract contract.docx --dest snippets/
+        md-doc extract letter.dotx --dest templates/  # fields become [[field]]
         md-doc extract form.pdf  # defaults to templates/
     """
-    from md_doc.extractors import extract_file
+    from md_doc.extractors import extract_document
 
     try:
-        markdown_content = extract_file(file_path)
+        extraction = extract_document(file_path)
+        markdown_content = extraction.markdown
 
         source_path = Path(file_path)
         dest_path = Path(dest)
@@ -2080,6 +2084,8 @@ def extract(file_path: str, dest: str, force: bool) -> None:
         output_file.write_text(markdown_content or "", encoding="utf-8")
 
         click.echo(f"{_ok('✓')} Extracted: {_info(source_path.name)} → {_info(str(output_file))}")
+        if extraction.fields:
+            click.echo(f"  Fields: {', '.join(extraction.fields)}")
 
     except FileNotFoundError as e:
         click.echo(f"{_err('ERROR')} {e}", err=True)

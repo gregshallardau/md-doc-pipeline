@@ -27,7 +27,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 - **Cascading themes** — `_pdf-theme.css`, shared `_theme.css` and Word-only `_docx-theme.css` at any folder level; deepest wins. `md-doc theme init` generates a full theme, `md-doc theme override` a colour-only override, and `--mddoc-*` custom properties set brand defaults in CSS ([theming guide](docs/handbook.md#themes))
 - **Fillable PDF forms** — `pdf_forms: true` with a `?[text: name]` shorthand, bordered `?[box]` grids, signatures and Yes/No pairs; the same source gives real Word form fields in `.dotx` ([forms guide](docs/handbook.md#forms))
 - **Diagrams and maths** — Mermaid flowcharts, charts, Gantt, sequence, mind map, ER and state diagrams, plus LaTeX equations, in PDF and Word ([Markdown reference](docs/handbook.md#markdown))
-- **Export and extract** — `md-doc export` builds only the notes marked `export: true` ([export guide](docs/handbook.md#exporting)); `md-doc extract` turns a PDF or DOCX back into Markdown ([extraction guide](docs/handbook.md#extracting))
+- **Export and extract** — `md-doc export` builds only the notes marked `export: true` ([export guide](docs/handbook.md#exporting)); `md-doc extract` turns Word, PowerPoint, Excel, HTML or PDF back into Markdown, keeping merge fields as `[[fields]]` ([extraction guide](docs/handbook.md#extracting))
 - **Editors** — a browser editor with live preview ([md-doc-web-editor](md-doc-web-editor/README.md), [Filament plugin](https://github.com/gregshallardau/filament-md-doc)) and a [Neovim plugin](nvim-plugin/README.md) that resolves includes and variables inline
 - **Merge field schema** — `_merge_fields.yml` at any level defines and documents available `[[fields]]`, cascading upward
 - **Document register** — JSON + Markdown index of all built outputs for audit trails
@@ -427,7 +427,7 @@ The `.dotx` file is ready to open in Word — tab through the Text Form Fields a
 | `md-doc new folder NAME` / `new doc NAME` | Scaffold a folder (with `_meta.yml`) or a document (`--in DIR`) |
 | `md-doc theme init [DIR]` / `theme override [DIR]` | Write a full `_pdf-theme.css`, or a colour-only override of the parent theme |
 | `md-doc export [SOURCE]` | Build only notes marked `export: true` (`--tag`, `-o`, `-f`, `-w`) |
-| `md-doc extract FILE` | Convert a PDF or DOCX to Markdown |
+| `md-doc extract FILE` | Convert a Word, PowerPoint, Excel, HTML or PDF file to Markdown |
 | `md-doc sync [ROOT]` | Upload built files to Azure, S3 or a folder (`-b`, `--dry-run`, `-w`) |
 | `md-doc register [ROOT]` | Write `register.json`, `.md` and `.csv` |
 | `md-doc workspaces` | List named remote workspaces |
