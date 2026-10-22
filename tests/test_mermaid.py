@@ -129,3 +129,55 @@ def test_office_diagram_preserves_pdf_sizing():
         '<pre><code class="language-mermaid">gauge\n value 42</code></pre>', None
     )
     assert images and 'width="280"' in gauge
+
+
+def _overlaps(fc: m.Flowchart) -> list[tuple[str, str]]:
+    nodes = list(fc.nodes.values())
+    return [
+        (a.id, b.id)
+        for i, a in enumerate(nodes)
+        for b in nodes[i + 1 :]
+        if a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h
+    ]
+
+
+def test_td_flowchart_siblings_do_not_overlap():
+    fc = m.parse("flowchart TD\n A --> B\n B -->|Yes| C\n B -->|No| D\n C --> E\n D --> E")
+    m.layout(fc)
+    assert _overlaps(fc) == []
+    assert fc.nodes["C"].x != fc.nodes["D"].x
+    # the shared child sits between its parents, and the root is centred over B
+    c, d, e = fc.nodes["C"], fc.nodes["D"], fc.nodes["E"]
+    assert c.x < e.x + e.w / 2 < d.x + d.w
+    assert fc.nodes["A"].x + fc.nodes["A"].w / 2 == fc.nodes["B"].x + fc.nodes["B"].w / 2
+
+
+def test_cycle_does_not_push_node_past_descendant():
+    fc = m.parse("flowchart LR\n A --> B\n B --> C\n C --> B")
+    levels = m._compute_levels(fc)
+    assert levels["A"] < levels["B"] < levels["C"]
+
+
+def test_gantt_bars_follow_dates_and_dependencies():
+    gc = m.parse_gantt(
+        "gantt\n section S\n A : a1, 2026-01-01, 10d\n B : after a1, 20d\n C : 2026-01-31, 10d"
+    )
+    _, spans = m._resolve_gantt(gc)
+    assert spans == [(0.0, 10.0), (10.0, 30.0), (30.0, 40.0)]
+    svg = m.render_gantt_svg(gc)
+    assert svg.count("<rect") >= 4 and "01 Jan" in svg
+
+
+def test_gantt_status_tags_are_not_task_ids():
+    gc = m.parse_gantt("gantt\n Build : done, b1, 2026-01-01, 5d")
+    assert gc.tasks[0].task_id == "b1" and gc.tasks[0].duration == "5d"
+
+
+def test_state_diagram_markers_and_reciprocal_edges_do_not_collide():
+    sd = m.parse_state(
+        "stateDiagram-v2\n [*] --> Idle\n Idle --> Run : go\n Run --> Idle : stop\n Run --> [*]"
+    )
+    svg = m.render_state_svg(sd)
+    assert svg.count("<circle") == 4  # filled start dot + end marker (3 circles)
+    paths = [line for line in svg.splitlines() if line.startswith("<path") and "arr" in line]
+    assert len(paths) == len(set(paths)) == 4  # go/stop edges take separate lanes

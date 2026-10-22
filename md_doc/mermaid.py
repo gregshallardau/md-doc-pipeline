@@ -38,6 +38,7 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -188,6 +189,7 @@ class StateTransition:
 
 @dataclass
 class StateDiagram:
+    direction: str = "LR"
     states: list[str] = field(default_factory=list)
     transitions: list[StateTransition] = field(default_factory=list)
 
@@ -784,6 +786,9 @@ def parse_timeline(source: str) -> Timeline:
 # ---------------------------------------------------------------------------
 
 
+_GANTT_TAGS = {"done", "active", "crit", "milestone"}
+
+
 def parse_gantt(source: str) -> GanttChart:
     """Parse a Mermaid gantt chart definition."""
     gc = GanttChart()
@@ -821,6 +826,8 @@ def parse_gantt(source: str) -> GanttChart:
             task = GanttTask(name=name, section=current_section)
             # Parse params — could be: id,start,dur or start,dur or after id,dur
             for p in params:
+                if p.lower() in _GANTT_TAGS:
+                    continue
                 if p.startswith("after "):
                     task.start = p
                 elif re.match(r"^\w+$", p) and not task.task_id and not re.match(r"^\d", p):
@@ -991,6 +998,7 @@ def parse_state(source: str) -> StateDiagram:
         if re.match(r"^stateDiagram", line, re.IGNORECASE):
             continue
         if line.startswith("direction "):
+            sd.direction = line.split(None, 1)[1].strip().upper()
             continue
 
         # Transition: State1 --> State2 : label
@@ -1012,33 +1020,134 @@ def parse_state(source: str) -> StateDiagram:
 
 
 def _compute_levels(fc: Flowchart) -> dict[str, int]:
-    """Assign each node a level (column for LR, row for TD) via BFS."""
+    """Assign each node a level (column for LR, row for TD).
+
+    Back edges (those closing a cycle) are ignored so loops don't push a node
+    past its own descendants; every other node sits one level after its deepest
+    predecessor.
+    """
     children: dict[str, list[str]] = defaultdict(list)
     has_parent: set[str] = set()
     for e in fc.edges:
-        children[e.src].append(e.dst)
+        if e.dst not in children[e.src]:
+            children[e.src].append(e.dst)
         has_parent.add(e.dst)
 
     roots = [nid for nid in fc.nodes if nid not in has_parent]
-    if not roots:
-        roots = [next(iter(fc.nodes))] if fc.nodes else []
+    if not roots and fc.nodes:
+        roots = [next(iter(fc.nodes))]
 
-    levels: dict[str, int] = {}
-    queue = [(r, 0) for r in roots]
-    while queue:
-        nid, lvl = queue.pop(0)
-        if nid in levels:
-            levels[nid] = max(levels[nid], lvl)
-            continue
-        levels[nid] = lvl
+    visiting: set[str] = set()
+    done: set[str] = set()
+    back: set[tuple[str, str]] = set()
+    postorder: list[str] = []
+
+    def _dfs(nid: str) -> None:
+        visiting.add(nid)
         for child in children.get(nid, []):
-            queue.append((child, lvl + 1))
+            if child in visiting:
+                back.add((nid, child))
+            elif child not in done:
+                _dfs(child)
+        visiting.discard(nid)
+        done.add(nid)
+        postorder.append(nid)
 
-    for nid in fc.nodes:
-        if nid not in levels:
-            levels[nid] = 0
+    for nid in [*roots, *fc.nodes]:
+        if nid not in done:
+            _dfs(nid)
 
+    levels: dict[str, int] = {nid: 0 for nid in fc.nodes}
+    for nid in reversed(postorder):
+        for child in children.get(nid, []):
+            if (nid, child) not in back:
+                levels[child] = max(levels[child], levels[nid] + 1)
     return levels
+
+
+def _layout_vertical(
+    fc: Flowchart,
+    levels: dict[str, int],
+    level_groups: dict[int, list[str]],
+    children_map: dict[str, list[str]],
+    row_y: dict[int, float],
+    padding: float,
+    gap: float,
+) -> None:
+    """Place nodes for TD/BT charts: ordered rows, parents centred over children.
+
+    Nodes in a row never overlap. Siblings sharing the same parents are packed
+    as a cluster centred under them; a top-down, bottom-up, top-down sweep
+    settles parents and children against each other.
+    """
+    parents_map: dict[str, list[str]] = defaultdict(list)
+    for src, kids in children_map.items():
+        for k in kids:
+            if levels.get(src, 0) < levels.get(k, 0):
+                parents_map[k].append(src)
+
+    order: dict[int, list[str]] = {}
+    index: dict[str, int] = {}
+    for lvl in sorted(level_groups):
+        nids = list(level_groups[lvl])
+        if lvl > 0:
+
+            def _bary(n: str, nids: list[str] = nids) -> float:
+                ps = [index[p] for p in parents_map.get(n, []) if p in index]
+                return sum(ps) / len(ps) if ps else float(nids.index(n))
+
+            nids.sort(key=_bary)
+        order[lvl] = nids
+        for i, n in enumerate(nids):
+            index[n] = i
+
+    center: dict[str, float] = {}
+
+    def _pack(clusters: list[tuple[list[str], float | None]]) -> None:
+        right = float(padding) - gap
+        for members, desired in clusters:
+            width = sum(fc.nodes[n].w for n in members) + gap * (len(members) - 1)
+            left = right + gap
+            if desired is not None:
+                left = max(left, desired - width / 2)
+            for n in members:
+                center[n] = left + fc.nodes[n].w / 2
+                left += fc.nodes[n].w + gap
+            right = left - gap
+
+    def _top_down() -> None:
+        for lvl in sorted(order):
+            clusters: list[tuple[list[str], float | None]] = []
+            prev_key: tuple[str, ...] | None = None
+            for n in order[lvl]:
+                ps = [p for p in parents_map.get(n, []) if p in center]
+                key = tuple(ps)
+                desired = sum(center[p] for p in ps) / len(ps) if ps else None
+                if ps and key == prev_key:
+                    clusters[-1][0].append(n)
+                else:
+                    clusters.append(([n], desired if ps else center.get(n)))
+                prev_key = key if ps else None
+            _pack(clusters)
+
+    def _bottom_up() -> None:
+        for lvl in sorted(order, reverse=True):
+            clusters = []
+            for n in order[lvl]:
+                ks = [k for k in children_map.get(n, []) if levels.get(k, 0) > lvl and k in center]
+                desired = sum(center[k] for k in ks) / len(ks) if ks else center.get(n)
+                clusters.append(([n], desired))
+            _pack(clusters)
+
+    _top_down()
+    _bottom_up()
+    _top_down()
+
+    shift = min(center[n] - fc.nodes[n].w / 2 for n in center) - padding
+    for n, c in center.items():
+        node = fc.nodes[n]
+        node.x = c - node.w / 2 - shift
+        node.y = row_y[levels[n]]
 
 
 def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
@@ -1050,6 +1159,9 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
 
     # Compute text-based node sizes
     for node in fc.nodes.values():
+        if node.shape in ("start", "end"):
+            node.w = node.h = 20
+            continue
         lines = node.label.split("\n") if "\n" in node.label else node.label.split("<br>")
         max_chars = max(len(line) for line in lines)
         num_lines = len(lines)
@@ -1084,11 +1196,14 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             children_map[e.src].append(e.dst)
 
     is_horizontal = fc.direction in ("LR", "RL")
-    gap_major = 60
+    gap_major: float = 60
     gap_minor = 30
     padding = 30
 
     if is_horizontal:
+        longest_label = max((len(e.label) for e in fc.edges), default=0)
+        gap_major = max(gap_major, longest_label * 5.5 + 56)
+
         # Normalize widths in each column
         for lvl, nids in level_groups.items():
             rect_nodes = [
@@ -1129,33 +1244,7 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             max_h = max(fc.nodes[n].h for n in level_groups[lvl])
             y_cursor += max_h + gap_major
 
-        max_lvl = max(level_groups.keys()) if level_groups else 0
-
-        for lvl in sorted(level_groups.keys(), reverse=True):
-            nids = level_groups[lvl]
-            if lvl == max_lvl or not any(children_map.get(n) for n in nids):
-                x_cursor = float(padding)
-                for nid in nids:
-                    node = fc.nodes[nid]
-                    node.x = x_cursor
-                    node.y = row_y[lvl]
-                    x_cursor += node.w + gap_minor
-            else:
-                for nid in nids:
-                    node = fc.nodes[nid]
-                    node.y = row_y[lvl]
-                    kids = children_map.get(nid, [])
-                    if kids:
-                        kid_nodes = [fc.nodes[k] for k in kids if k in fc.nodes]
-                        if kid_nodes:
-                            kids_left = min(k.x for k in kid_nodes)
-                            kids_right = max(k.x + k.w for k in kid_nodes)
-                            kids_center = (kids_left + kids_right) / 2
-                            node.x = kids_center - node.w / 2
-                        else:
-                            node.x = padding
-                    else:
-                        node.x = padding
+        _layout_vertical(fc, levels, level_groups, children_map, row_y, padding, gap_minor)
 
     # Compute subgraph bounding boxes
     for sg in fc.subgraphs:
@@ -1237,7 +1326,10 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         dst = fc.nodes.get(edge.dst)
         if not src or not dst:
             continue
-        parts.append(_render_edge(src, dst, edge.label, fc.direction, t, edge.style))
+        lane = 0.0
+        if any(o.src == edge.dst and o.dst == edge.src for o in fc.edges):
+            lane = -7.0 if edge.src < edge.dst else 7.0
+        parts.append(_render_edge(src, dst, edge.label, fc.direction, t, edge.style, lane))
 
     # Draw nodes
     for node in fc.nodes.values():
@@ -1276,6 +1368,14 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     cx = node.x + node.w / 2
     cy = node.y + node.h / 2
     parts: list[str] = []
+
+    if node.shape in ("start", "end"):
+        primary = t.get("primary", "#1b4f72")
+        parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2}" fill="{primary}"/>')
+        if node.shape == "end":
+            parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 3}" fill="#ffffff"/>')
+            parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 5}" fill="{primary}"/>')
+        return "\n".join(parts)
 
     if node.shape == "diamond":
         fill = t.get("diamond_fill", "#fef5e7")
@@ -1404,7 +1504,13 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
 
 
 def _render_edge(
-    src: Node, dst: Node, label: str, direction: str, t: dict[str, str], style: str = "solid"
+    src: Node,
+    dst: Node,
+    label: str,
+    direction: str,
+    t: dict[str, str],
+    style: str = "solid",
+    lane: float = 0.0,
 ) -> str:
     """Render an edge between two nodes."""
     font = t.get("font", DEFAULT_THEME["font"])
@@ -1424,6 +1530,7 @@ def _render_edge(
         marker = ""  # no arrowhead
 
     is_h = direction in ("LR", "RL")
+    label_xy: tuple[float, float] | None = None  # set for elbow edges
 
     if is_h:
         if src.x + src.w / 2 < dst.x + dst.w / 2:
@@ -1432,15 +1539,18 @@ def _render_edge(
         else:
             x1, y1 = src.x, src.y + src.h / 2
             x2, y2 = dst.x + dst.w, dst.y + dst.h / 2
+        y1 += lane
+        y2 += lane
 
         if abs(y1 - y2) < 2:
             parts.append(f'<path d="M {x1},{y1} L {x2},{y2}" {stroke_attrs}{marker}/>')
         else:
-            mid_x = (x1 + x2) / 2
+            mid_x = (x1 + x2) / 2 + lane
             parts.append(
                 f'<path d="M {x1},{y1} L {mid_x},{y1} L {mid_x},{y2} L {x2},{y2}" '
                 f"{stroke_attrs}{marker}/>"
             )
+            label_xy = ((mid_x + x2) / 2, y2 - 5)
     else:
         if src.y + src.h / 2 < dst.y + dst.h / 2:
             x1, y1 = src.x + src.w / 2, src.y + src.h
@@ -1448,24 +1558,29 @@ def _render_edge(
         else:
             x1, y1 = src.x + src.w / 2, src.y
             x2, y2 = dst.x + dst.w / 2, dst.y + dst.h
+        x1 += lane
+        x2 += lane
 
         if abs(x1 - x2) < 2:
             parts.append(f'<path d="M {x1},{y1} L {x2},{y2}" {stroke_attrs}{marker}/>')
         else:
-            mid_y = (y1 + y2) / 2
+            mid_y = (y1 + y2) / 2 + lane
             parts.append(
                 f'<path d="M {x1},{y1} L {x1},{mid_y} L {x2},{mid_y} L {x2},{y2}" '
                 f"{stroke_attrs}{marker}/>"
             )
+            label_xy = (x2 + len(label) * 2.75 + 8, (mid_y + y2) / 2 + 3)
 
     # Edge label
     if label:
         lx = (src.x + src.w / 2 + dst.x + dst.w / 2) / 2
         ly = (src.y + src.h / 2 + dst.y + dst.h / 2) / 2
-        if is_h:
-            ly -= 8
+        if label_xy:
+            lx, ly = label_xy
+        elif is_h:
+            ly += lane * 2.2 if lane else -8
         else:
-            lx += 10
+            lx += lane * 2.2 if lane else 10
         # Background for readability
         est_w = len(label) * 5.5 + 8
         parts.append(
@@ -2145,6 +2260,65 @@ def render_timeline_svg(tl: Timeline, theme: dict[str, str] | None = None) -> st
 # ---------------------------------------------------------------------------
 
 
+_GANTT_DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([dwMmyh])$")
+_GANTT_UNIT_DAYS = {"d": 1.0, "w": 7.0, "M": 30.0, "y": 365.0, "h": 1 / 24, "m": 1 / 1440}
+
+
+def _gantt_date(text: str) -> date | None:
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _gantt_days(text: str) -> float | None:
+    m = _GANTT_DURATION_RE.match(text.strip())
+    return float(m.group(1)) * _GANTT_UNIT_DAYS[m.group(2)] if m else None
+
+
+def _resolve_gantt(gc: GanttChart) -> tuple[date, list[tuple[float, float]]]:
+    """Return (origin date, [(start_day, end_day), ...]) aligned with ``gc.tasks``.
+
+    Handles absolute dates, ``after id`` dependencies, bare durations, end dates and
+    tasks with no start (which follow the previous task).
+    """
+    spans: dict[str, tuple[float, float]] = {}
+    out: list[tuple[float, float]] = []
+    origin: date | None = None
+    for task in gc.tasks:
+        d = _gantt_date(task.start)
+        if d is not None:
+            origin = origin or d
+    origin = origin or date.today()
+    prev_end = 0.0
+    for task in gc.tasks:
+        start_text, dur_text = task.start.strip(), task.duration.strip()
+        dur = _gantt_days(dur_text)
+        if dur is None and _gantt_days(start_text) is not None:
+            dur, start_text = _gantt_days(start_text), ""
+        start: float | None = None
+        if start_text.lower().startswith("after "):
+            deps = [spans[i][1] for i in start_text[6:].split() if i in spans]
+            start = max(deps) if deps else prev_end
+        elif (d := _gantt_date(start_text)) is not None:
+            start = float((d - origin).days)
+        if start is None:
+            start = prev_end
+        end_date = _gantt_date(dur_text)
+        if end_date is not None:
+            end = float((end_date - origin).days)
+        else:
+            end = start + (dur if dur is not None else 1.0)
+        end = max(end, start + 0.25)
+        if task.task_id:
+            spans[task.task_id] = (start, end)
+        out.append((start, end))
+        prev_end = end
+    return origin, out
+
+
 def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str:
     """Render a GanttChart to an SVG string."""
     t = {**DEFAULT_THEME, **(theme or {})}
@@ -2157,7 +2331,7 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
     # Layout
     left_margin = 30
     label_w = 140
-    top_margin = 50
+    top_margin = 62
     row_h = 28
     bar_h = 18
     chart_w = 400
@@ -2180,6 +2354,11 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
     height = top_margin + total_rows * row_h + 30
     width = left_margin + label_w + chart_w + 40
 
+    origin, timeline = _resolve_gantt(gc)
+    min_day = min(a for a, _ in timeline)
+    max_day = max(b for _, b in timeline)
+    px_per_day = chart_w / max(max_day - min_day, 1.0)
+
     parts: list[str] = []
     parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
 
@@ -2188,6 +2367,24 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             f'<text x="{width / 2}" y="28" text-anchor="middle" '
             f'font-family="{font}" font-size="14" font-weight="700" '
             f'fill="{body_color}">{_escape(gc.title)}</text>'
+        )
+
+    # Date axis with gridlines
+    span = max_day - min_day
+    ticks = 5
+    label_fmt = "%b %Y" if span > 150 else "%d %b"
+    for i in range(ticks + 1):
+        day = min_day + span * i / ticks
+        gx = left_margin + label_w + (day - min_day) * px_per_day
+        parts.append(
+            f'<line x1="{gx:.1f}" y1="{top_margin - 6}" x2="{gx:.1f}" '
+            f'y2="{top_margin + total_rows * row_h}" stroke="#d5dbe1" stroke-width="0.6"/>'
+        )
+        anchor = "start" if i == 0 else ("end" if i == ticks else "middle")
+        parts.append(
+            f'<text x="{gx:.1f}" y="{top_margin - 10}" text-anchor="{anchor}" '
+            f'font-family="{font}" font-size="8" fill="#5d6d7e">'
+            f"{(origin + timedelta(days=round(day))).strftime(label_fmt)}</text>"
         )
 
     # Draw tasks
@@ -2216,7 +2413,7 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             if task_idx % 2 == 0:
                 parts.append(
                     f'<rect x="{left_margin}" y="{y}" width="{label_w + chart_w}" '
-                    f'height="{row_h}" fill="#f8f9fa"/>'
+                    f'height="{row_h}" fill="#000000" fill-opacity="0.025"/>'
                 )
 
             # Task label
@@ -2226,22 +2423,23 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
                 f"{_escape(task.name)}</text>"
             )
 
-            # Task bar (simplified — proportional positioning)
-            bar_x: float = left_margin + label_w + task_idx * 30
-            bar_w = max(60, chart_w / max(len(gc.tasks), 1) * 1.5)
-            bar_x = min(bar_x, left_margin + label_w + chart_w - bar_w)
+            t_start, t_end = timeline[task_idx]
+            bar_x = left_margin + label_w + (t_start - min_day) * px_per_day
+            bar_w = max(4.0, (t_end - t_start) * px_per_day)
             bar_y = y + (row_h - bar_h) / 2
 
             parts.append(
-                f'<rect x="{bar_x}" y="{bar_y}" width="{bar_w}" height="{bar_h}" '
+                f'<rect x="{bar_x:.1f}" y="{bar_y}" width="{bar_w:.1f}" height="{bar_h}" '
                 f'rx="4" fill="{color}"/>'
             )
-            parts.append(
-                f'<text x="{bar_x + bar_w / 2}" y="{bar_y + bar_h / 2 + 3}" '
-                f'text-anchor="middle" '
-                f'font-family="{font}" font-size="8" font-weight="600" '
-                f'fill="#ffffff">{_escape(task.duration or task.start or "")}</text>'
-            )
+            bar_label = task.duration if _gantt_days(task.duration) else f"{t_end - t_start:g}d"
+            if bar_w >= len(bar_label) * 5 + 8:
+                parts.append(
+                    f'<text x="{bar_x + bar_w / 2:.1f}" y="{bar_y + bar_h / 2 + 3}" '
+                    f'text-anchor="middle" '
+                    f'font-family="{font}" font-size="8" font-weight="600" '
+                    f'fill="#ffffff">{_escape(bar_label)}</text>'
+                )
 
             y_cursor += row_h
             task_idx += 1
@@ -2518,140 +2716,24 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
 
 
 def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> str:
-    """Render a state diagram to SVG."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    muted = t.get("muted", "#5d6d7e")
-    primary = t.get("primary", "#1b4f72")
-    accent = t.get("accent", "#2e86c1")
-
+    """Render a state diagram to SVG via the flowchart layout engine."""
     if not sd.states:
         return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
 
-    # Layout states in a flow
-    padding = 30
-    state_w = 120
-    state_h = 40
-    gap_x = 80
-    gap_y = 60
-    cols = min(len(sd.states), 4)
-    rows = math.ceil(len(sd.states) / cols)
-
-    state_positions: dict[str, tuple[float, float]] = {}
-    for i, state in enumerate(sd.states):
-        col = i % cols
-        row = i // cols
-        x: float = padding + col * (state_w + gap_x)
-        y: float = padding + row * (state_h + gap_y)
-        state_positions[state] = (x, y)
-
-    width = padding * 2 + cols * (state_w + gap_x) - gap_x
-    height = padding * 2 + rows * (state_h + gap_y) - gap_y + 20
-
-    parts: list[str] = []
-    parts.append(_make_arrow_defs(t, "st-"))
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    # Draw transitions (behind states)
-    for trans in sd.transitions:
-        src_pos = state_positions.get(trans.src)
-        dst_pos = state_positions.get(trans.dst)
-
-        if trans.src == "[*]" and trans.dst in state_positions:
-            # Start transition — draw from a dot above
-            dx, dy = state_positions[trans.dst]
-            dot_x = dx + state_w / 2
-            dot_y = dy - 20
-            parts.append(f'<circle cx="{dot_x}" cy="{dot_y}" r="6" fill="{primary}"/>')
-            parts.append(
-                f'<line x1="{dot_x}" y1="{dot_y + 6}" x2="{dot_x}" y2="{dy}" '
-                f'stroke="{muted}" stroke-width="1.5" marker-end="url(#st-arr)"/>'
-            )
-            continue
-
-        if trans.dst == "[*]" and trans.src in state_positions:
-            # End transition — draw to a dot below
-            sx, sy = state_positions[trans.src]
-            dot_x = sx + state_w / 2
-            dot_y = sy + state_h + 20
-            parts.append(
-                f'<line x1="{dot_x}" y1="{sy + state_h}" x2="{dot_x}" y2="{dot_y - 8}" '
-                f'stroke="{muted}" stroke-width="1.5" marker-end="url(#st-arr)"/>'
-            )
-            parts.append(f'<circle cx="{dot_x}" cy="{dot_y}" r="6" fill="{primary}"/>')
-            parts.append(f'<circle cx="{dot_x}" cy="{dot_y}" r="4" fill="#ffffff"/>')
-            # Adjust height
-            continue
-
-        if not src_pos or not dst_pos:
-            continue
-
-        sx, sy = src_pos
-        dx, dy = dst_pos
-
-        # Connection points
-        scx, scy = sx + state_w / 2, sy + state_h / 2
-        dcx, dcy = dx + state_w / 2, dy + state_h / 2
-
-        if abs(scy - dcy) < 10:
-            # Same row — horizontal
-            if scx < dcx:
-                x1, y1 = sx + state_w, scy
-                x2, y2 = dx, dcy
+    fc = Flowchart(direction=sd.direction if sd.direction in ("LR", "TB", "TD") else "LR")
+    for tr in sd.transitions:
+        ends: list[str] = []
+        for name, marker in ((tr.src, "__start"), (tr.dst, "__end")):
+            if name == "[*]":
+                fc.nodes.setdefault(
+                    marker, Node(marker, "", "start" if marker == "__start" else "end")
+                )
+                ends.append(marker)
             else:
-                x1, y1 = sx, scy
-                x2, y2 = dx + state_w, dcy
-            parts.append(
-                f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
-                f'stroke="{muted}" stroke-width="1.5" marker-end="url(#st-arr)"/>'
-            )
-        else:
-            # Different rows — L-shaped
-            x1, y1 = scx, sy + state_h
-            x2, y2 = dcx, dy
-            mid_y = (y1 + y2) / 2
-            parts.append(
-                f'<path d="M {x1},{y1} L {x1},{mid_y} L {x2},{mid_y} L {x2},{y2}" '
-                f'stroke="{muted}" stroke-width="1.5" fill="none" marker-end="url(#st-arr)"/>'
-            )
-
-        # Transition label
-        if trans.label:
-            lx = (scx + dcx) / 2
-            ly = (scy + dcy) / 2 - 8
-            parts.append(
-                f'<text x="{lx}" y="{ly}" text-anchor="middle" '
-                f'font-family="{font}" font-size="9" fill="{muted}">'
-                f"{_escape(trans.label)}</text>"
-            )
-
-    # Draw states
-    for state in sd.states:
-        if state == "[*]":
-            continue
-        pos = state_positions.get(state)
-        if not pos:
-            continue
-        x, y = pos
-        fill = _lighten(accent, 0.88)
-        parts.append(
-            f'<rect x="{x}" y="{y}" width="{state_w}" height="{state_h}" '
-            f'rx="8" fill="{fill}" stroke="{accent}" stroke-width="1.5"/>'
-        )
-        parts.append(
-            f'<text x="{x + state_w / 2}" y="{y + state_h / 2 + 4}" '
-            f'text-anchor="middle" '
-            f'font-family="{font}" font-size="11" font-weight="600" '
-            f'fill="{body_color}">{_escape(state)}</text>'
-        )
-
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+                fc.nodes.setdefault(name, Node(name, name, "rounded"))
+                ends.append(name)
+        fc.edges.append(Edge(ends[0], ends[1], tr.label))
+    return render_svg(fc, theme)
 
 
 # ---------------------------------------------------------------------------
