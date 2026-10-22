@@ -6,6 +6,9 @@ The server is intentionally small.  Five categories of endpoint:
   * ``/api/file``                — read / write a single file (sandboxed)
   * ``/api/config``, ``/api/css``, ``/api/includes``
                                   — derived data for the right-panel tabs
+  * ``/api/refactor/scan``, ``/api/refactor/apply``
+                                  — find text repeated across documents and move it
+                                    into a shared template
   * ``/api/build``               — run ``md-doc build`` and return a token
   * ``/api/build/{token}``       — stream the built PDF/DOCX
 
@@ -53,6 +56,17 @@ class WriteRequest(BaseModel):
     path: str
     content: str
     revision: str | None = None
+
+
+class RefactorRequest(BaseModel):
+    path: str = ""
+    min_docs: int = 2
+    min_chars: int = 80
+    key: str
+    name: str
+    documents: list[str]
+    revisions: dict[str, str]
+    folder: str | None = None  # templates folder; default: closest one the documents share
 
 
 class BuildRequest(BaseModel):
@@ -391,6 +405,133 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 ),
             }
         )
+
+    # ── Shared-content refactor ───────────────────────────────────────────────
+
+    _FRAGMENT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,60}")
+
+    def _api_path(ws: Workspace, path: Path) -> str:
+        return _prefix(ws) + path.relative_to(ws.root).as_posix()
+
+    def _refactor_groups(path: str, min_docs: int, min_chars: int):
+        from md_doc.refactor import find_shared_sections
+
+        ws, folder = _locate(path)
+        if not folder.is_dir():
+            raise HTTPException(400, "Choose a folder to scan")
+        if not 2 <= min_docs <= 100 or not 10 <= min_chars <= 10_000:
+            raise HTTPException(400, "Minimum documents or characters out of range")
+        return ws, find_shared_sections(folder, min_docs, min_chars)
+
+    @app.get("/api/refactor/scan")
+    def refactor_scan(path: str = "", min_docs: int = 2, min_chars: int = 80) -> JSONResponse:
+        from md_doc.refactor import _discover
+
+        from .snapshots import revision
+
+        ws, groups = _refactor_groups(path, min_docs, min_chars)
+        scanned = len(_discover(_locate(path)[1]))
+        result = []
+        for g in groups:
+            lines = g.text.splitlines()
+            result.append(
+                {
+                    "key": g.key,
+                    "name": g.name,
+                    "target": _api_path(ws, g.target),
+                    "chars": g.chars,
+                    "copies": len(g.occurrences),
+                    "lines": len(lines),
+                    "preview": "\n".join(lines[:8]),
+                    "text": g.text[:20_000],
+                    "occurrences": [
+                        {
+                            "path": _api_path(ws, o.doc.path),
+                            "line": o.start_line,
+                            "endLine": o.end_line,
+                            "revision": revision(o.doc.path.read_bytes()),
+                        }
+                        for o in g.occurrences
+                    ],
+                }
+            )
+        return JSONResponse({"scanned": scanned, "groups": result})
+
+    @app.post("/api/refactor/apply")
+    def refactor_apply(req: RefactorRequest) -> JSONResponse:
+        from md_doc.refactor import apply_groups
+
+        from .snapshots import atomic_write, preserve_revision, revision
+
+        name = req.name.strip().removesuffix(".md")
+        if not _FRAGMENT_NAME.fullmatch(name) or name.endswith("."):
+            raise HTTPException(
+                400, "Name may use lowercase letters, digits, '-', '_' and '.' only"
+            )
+        if len(set(req.documents)) < 2:
+            raise HTTPException(400, "Choose at least two documents")
+        with write_lock:
+            ws, groups = _refactor_groups(req.path, req.min_docs, req.min_chars)
+            group = next((g for g in groups if g.key == req.key), None)
+            if group is None:
+                raise HTTPException(409, "This text changed on disk; scan again")
+            chosen = set(req.documents)
+            group.occurrences = [
+                o for o in group.occurrences if _api_path(ws, o.doc.path) in chosen
+            ]
+            if {_api_path(ws, o.doc.path) for o in group.occurrences} != chosen:
+                raise HTTPException(409, "A chosen document no longer has this text; scan again")
+            stale = [
+                _api_path(ws, o.doc.path)
+                for o in group.occurrences
+                if revision(o.doc.path.read_bytes()) != req.revisions.get(_api_path(ws, o.doc.path))
+            ]
+            if stale:
+                raise HTTPException(
+                    409, {"message": "Changed on disk since the scan: " + ", ".join(stale)}
+                )
+            group.name = name
+            group.include = f"{name}.md"
+            # Includes only resolve from a templates/ folder in the documents' common
+            # folder or one of its parents, so those are the only valid locations.
+            common = Path(os.path.commonpath([o.doc.path.parent for o in group.occurrences]))
+            allowed = [common / "templates"]
+            for parent in common.parents:
+                if not parent.is_relative_to(ws.root):
+                    break
+                allowed.append(parent / "templates")
+            chosen_dir = allowed[0] if req.folder is None else _locate(req.folder)[1]
+            if chosen_dir not in allowed:
+                raise HTTPException(
+                    400, "Templates must live in a templates folder shared by every document"
+                )
+            group.target = chosen_dir / f"{name}.md"
+            if group.target.exists():
+                raise HTTPException(409, f"{_api_path(ws, group.target)} already exists")
+
+            def write(target: Path, text: str) -> None:
+                if target.exists():
+                    preserve_revision(target, target.read_bytes())
+                    preserve_revision(target, text.encode("utf-8"))
+                atomic_write(target, text)
+
+            try:
+                apply_groups([group], _find_repo_root(ws.root), write=write)
+            except Exception as exc:
+                raise HTTPException(422, f"Nothing was changed: {exc}") from exc
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "template": _api_path(ws, group.target),
+                    "changed": [
+                        {
+                            "path": _api_path(ws, o.doc.path),
+                            "revision": revision(o.doc.path.read_bytes()),
+                        }
+                        for o in group.occurrences
+                    ],
+                }
+            )
 
     # ── Build (calls md-doc CLI as a sidecar) ─────────────────────────────────
 

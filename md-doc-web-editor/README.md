@@ -111,6 +111,10 @@ Drafts and session preferences are stored in this browser's local storage, scope
 
 External file changes are checked every second while the tab is visible, and when you return to the editor. Saved files refresh automatically in source and visual mode, including expanded templates and the pinned preview. Unsaved edits are preserved without repeated warning pop-ups; if both versions changed, saving offers a comparison before overwriting the disk file. Dependency changes refresh the pinned preview.
 
+## Shared content
+
+The **Shared content** panel (layers icon in the left rail, or *Find repeated text* in the command bar) finds text that appears word for word in several documents, such as a company blurb or legal wording, and moves it into one shared template. Scan the whole workspace or the open document's folder; *Sensitivity* sets the minimum number of documents and characters. Each result shows a preview; *Review and extract…* lets you name the template, choose where it is saved (by default the closest folder the selected documents share, or any parent folder up to the workspace root, since includes only resolve from there), see the full text, and choose which documents to change (documents with unsaved edits are disabled until saved). Each chosen copy becomes `{% include "name.md" %}`. Every document is rendered before and after, and nothing is written if any output would change. Previous versions are kept in `.editor-history`, and open tabs reload automatically. It is the editor front end of `md-doc refactor`; only identical text matches, so make a varying name or date a `{{ variable }}` first.
+
 ## Source control
 
 The Git panel shows the repository branch, workspace changes, staged changes, diffs and recent workspace history. Stage/unstage individual files, create a feature branch, commit staged workspace files, or explicitly pull with `--ff-only`. Git must be installed and the selected workspace must be inside a repository.
@@ -146,6 +150,7 @@ Limits: 128 MiB / 10,000 snapshot inputs, 20 MiB text files, 100 unsaved buffers
 | GET `/api/search?q=…` | Workspace text matches |
 | POST `/api/files/action` | Scaffold, duplicate, move, trash, restore |
 | POST `/api/assets` | Validated base64 raster image upload |
+| GET `/api/refactor/scan`, POST `/api/refactor/apply` | Find text repeated across documents; extract a chosen run into a template (revision-checked, verified, rolled back on any output change) |
 | GET `/api/git/status`, `/api/git/diff` | Workspace source control inspection |
 | POST `/api/git/action` | Explicit stage, unstage, commit, branch or pull |
 

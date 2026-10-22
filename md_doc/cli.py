@@ -1685,6 +1685,107 @@ def fields(directory: Path, workspace: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# refactor
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.argument(
+    "directory", default=".", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--workspace",
+    "-w",
+    default=None,
+    help="Scan a named remote workspace from workspace/remote-workspaces.yml.",
+)
+@click.option(
+    "--min-docs",
+    default=2,
+    show_default=True,
+    help="Only report text found in this many documents.",
+)
+@click.option(
+    "--min-chars", default=80, show_default=True, help="Ignore shared text shorter than this."
+)
+@click.option(
+    "--templates-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Write fragments here instead of a templates/ folder next to the shared documents.",
+)
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Write the fragments and replace the repeated text with {% include %} lines.",
+)
+def refactor(
+    directory: Path,
+    workspace: str | None,
+    min_docs: int,
+    min_chars: int,
+    templates_dir: Path | None,
+    apply_changes: bool,
+) -> None:
+    """Find text repeated across documents and move it to a template.
+
+    Reports sections (paragraphs, lists, tables, ...) that appear verbatim in
+    several documents under DIRECTORY. Without --apply nothing is changed. With
+    --apply each section is saved as a fragment in a templates/ folder and
+    replaced by an {% include %}; the documents are re-rendered first and last
+    and everything is rolled back if the output would differ.
+
+    \b
+    Examples:
+      md-doc refactor workspace/acme/
+      md-doc refactor workspace/acme/ --min-docs 3 --apply
+    """
+    from .refactor import apply_groups, find_shared_sections
+
+    if workspace is not None:
+        directory = _resolve_workspace_root(workspace, directory, _find_repo_root(Path.cwd()))
+    directory = Path(directory).resolve()
+    repo_root = _find_repo_root(directory)
+
+    groups = find_shared_sections(directory, min_docs, min_chars, templates_dir)
+    if not groups:
+        click.echo(_dim("No repeated sections found."))
+        return
+
+    def rel(p: Path) -> str:
+        try:
+            return str(p.relative_to(repo_root))
+        except ValueError:
+            return str(p)
+
+    for g in groups:
+        copies = len(g.occurrences)
+        click.echo(
+            f"\n{_bold(g.name)}  —  {copies} copies in {len(g.docs)} documents, "
+            f"{g.chars} characters"
+        )
+        preview = [ln for ln in g.text.splitlines() if ln.strip()][:2]
+        for ln in preview:
+            click.echo(_dim(f"    {ln[:90]}"))
+        click.echo(f"  → {rel(g.target)}")
+        for doc in g.docs:
+            click.echo(f"    {rel(doc)}")
+
+    if not apply_changes:
+        click.echo(_dim("\nDry run — re-run with --apply to create the templates."))
+        return
+
+    try:
+        written = apply_groups(groups, repo_root)
+    except Exception as exc:
+        raise click.ClickException(f"Refactor rolled back, no files changed: {exc}") from exc
+    click.echo(
+        _info(f"\nCreated {len(written)} template(s); output of every document is unchanged.")
+    )
+
+
+# ---------------------------------------------------------------------------
 # new
 # ---------------------------------------------------------------------------
 

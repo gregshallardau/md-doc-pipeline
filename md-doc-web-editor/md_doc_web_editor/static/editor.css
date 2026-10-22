@@ -2174,3 +2174,135 @@ kbd {
 .preview-provisional .annotationLayer {
   visibility: hidden;
 }
+
+/* ── Shared content panel ─────────────────────────────────────────────── */
+.shared-advanced {
+  margin: 8px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.shared-advanced summary {
+  cursor: pointer;
+}
+.shared-sensitivity {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.shared-sensitivity label {
+  display: grid;
+  gap: 4px;
+}
+.shared-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 8px 0;
+  background: var(--bg);
+}
+.shared-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shared-card-head strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.shared-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.shared-meta {
+  margin: 4px 0 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.shared-preview,
+.shared-text {
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font: 10.5px/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.shared-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 14em;
+  overflow: auto;
+}
+.shared-error {
+  color: var(--danger, #c0392b);
+  font-size: 11px;
+}
+.shared-review {
+  display: grid;
+  gap: 8px;
+}
+.shared-review > label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.shared-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shared-name-row .input {
+  flex: 1;
+}
+.shared-where,
+.shared-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.shared-docs {
+  display: grid;
+  gap: 2px;
+  max-height: 14em;
+  overflow: auto;
+}
+.shared-doc {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--border);
+}
+#dialog-body .shared-doc label {
+  display: flex;
+  margin: 0;
+  font-weight: 400;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+.shared-doc small {
+  color: var(--muted);
+}
+#dialog-body .shared-review > label {
+  margin: 6px 0 0;
+}
+#dialog-body .shared-review p {
+  margin: 0;
+  line-height: 1.5;
+}

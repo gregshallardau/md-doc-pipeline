@@ -3593,6 +3593,7 @@ Place these **before** the subcommand: `md-doc --debug build workspace/`.
 | [`build`](#commands-build) | Build Markdown documents to PDF, DOCX, DOTX and/or PPTX. |
 | [`lint`](#commands-lint) | Check documents for build errors without rendering. |
 | [`fields`](#commands-fields) | List the `[[merge fields]]` available at a folder. |
+| [`refactor`](#commands-refactor) | Move text repeated across documents into a shared template. |
 | [`new`](#commands-new) | Scaffold a folder or a document. |
 | [`theme`](#commands-theme) | Create a brand theme or a colour override. |
 | [`export`](#commands-export) | Build only notes marked `export: true` and collect the outputs. |
@@ -3735,6 +3736,35 @@ md-doc extract FILE_PATH [--dest DESTINATION] [--force]
 Converts a Word, PowerPoint, Excel, HTML or PDF file to Markdown, written to `DESTINATION` (default `templates/`) with the
 source name and a `.md` extension. `--force` overwrites without prompting. See the
 [extraction guide](#extracting).
+
+<a id="commands-refactor"></a>
+
+### refactor
+
+```
+md-doc refactor [DIRECTORY] [options]
+```
+
+Finds sections that appear word for word in several documents under `DIRECTORY` (a company
+profile, an "about us" blurb, legal wording) and moves them into a shared template. Text is
+compared block by block (paragraph, list, table, fenced code) after collapsing whitespace, and the
+longest shared run of blocks is claimed first. Files starting with `_` and `templates/` folders are
+skipped. Without `--apply` it only reports.
+
+With `--apply`, each section is saved as a fragment in a `templates/` folder next to the
+documents' closest shared parent folder (named after its first heading) and every copy is replaced
+by `{% include "name.md" %}`. Every affected document is rendered before and after; if any output
+differs, all files are restored. Only identical text matches, so make the varying part a
+`{{ variable }}` first. See [`{% include %}`](#authoring--include----template-fragments).
+The web editor has the same tool in its **Shared content** panel. There you can also pick a higher `templates/` folder for the template.
+
+| Option | Description |
+|--------|-------------|
+| `-w, --workspace NAME` | Scan a named remote workspace. Overrides `DIRECTORY`. |
+| `--min-docs N` | Only report text found in at least `N` documents. Default: 2. |
+| `--min-chars N` | Ignore shared text shorter than `N` characters. Default: 80. |
+| `--templates-dir DIRECTORY` | Write fragments here instead of a `templates/` folder beside the documents. |
+| `--apply` | Write the fragments and replace the repeated text. |
 
 <a id="commands-sync"></a>
 
