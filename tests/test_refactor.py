@@ -87,3 +87,39 @@ def test_fenced_code_with_blank_lines_stays_one_block(tmp_path):
         (tmp_path / f"d{i}.md").write_text(f"# T{i}\n\n{code}\n")
     [g] = find_shared_sections(tmp_path, min_chars=20)
     assert g.text == code
+
+
+def test_matches_existing_template_even_in_one_document(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "about.md").write_text(ABOUT)
+    (tmp_path / "only.md").write_text(f"# Only\n\n{ABOUT}\nTail.\n")
+    (tmp_path / "other.md").write_text("# Other\n\nNothing shared here at all.\n")
+    [g] = find_shared_sections(tmp_path)
+    assert g.existing and g.include == "about.md" and g.target == tmp_path / "templates/about.md"
+    before = " ".join(render(tmp_path / "only.md").split())
+    result = CliRunner().invoke(main, ["refactor", str(tmp_path), "--apply"])
+    assert result.exit_code == 0, result.output
+    assert '{% include "about.md" %}' in (tmp_path / "only.md").read_text()
+    assert (tmp_path / "templates/about.md").read_text() == ABOUT
+    assert " ".join(render(tmp_path / "only.md").split()) == before
+
+
+def test_existing_template_claims_text_before_new_duplicates(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "about.md").write_text(ABOUT)
+    for i in range(3):
+        (tmp_path / f"d{i}.md").write_text(f"# D{i}\n\n{ABOUT}\n")
+    groups = find_shared_sections(tmp_path)
+    assert [g.existing for g in groups] == [True]
+    assert len(groups[0].occurrences) == 3
+
+
+def test_template_not_reachable_from_unrelated_folder(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "a" / "templates").mkdir(parents=True)
+    (tmp_path / "a" / "templates" / "about.md").write_text(ABOUT)
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "doc.md").write_text(f"# B\n\n{ABOUT}")
+    assert find_shared_sections(tmp_path) == []

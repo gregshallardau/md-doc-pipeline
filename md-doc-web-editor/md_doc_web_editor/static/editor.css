@@ -2314,3 +2314,46 @@ kbd {
   margin: 0;
   line-height: 1.5;
 }
+.shared-badge.existing {
+  color: var(--success);
+  background: var(--accent-soft);
+}
+.shared-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.shared-card-actions .primary {
+  flex: 1;
+}
+.shared-hidden {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.shared-hidden summary {
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.shared-hidden-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.shared-hidden-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.shared-hidden-row strong,
+.shared-hidden-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shared-hidden-row strong {
+  color: var(--text);
+  font-weight: 500;
+}

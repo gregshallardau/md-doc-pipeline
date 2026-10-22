@@ -7,6 +7,10 @@ documents.  ``apply_groups`` writes each run to a ``templates/`` fragment and
 replaces every occurrence with an ``{% include %}`` line, then re-renders the
 affected documents to prove the output did not change (rolling back if it did).
 
+Documents are also compared with the fragments already in ``templates/``
+folders, so text that duplicates an existing template is replaced by an include
+of it instead of becoming a second copy.
+
 Matching is exact after whitespace normalisation: a boilerplate section that
 differs by a client name is not detected until the varying part is a
 ``{{ variable }}``.
@@ -73,6 +77,7 @@ class Group:
     text: str  # fragment content
     chars: int
     key: str  # stable id of the shared text, to find the group again on a rescan
+    existing: bool = False  # ``target`` is a template that already exists
 
     @property
     def docs(self) -> list[Path]:
@@ -148,13 +153,89 @@ def _suggest_name(first_block: str) -> str:
     return words[:40].strip("-") or "shared"
 
 
+def _template_dirs(root: Path) -> list[Path]:
+    """``templates/`` folders inside ``root`` and in its parents up to the repo root."""
+    from .config import _find_repo_root
+
+    found: set[Path] = set()
+    for dirpath, dirnames, _ in os.walk(root):
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in {"Exports", "node_modules", "__pycache__"} and not d.startswith(".")
+        )
+        if os.path.basename(dirpath) == "templates":
+            found.add(Path(dirpath))
+    repo = _find_repo_root(root)
+    for parent in [root, *root.parents]:
+        if (parent / "templates").is_dir():
+            found.add(parent / "templates")
+        if parent == repo:
+            break
+    return sorted(d for d in found if not any(o != d and d.is_relative_to(o) for o in found))
+
+
+def _match_templates(docs: list[Doc], root: Path, min_chars: int, masked: list[list[bool]]):
+    """Groups for text that already exists verbatim as a template fragment."""
+    templates: list[tuple[Path, Path, Doc]] = []
+    for folder in _template_dirs(root):
+        for file in sorted(folder.rglob("*.md")):
+            rel = file.relative_to(folder)
+            if any(part.startswith((".", "_")) for part in rel.parts):
+                continue
+            tpl = _read_doc(file)
+            text = " ".join(b.norm for b in tpl.blocks)
+            if tpl.blocks and len(text) >= min_chars and _balanced(text):
+                templates.append((file, folder, tpl))
+    templates.sort(key=lambda t: sum(len(b.norm) for b in t[2].blocks), reverse=True)
+
+    groups: list[Group] = []
+    for file, folder, tpl in templates:
+        norms = [b.norm for b in tpl.blocks]
+        k = len(norms)
+        occurrences: list[Occurrence] = []
+        for di, doc in enumerate(docs):
+            if not doc.path.parent.is_relative_to(folder.parent):
+                continue  # the include would not resolve from this document
+            doc_norms = [b.norm for b in doc.blocks]
+            i = 0
+            while i + k <= len(doc_norms):
+                if doc_norms[i : i + k] == norms and not any(masked[di][i : i + k]):
+                    occurrences.append(Occurrence(doc, i, i + k - 1))
+                    for j in range(i, i + k):
+                        masked[di][j] = True
+                    i += k
+                else:
+                    i += 1
+        if not occurrences:
+            continue
+        text = "\n".join(
+            ln.rstrip("\r") for ln in tpl.lines[tpl.blocks[0].start : tpl.blocks[-1].end]
+        )
+        include = file.relative_to(folder).as_posix()
+        groups.append(
+            Group(
+                name=include,
+                target=file,
+                include=include,
+                occurrences=occurrences,
+                text=text.rstrip("\n") + "\n",
+                chars=sum(len(n) for n in norms),
+                key="t" + hashlib.sha256((str(file) + " ".join(norms)).encode()).hexdigest()[:15],
+                existing=True,
+            )
+        )
+    return groups
+
+
 def find_shared_sections(
     root: Path,
     min_docs: int = 2,
     min_chars: int = 80,
     templates_dir: Path | None = None,
 ) -> list[Group]:
-    """Return repeated runs of blocks found in at least ``min_docs`` documents.
+    """Return groups to extract: text that matches an existing template, then
+    repeated runs of blocks found in at least ``min_docs`` documents.
 
     Runs are chosen greedily by ``characters * (copies - 1)`` (the amount of
     duplicated text removed), so the biggest shared section is claimed first and
@@ -179,6 +260,7 @@ def find_shared_sections(
     }
 
     masked = [[False] * len(d.ids) for d in docs]
+    template_groups = _match_templates(docs, root, min_chars, masked)
     groups: list[Group] = []
     taken_names: set[tuple[Path, str]] = set()
 
@@ -247,7 +329,8 @@ def find_shared_sections(
         )
 
     groups.sort(key=lambda g: g.chars * (len(g.occurrences) - 1), reverse=True)
-    return groups
+    template_groups.sort(key=lambda g: g.chars * len(g.occurrences), reverse=True)
+    return template_groups + groups
 
 
 def _rendered(path: Path, repo_root: Path | None) -> str:
@@ -276,6 +359,8 @@ def apply_groups(
 
     try:
         for g in groups:
+            if g.existing:
+                continue
             g.target.parent.mkdir(parents=True, exist_ok=True)
             write(g.target, g.text)
             created.append(g.target)
