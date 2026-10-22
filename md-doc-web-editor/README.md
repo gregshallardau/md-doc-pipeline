@@ -65,7 +65,7 @@ uv run --offline --no-sync md-doc-edit serve workspace/
 uv run --offline --no-sync md-doc-edit serve workspace/acme/ --port 9000
 ```
 
-Add `--no-browser` to start only the server. The editor and pipeline must be installed in the same Python environment. Include `--group editor` in subsequent `uv sync` commands to keep the editor installed. Installation needs internet access or a populated package cache; running the installed editor does not.
+Add `--no-browser` to start only the server. The editor and pipeline must be installed in the same Python environment. In this repository a plain `uv sync` keeps the editor installed (`default-groups` in `pyproject.toml`); if you pass `--no-default-groups`, include `--group editor` to keep it. Installation needs internet access or a populated package cache; running the installed editor does not.
 
 ## Editing and preview
 

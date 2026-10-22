@@ -88,6 +88,10 @@ dev = [
     "types-markdown>=3.10.2.20260408",
 ]
 
+# A plain `uv sync` keeps the browser editor installed (it is otherwise removed).
+[tool.uv]
+default-groups = ["dev", "editor"]
+
 [tool.uv.sources]
 md-doc-web-editor = { path = "md-doc-web-editor", editable = true }
 
