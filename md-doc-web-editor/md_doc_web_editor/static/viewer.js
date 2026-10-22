@@ -184,7 +184,11 @@ export class DocumentViewer {
         host.dataset.previewRevision = revision;
       } catch (error) {
         this.previewUrls.delete(page.url);
-        this.onError(error);
+        // A newer edit cancels the render that produced this provisional page
+        // and deletes its files, so the fetch can legitimately 404. Only
+        // report failures for a preview that is still current.
+        const stale = sequence !== this.sequence || previewSequence !== (this.previewSequence || 0);
+        if (!stale && error?.status !== 404) this.onError(error);
       } finally {
         await task.destroy();
       }
