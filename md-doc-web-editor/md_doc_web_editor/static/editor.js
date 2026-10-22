@@ -2846,6 +2846,12 @@
             const files = [...$("import-file").files];
             if (!files.length) throw new Error("Choose a file to import");
             const items = [];
+            const explain = (error) =>
+              error.status === 404 && error.message === "Not Found"
+                ? new Error(
+                    "This editor server does not have the import feature. Update md-doc-pipeline and md-doc-web-editor, then restart md-doc-edit.",
+                  )
+                : error;
             for (const [index, file] of files.entries()) {
               $("import-status").textContent =
                 files.length > 1 ? `Converting ${index + 1} of ${files.length}…` : "Converting…";
@@ -2860,8 +2866,8 @@
                 });
                 items.push({ name: file.name, result });
               } catch (error) {
-                if (files.length === 1) throw error;
-                items.push({ name: file.name, error: error.message });
+                if (files.length === 1) throw explain(error);
+                items.push({ name: file.name, error: explain(error).message });
               }
             }
             if (items.length === 1) importPreview(items[0]);
@@ -2948,7 +2954,7 @@
     const used = importTaken();
     const rows = items.map((item, index) => {
       if (item.error) {
-        return `<tr><td></td><td>${escape(item.name)}</td><td colspan="2" style="color:var(--danger,#b42318)">${escape(item.error)}</td></tr>`;
+        return `<tr><td></td><td>${escape(item.name)}</td><td colspan="2" style="color:var(--danger,#b42318)">Could not import: ${escape(item.error)}</td></tr>`;
       }
       let path = `${dir}${importStem(item.name)}.md`;
       if (used.has(path))
