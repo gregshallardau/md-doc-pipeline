@@ -291,6 +291,30 @@ def test_asset_upload_validation_and_collision(project):
         )
 
 
+def test_import_converts_docx_without_writing(project):
+    import base64
+    import docx
+
+    document = docx.Document()
+    document.add_heading("Imported title", level=1)
+    document.add_paragraph("Body text.")
+    content = io.BytesIO()
+    document.save(content)
+    encoded = base64.b64encode(content.getvalue()).decode()
+    before = sorted(p.name for p in project.iterdir())
+    with TestClient(create_app(project)) as client:
+        result = client.post("/api/import", json={"name": "a.docx", "data": encoded})
+        assert result.status_code == 200
+        assert "# Imported title" in result.json()["markdown"]
+        assert (
+            client.post("/api/import", json={"name": "a.txt", "data": encoded}).status_code == 400
+        )
+        assert client.post("/api/import", json={"name": "a.docx", "data": "!!"}).status_code == 422
+        bad = base64.b64encode(b"not a docx").decode()
+        assert client.post("/api/import", json={"name": "a.docx", "data": bad}).status_code == 422
+    assert sorted(p.name for p in project.iterdir()) == before
+
+
 def test_cancelled_jobs_reap_worker_and_remove_snapshot(project):
     with TestClient(create_app(project)) as client:
         result = client.post("/api/preview/jobs", json={"path": "doc.md"}).json()

@@ -2732,6 +2732,46 @@
       ],
     );
   }
+  function importDocument() {
+    const parent = state.active?.includes("/")
+      ? state.active.slice(0, state.active.lastIndexOf("/") + 1)
+      : "";
+    dialog(
+      "Import a document",
+      `<p>Convert a Word or PDF file to Markdown. Tracked changes and comments in Word files are kept as review markup.</p><label for="import-file">Word or PDF file</label><input class="input" id="import-file" type="file" accept=".docx,.pdf"><label for="import-path">Save as</label><input class="input" id="import-path" value="${escape(parent)}imported.md">`,
+      [
+        { label: "Cancel", run: (d) => d.close() },
+        {
+          label: "Import",
+          primary: true,
+          run: async (d) => {
+            const file = $("import-file").files[0];
+            if (!file) return toast("Choose a file to import", true);
+            try {
+              const bytes = new Uint8Array(await file.arrayBuffer());
+              let binary = "";
+              for (let i = 0; i < bytes.length; i += 0x8000)
+                binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+              const { markdown } = await api("/api/import", {
+                method: "POST",
+                body: JSON.stringify({ name: file.name, data: btoa(binary) }),
+              });
+              const path = $("import-path").value.trim();
+              await api("/api/files/action", {
+                method: "POST",
+                body: JSON.stringify({ action: "new", path, content: markdown }),
+              });
+              d.close();
+              await loadTree();
+              await openFile(path);
+            } catch (error) {
+              toast(error.message, true);
+            }
+          },
+        },
+      ],
+    );
+  }
   function fileActions(path = state.active) {
     const body = el("div");
     if (path) {
@@ -3102,6 +3142,7 @@
     help,
     export: exportMenu,
     new: newDocument,
+    import: importDocument,
     "file-actions": () => fileActions(),
     "refresh-tree": () => loadTree(),
     "root-toggle": () => {

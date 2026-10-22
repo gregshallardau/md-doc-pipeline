@@ -4087,15 +4087,16 @@ md-doc extract report.pdf --dest workspace/acme/reports/
 
 <a id="extracting-future-interactive-extraction-ui"></a>
 
-### Future: Interactive Extraction UI
+### Importing in the web editor
 
-A Phase 2 feature will add an interactive extraction tool with:
-- Point-and-click file picker
-- Real-time Markdown preview
-- Destination folder browser
-- Snippet management (save, edit, organize)
+In the web editor, the upload button above the file tree (or **Import Word or PDF** on
+the welcome page) converts a `.docx` or `.pdf` to Markdown and saves it as a new
+document, using the same converter as `md-doc extract`. Word tracked changes and
+comments come through as review markup. PDF conversion is lossy for tables and
+multi-column layouts, so check the result.
 
-For now, use the CLI command.
+A preview step, destination browser and snippet management are still planned; use
+`md-doc extract` for those workflows today.
 
 ---
 
