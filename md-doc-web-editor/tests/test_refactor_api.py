@@ -154,3 +154,39 @@ def test_apply_rejects_unreachable_locations(client, folder):
     body = payload(g)
     body["folder"] = folder
     assert client.post("/api/refactor/apply", json=body).status_code in {400, 404}
+
+
+def test_matches_existing_template_and_replaces_in_one_document(client, workspace):
+    (workspace / "templates").mkdir()
+    (workspace / "templates" / "about.md").write_text(ABOUT)
+    (workspace / "solo.md").write_text(f"# Solo\n\n{ABOUT}")
+    data = scan(client)
+    existing = [g for g in data["groups"] if g["existing"]]
+    assert len(existing) == 1
+    g = existing[0]
+    assert g["name"] == "about.md" and g["target"] == "templates/about.md"
+    assert g["copies"] == 4  # solo.md and the three client proposals
+    body = payload(g, ["solo.md"])
+    body["name"] = ""
+    r = client.post("/api/refactor/apply", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["existing"] and r.json()["template"] == "templates/about.md"
+    assert '{% include "about.md" %}' in (workspace / "solo.md").read_text()
+    assert (workspace / "templates/about.md").read_text() == ABOUT
+
+
+def test_ignore_and_restore_persist_across_scans(client, workspace):
+    [g] = scan(client)["groups"]
+    assert g["ignored"] is False
+    r = client.post(
+        "/api/refactor/ignore", json={"key": g["key"], "ignored": True, "name": g["name"]}
+    )
+    assert r.status_code == 200
+    assert scan(client)["groups"][0]["ignored"] is True
+    assert (workspace / ".editor-ignored-matches.json").exists()
+    client.post("/api/refactor/ignore", json={"key": g["key"], "ignored": False})
+    assert scan(client)["groups"][0]["ignored"] is False
+    assert (
+        client.post("/api/refactor/ignore", json={"key": "../x", "ignored": True}).status_code
+        == 400
+    )

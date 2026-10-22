@@ -1731,8 +1731,9 @@ def refactor(
     """Find text repeated across documents and move it to a template.
 
     Reports sections (paragraphs, lists, tables, ...) that appear verbatim in
-    several documents under DIRECTORY. Without --apply nothing is changed. With
-    --apply each section is saved as a fragment in a templates/ folder and
+    several documents under DIRECTORY, and text that duplicates a template that
+    already exists. Without --apply nothing is changed. With --apply each new
+    section is saved as a fragment in a templates/ folder and
     replaced by an {% include %}; the documents are re-rendered first and last
     and everything is rolled back if the output would differ.
 
@@ -1761,14 +1762,12 @@ def refactor(
 
     for g in groups:
         copies = len(g.occurrences)
-        click.echo(
-            f"\n{_bold(g.name)}  —  {copies} copies in {len(g.docs)} documents, "
-            f"{g.chars} characters"
-        )
+        kind = "matches existing template" if g.existing else f"{copies} copies"
+        click.echo(f"\n{_bold(g.name)}  —  {kind} in {len(g.docs)} documents, {g.chars} characters")
         preview = [ln for ln in g.text.splitlines() if ln.strip()][:2]
         for ln in preview:
             click.echo(_dim(f"    {ln[:90]}"))
-        click.echo(f"  → {rel(g.target)}")
+        click.echo(f"  → {'uses ' if g.existing else ''}{rel(g.target)}")
         for doc in g.docs:
             click.echo(f"    {rel(doc)}")
 
@@ -1780,8 +1779,12 @@ def refactor(
         written = apply_groups(groups, repo_root)
     except Exception as exc:
         raise click.ClickException(f"Refactor rolled back, no files changed: {exc}") from exc
+    updated = len({d for g in groups for d in g.docs})
     click.echo(
-        _info(f"\nCreated {len(written)} template(s); output of every document is unchanged.")
+        _info(
+            f"\n{len(written)} new template(s), {updated} document(s) updated; "
+            "output of every document is unchanged."
+        )
     )
 
 

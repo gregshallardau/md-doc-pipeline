@@ -3760,6 +3760,7 @@
     result: null,
     busy: false,
     error: "",
+    hiddenOpen: false,
   };
   function sharedFolder() {
     const index = (state.active || "").lastIndexOf("/");
@@ -3850,44 +3851,118 @@
     }
     if (!shared.result) return;
     const { groups, scanned } = shared.result;
-    container.append(
-      el(
-        "label",
-        "field-label",
-        groups.length
-          ? `${groups.length} REPEATED SECTION${groups.length === 1 ? "" : "S"} · ${scanned} DOCUMENTS`
-          : `NOTHING REPEATED · ${scanned} DOCUMENTS`,
-      ),
-    );
-    if (!groups.length)
+    const visible = groups.filter((g) => !g.ignored);
+    const matches = visible.filter((g) => g.existing);
+    const repeated = visible.filter((g) => !g.existing);
+    const hidden = groups.filter((g) => g.ignored);
+    const heading = (label) => container.append(el("label", "field-label", label));
+    if (!visible.length)
       container.append(
+        el(
+          "label",
+          "field-label",
+          `NOTHING NEW · ${scanned} DOCUMENTS`,
+        ),
         el(
           "p",
           "inspector-note",
-          "No section appears in more than one document. Lower the sensitivity to catch shorter passages. Text that differs by a name or date is not matched until the varying part is a {{ variable }}.",
+          "No text repeats across documents or duplicates an existing template. Lower the sensitivity to catch shorter passages. Text that differs by a name or date is not matched until the varying part is a {{ variable }}.",
         ),
       );
-    for (const group of groups) {
-      const card = el("div", "shared-card");
-      const head = el("div", "shared-card-head");
-      head.append(
-        el("strong", null, group.name),
-        el("span", "shared-badge", `${group.copies} copies`),
+    if (matches.length) {
+      heading(
+        `MATCHES AN EXISTING TEMPLATE · ${matches.length}`,
       );
-      card.append(
-        head,
-        el(
-          "p",
-          "shared-meta",
-          `${new Set(group.occurrences.map((o) => o.path)).size} documents · ${group.lines} lines`,
-        ),
-        el("pre", "shared-preview", group.preview),
-      );
-      const review = el("button", "button primary wide", "Review and extract…");
-      review.onclick = () => reviewShared(group);
-      card.append(review);
-      container.append(card);
+      for (const group of matches) container.append(sharedCard(group));
     }
+    if (repeated.length) {
+      heading(
+        `REPEATED TEXT · ${repeated.length} · ${scanned} DOCUMENTS`,
+      );
+      for (const group of repeated) container.append(sharedCard(group));
+    }
+    if (hidden.length) {
+      const details = el("details", "shared-hidden");
+      details.open = shared.hiddenOpen;
+      details.ontoggle = () => (shared.hiddenOpen = details.open);
+      details.append(el("summary", null, `Hidden · ${hidden.length}`));
+      for (const group of hidden) {
+        const row = el("div", "shared-hidden-row");
+        const label = el("div");
+        label.append(
+          el("strong", null, group.name),
+          el(
+            "small",
+            null,
+            group.existing
+              ? `existing template · ${group.copies} copies`
+              : `${group.copies} copies`,
+          ),
+        );
+        const review = el("button", "text-button", "Review");
+        review.onclick = () => reviewShared(group);
+        const restore = el("button", "text-button", "Restore");
+        restore.onclick = () => hideShared(group, false);
+        row.append(label, review, restore);
+        details.append(row);
+      }
+      container.append(details);
+    }
+  }
+  async function hideShared(group, hide) {
+    await api("/api/refactor/ignore", {
+      method: "POST",
+      body: JSON.stringify({
+        path: sharedScanPath(),
+        key: group.key,
+        ignored: hide,
+        name: group.name,
+      }),
+    });
+    group.ignored = hide;
+    renderShared();
+    if (hide)
+      toast(`Hidden “${group.name}”. Restore it from the Hidden list below.`, false, {
+        label: "Undo",
+        run: () => hideShared(group, false).catch((e) => toast(e.message, true)),
+      });
+  }
+  function sharedCard(group) {
+    const card = el("div", "shared-card");
+    const head = el("div", "shared-card-head");
+    head.append(
+      el("strong", null, group.name),
+      el(
+        "span",
+        "shared-badge" + (group.existing ? " existing" : ""),
+        group.existing ? "existing template" : `${group.copies} copies`,
+      ),
+    );
+    const documents = new Set(group.occurrences.map((o) => o.path)).size;
+    card.append(
+      head,
+      el(
+        "p",
+        "shared-meta",
+        group.existing
+          ? `Same text as ${group.target} · found in ${documents} document${documents === 1 ? "" : "s"}`
+          : `${documents} documents · ${group.lines} lines`,
+      ),
+      el("pre", "shared-preview", group.preview),
+    );
+    const actions = el("div", "shared-card-actions");
+    const review = el(
+      "button",
+      "button primary",
+      group.existing ? "Review and replace…" : "Review and extract…",
+    );
+    review.onclick = () => reviewShared(group);
+    const hide = el("button", "button", "Hide");
+    hide.title = "Don't show this match again";
+    hide.onclick = () => hideShared(group, true).catch((e) => toast(e.message, true));
+    actions.append(review, hide);
+    card.append(actions);
+    return card;
   }
   function reviewShared(group) {
     const body = el("div", "shared-review");
@@ -3895,7 +3970,9 @@
       el(
         "p",
         null,
-        "This text appears in several documents. Choose where to replace it with an include of one shared template.",
+        group.existing
+          ? "This text is already a template. Replace each copy with an include of it; the rendered output stays the same."
+          : "This text appears in several documents. Choose where to replace it with an include of one shared template.",
       ),
     );
     const nameInput = el("input", "input");
@@ -3945,13 +4022,19 @@
       placeTouched = true;
       syncWhere();
     };
-    body.append(
-      el("label", null, "Template name"),
-      nameRow,
-      el("label", null, "Location"),
-      place,
-      where,
-    );
+    if (group.existing)
+      body.append(
+        el("label", null, "Existing template"),
+        el("p", "shared-where", group.target),
+      );
+    else
+      body.append(
+        el("label", null, "Template name"),
+        nameRow,
+        el("label", null, "Location"),
+        place,
+        where,
+      );
     body.append(el("label", null, "Shared text"));
     body.append(el("pre", "shared-text", group.text));
     body.append(el("label", null, "Replace in"));
@@ -3960,10 +4043,10 @@
     const update = () => {
       const count = boxes.filter((box) => box.checked).length;
       const button = $("dialog-actions").lastElementChild;
-      button.disabled = count < 2;
-      button.textContent = `Extract from ${count} document${count === 1 ? "" : "s"}`;
+      button.disabled = count < (group.existing ? 1 : 2);
+      button.textContent = `${group.existing ? "Replace in" : "Extract from"} ${count} document${count === 1 ? "" : "s"}`;
       const picked = boxes.filter((box) => box.checked).map((box) => box.dataset.path);
-      if (picked.length) {
+      if (picked.length && !group.existing) {
         syncPlace(picked);
         syncWhere();
       }
@@ -4009,7 +4092,7 @@
       ),
     );
     dialog(
-      "Extract shared text",
+      group.existing ? "Replace with existing template" : "Extract shared text",
       body,
       [
         { label: "Cancel", run: (node) => node.close() },
@@ -4033,8 +4116,8 @@
                 min_docs: shared.minDocs,
                 min_chars: shared.minChars,
                 key: group.key,
-                name: nameInput.value,
-                folder: place.value,
+                name: group.existing ? "" : nameInput.value,
+                folder: group.existing ? undefined : place.value,
                 documents: chosen.map((o) => o.path),
                 revisions: Object.fromEntries(
                   chosen.map((o) => [o.path, o.revision]),
@@ -4076,7 +4159,9 @@
     persist();
     await loadTree();
     toast(
-      `Moved the text into ${result.template} and linked ${result.changed.length} documents`,
+      result.existing
+        ? `Linked ${result.changed.length} document${result.changed.length === 1 ? "" : "s"} to ${result.template}`
+        : `Moved the text into ${result.template} and linked ${result.changed.length} documents`,
       false,
       { label: "Open template", run: () => openFile(result.template) },
     );

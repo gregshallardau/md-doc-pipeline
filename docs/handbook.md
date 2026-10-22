@@ -3751,14 +3751,16 @@ Finds sections that appear word for word in several documents under `DIRECTORY` 
 profile, an "about us" blurb, legal wording) and moves them into a shared template. Text is
 compared block by block (paragraph, list, table, fenced code) after collapsing whitespace, and the
 longest shared run of blocks is claimed first. Files starting with `_` and `templates/` folders are
-skipped. Without `--apply` it only reports.
+skipped as sources, but their fragments are compared with the documents: text that duplicates an
+existing template (even in a single document) is reported as matching it, and `--apply` replaces
+it with an include of that template without creating a new file. Without `--apply` it only reports.
 
 With `--apply`, each section is saved as a fragment in a `templates/` folder next to the
 documents' closest shared parent folder (named after its first heading) and every copy is replaced
 by `{% include "name.md" %}`. Every affected document is rendered before and after; if any output
 differs, all files are restored. Only identical text matches, so make the varying part a
 `{{ variable }}` first. See [`{% include %}`](#authoring--include----template-fragments).
-The web editor has the same tool in its **Shared content** panel. There you can also pick a higher `templates/` folder for the template.
+The web editor has the same tool in its **Shared content** panel. There you can also pick a higher `templates/` folder for the template, and hide matches you don't want to be shown again.
 
 | Option | Description |
 |--------|-------------|

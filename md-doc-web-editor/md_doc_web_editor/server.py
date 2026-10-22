@@ -6,7 +6,7 @@ The server is intentionally small.  Five categories of endpoint:
   * ``/api/file``                — read / write a single file (sandboxed)
   * ``/api/config``, ``/api/css``, ``/api/includes``
                                   — derived data for the right-panel tabs
-  * ``/api/refactor/scan``, ``/api/refactor/apply``
+  * ``/api/refactor/scan``, ``/api/refactor/apply``, ``/api/refactor/ignore``
                                   — find text repeated across documents and move it
                                     into a shared template
   * ``/api/build``               — run ``md-doc build`` and return a token
@@ -67,6 +67,13 @@ class RefactorRequest(BaseModel):
     documents: list[str]
     revisions: dict[str, str]
     folder: str | None = None  # templates folder; default: closest one the documents share
+
+
+class IgnoreRequest(BaseModel):
+    path: str = ""
+    key: str
+    ignored: bool
+    name: str = ""
 
 
 class BuildRequest(BaseModel):
@@ -409,9 +416,25 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     # ── Shared-content refactor ───────────────────────────────────────────────
 
     _FRAGMENT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,60}")
+    _IGNORED_FILE = ".editor-ignored-matches.json"
 
     def _api_path(ws: Workspace, path: Path) -> str:
         return _prefix(ws) + path.relative_to(ws.root).as_posix()
+
+    def _display_path(ws: Workspace, path: Path) -> str:
+        """API path for files in the workspace; a project handle for shared templates above it."""
+        if path.is_relative_to(ws.root):
+            return _api_path(ws, path)
+        return "project:" + path.relative_to(_find_repo_root(ws.root)).as_posix()
+
+    def _ignored(ws: Workspace) -> dict[str, Any]:
+        import json
+
+        try:
+            data = json.loads((ws.root / _IGNORED_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _refactor_groups(path: str, min_docs: int, min_chars: int):
         from md_doc.refactor import find_shared_sections
@@ -431,6 +454,7 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
         ws, groups = _refactor_groups(path, min_docs, min_chars)
         scanned = len(_discover(_locate(path)[1]))
+        ignored = _ignored(ws)
         result = []
         for g in groups:
             lines = g.text.splitlines()
@@ -438,7 +462,9 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 {
                     "key": g.key,
                     "name": g.name,
-                    "target": _api_path(ws, g.target),
+                    "existing": g.existing,
+                    "ignored": g.key in ignored,
+                    "target": _display_path(ws, g.target),
                     "chars": g.chars,
                     "copies": len(g.occurrences),
                     "lines": len(lines),
@@ -457,24 +483,47 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
             )
         return JSONResponse({"scanned": scanned, "groups": result})
 
+    @app.post("/api/refactor/ignore")
+    def refactor_ignore(req: IgnoreRequest) -> JSONResponse:
+        """Hide (or restore) a match so it moves to the panel's Hidden list."""
+        import json
+
+        from .snapshots import atomic_write
+
+        if not re.fullmatch(r"t?[0-9a-f]{15,16}", req.key):
+            raise HTTPException(400, "Unknown match")
+        ws, _ = _locate(req.path)
+        with write_lock:
+            data = _ignored(ws)
+            if req.ignored:
+                data[req.key] = {"name": req.name[:120]}
+            else:
+                data.pop(req.key, None)
+            atomic_write(ws.root / _IGNORED_FILE, json.dumps(data, indent=2, sort_keys=True) + "\n")
+        return JSONResponse({"ok": True, "ignored": req.ignored})
+
     @app.post("/api/refactor/apply")
     def refactor_apply(req: RefactorRequest) -> JSONResponse:
         from md_doc.refactor import apply_groups
 
         from .snapshots import atomic_write, preserve_revision, revision
 
-        name = req.name.strip().removesuffix(".md")
-        if not _FRAGMENT_NAME.fullmatch(name) or name.endswith("."):
-            raise HTTPException(
-                400, "Name may use lowercase letters, digits, '-', '_' and '.' only"
-            )
-        if len(set(req.documents)) < 2:
-            raise HTTPException(400, "Choose at least two documents")
         with write_lock:
             ws, groups = _refactor_groups(req.path, req.min_docs, req.min_chars)
             group = next((g for g in groups if g.key == req.key), None)
             if group is None:
                 raise HTTPException(409, "This text changed on disk; scan again")
+            name = req.name.strip().removesuffix(".md")
+            if group.existing:
+                if not req.documents:
+                    raise HTTPException(400, "Choose at least one document")
+            else:
+                if not _FRAGMENT_NAME.fullmatch(name) or name.endswith("."):
+                    raise HTTPException(
+                        400, "Name may use lowercase letters, digits, '-', '_' and '.' only"
+                    )
+                if len(set(req.documents)) < 2:
+                    raise HTTPException(400, "Choose at least two documents")
             chosen = set(req.documents)
             group.occurrences = [
                 o for o in group.occurrences if _api_path(ws, o.doc.path) in chosen
@@ -490,24 +539,25 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
                 raise HTTPException(
                     409, {"message": "Changed on disk since the scan: " + ", ".join(stale)}
                 )
-            group.name = name
-            group.include = f"{name}.md"
-            # Includes only resolve from a templates/ folder in the documents' common
-            # folder or one of its parents, so those are the only valid locations.
-            common = Path(os.path.commonpath([o.doc.path.parent for o in group.occurrences]))
-            allowed = [common / "templates"]
-            for parent in common.parents:
-                if not parent.is_relative_to(ws.root):
-                    break
-                allowed.append(parent / "templates")
-            chosen_dir = allowed[0] if req.folder is None else _locate(req.folder)[1]
-            if chosen_dir not in allowed:
-                raise HTTPException(
-                    400, "Templates must live in a templates folder shared by every document"
-                )
-            group.target = chosen_dir / f"{name}.md"
-            if group.target.exists():
-                raise HTTPException(409, f"{_api_path(ws, group.target)} already exists")
+            if not group.existing:
+                group.name = name
+                group.include = f"{name}.md"
+                # Includes only resolve from a templates/ folder in the documents' common
+                # folder or one of its parents, so those are the only valid locations.
+                common = Path(os.path.commonpath([o.doc.path.parent for o in group.occurrences]))
+                allowed = [common / "templates"]
+                for parent in common.parents:
+                    if not parent.is_relative_to(ws.root):
+                        break
+                    allowed.append(parent / "templates")
+                chosen_dir = allowed[0] if req.folder is None else _locate(req.folder)[1]
+                if chosen_dir not in allowed:
+                    raise HTTPException(
+                        400, "Templates must live in a templates folder shared by every document"
+                    )
+                group.target = chosen_dir / f"{name}.md"
+                if group.target.exists():
+                    raise HTTPException(409, f"{_api_path(ws, group.target)} already exists")
 
             def write(target: Path, text: str) -> None:
                 if target.exists():
@@ -522,7 +572,8 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
             return JSONResponse(
                 {
                     "ok": True,
-                    "template": _api_path(ws, group.target),
+                    "template": _display_path(ws, group.target),
+                    "existing": group.existing,
                     "changed": [
                         {
                             "path": _api_path(ws, o.doc.path),
