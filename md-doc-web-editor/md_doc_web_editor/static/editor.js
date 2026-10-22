@@ -573,6 +573,13 @@
             el("span", "folder-name", node.name),
             badge,
           );
+          summary.dataset.folder = node.path;
+          summary.addEventListener("click", () => pickFolder(node.path));
+          summary.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            pickFolder(node.path);
+            folderActions(node.path);
+          });
           summary.title = node.scanError
             ? node.path + ": " + node.scanError
             : node.path;
@@ -639,6 +646,12 @@
     };
     const list = build(state.tree);
     $("md-doc-tree").append(list);
+    markTargetFolder();
+    $("tree-root-toggle").oncontextmenu = (event) => {
+      event.preventDefault();
+      pickFolder("");
+      folderActions("");
+    };
     if (!list.childElementCount)
       $("md-doc-tree").append(
         el(
@@ -1021,6 +1034,9 @@
     if (previous && state.editor)
       previous.viewState = state.editor.saveViewState();
     state.active = path;
+    state.targetFolder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    state.folderPicked = false;
+    markTargetFolder();
     const buffer = current();
     buffer.tabHidden = false;
     state.switching = true;
@@ -2698,9 +2714,7 @@
     dialog("Workspace layout", body);
   }
   async function newDocument() {
-    const parent = state.active?.includes("/")
-      ? state.active.slice(0, state.active.lastIndexOf("/") + 1)
-      : "";
+    const parent = targetDir();
     dialog(
       "Create a document",
       `<p>Start with a document scaffold. Settings are inherited from the folder.</p><label for="new-path">File path</label><input class="input" id="new-path" value="${escape(parent)}untitled.md"><label for="new-kind">Document type</label><select class="input" id="new-kind"><option value="report">Report</option><option value="form">Fillable PDF form</option><option value="deck">Slide deck</option><option value="blank">Blank document</option></select>`,
@@ -2771,6 +2785,43 @@
     }
     return markdown;
   }
+  // The folder new files go to: the last folder clicked in the tree, else the open
+  // document's folder. Opening a file moves it to that file's folder.
+  const targetDir = () =>
+    state.targetFolder != null
+      ? state.targetFolder
+        ? state.targetFolder + "/"
+        : ""
+      : importDirOf(state.active ?? "");
+  function markTargetFolder() {
+    for (const row of document.querySelectorAll("summary[data-folder]"))
+      row.classList.toggle(
+        "target",
+        !!state.folderPicked && row.dataset.folder === state.targetFolder,
+      );
+  }
+  function pickFolder(path) {
+    state.targetFolder = path;
+    state.folderPicked = true;
+    markTargetFolder();
+  }
+  function folderActions(path) {
+    const where = path ? path + "/" : "the workspace root";
+    const body = el("div");
+    body.append(
+      el("p", null, where),
+      option(
+        "Import documents here",
+        "Convert Word, PowerPoint, Excel, HTML or PDF files into this folder",
+        "upload",
+        () => importDocument(),
+      ),
+      option("New document here", "Start a document in this folder", "file-plus", () =>
+        newDocument(),
+      ),
+    );
+    dialog("Folder actions", body);
+  }
   const IMPORT_TYPES = ".docx,.dotx,.pptx,.xlsx,.html,.htm,.pdf";
   const importDirOf = (path) =>
     path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
@@ -2836,7 +2887,7 @@
   function importDocument() {
     dialog(
       "Import documents",
-      `<p>Convert Word, PowerPoint, Excel, HTML or PDF files to Markdown. Choose several to import them together. You can review the result before anything is saved.</p><label for="import-file">Files</label><input class="input" id="import-file" type="file" multiple accept="${IMPORT_TYPES}"><p id="import-status" aria-live="polite"></p>`,
+      `<p>Convert Word, PowerPoint, Excel, HTML or PDF files to Markdown. Choose several to import them together. You can review the result before anything is saved.</p><p>Saving into <code>${escape(targetDir() || "the workspace root")}</code></p><label for="import-file">Files</label><input class="input" id="import-file" type="file" multiple accept="${IMPORT_TYPES}"><p id="import-status" aria-live="polite"></p>`,
       [
         { label: "Cancel", run: (d) => d.close() },
         {
@@ -2881,12 +2932,14 @@
     const { result } = item;
     const active = state.active;
     const canInsert = current()?.type === "md";
-    const dir = active?.includes("/") ? active.slice(0, active.lastIndexOf("/") + 1) : "";
+    const dir = importDirOf(active ?? ""); // where an insert at the cursor keeps its assets
+    const newDir = targetDir();
+    const insertFirst = canInsert && !state.folderPicked;
     const count = result.images.length;
     const fields = result.fields;
     dialog(
       "Review imported Markdown",
-      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" checked> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new"> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(freeImportPath(dir + importStem(item.name) + ".md", importTaken()))}"><p id="import-path-note" style="color:var(--danger,#b42318)" aria-live="polite"></p><label><input type="checkbox" id="import-frontmatter" checked> Add starter frontmatter to a new document (title, output name, formats)</label>${count ? `<br><label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}${fields.length ? `<br><label><input type="checkbox" id="import-fields" checked> Add ${fields.length} merge field${fields.length === 1 ? "" : "s"} to _merge_fields.yml: <code>${escape(fields.join(", "))}</code></label>` : ""}`,
+      `<p>Edit the text if you like, then choose where it goes.${result.format === "pdf" ? " PDF conversion is approximate, especially for tables and columns." : ""}</p><textarea class="input" id="import-preview" rows="14" spellcheck="false" style="font-family:monospace;width:100%">${escape(result.markdown)}</textarea>${canInsert ? `<label><input type="radio" name="import-mode" value="insert" ${insertFirst ? "checked" : ""}> Insert at the cursor in ${escape(active)}</label><br><label><input type="radio" name="import-mode" value="new" ${insertFirst ? "" : "checked"}> Save as a new document</label>` : ""}<label for="import-path">New document path</label><input class="input" id="import-path" value="${escape(freeImportPath(newDir + importStem(item.name) + ".md", importTaken()))}"><p id="import-path-note" style="color:var(--danger,#b42318)" aria-live="polite"></p><label><input type="checkbox" id="import-frontmatter" checked> Add starter frontmatter to a new document (title, output name, formats)</label>${count ? `<br><label><input type="checkbox" id="import-images" checked> Save ${count} image${count === 1 ? "" : "s"} to the assets folder</label>` : ""}${fields.length ? `<br><label><input type="checkbox" id="import-fields" checked> Add ${fields.length} merge field${fields.length === 1 ? "" : "s"} to _merge_fields.yml: <code>${escape(fields.join(", "))}</code></label>` : ""}`,
       [
         { label: "Back", run: () => importDocument() },
         {
@@ -2950,7 +3003,7 @@
     $("import-path").addEventListener("input", noteExisting);
   }
   function importBatch(items) {
-    const dir = importDirOf(state.active ?? "");
+    const dir = targetDir();
     const used = importTaken();
     const rows = items.map((item, index) => {
       if (item.error) {
@@ -3409,8 +3462,8 @@
     },
     help,
     export: exportMenu,
-    new: newDocument,
-    import: importDocument,
+    new: () => newDocument(),
+    import: () => importDocument(),
     "file-actions": () => fileActions(),
     "refresh-tree": () => loadTree(),
     "root-toggle": () => {

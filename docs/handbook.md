@@ -4155,6 +4155,13 @@ rest. Existing files are never overwritten: a path that is already taken is flag
 next free name (`client-letter-2.md`) is suggested, and Import refuses, leaving the dialog open,
 until every selected path is free and unique, so you can rename or untick the file.
 
+**Where it goes:** new documents land in the folder you last clicked in the file tree (it is
+highlighted), or in the open document's folder if you opened a file more recently. **Right-click
+a folder** (or the workspace root) and choose **Import documents here** to import straight into
+it; the same menu has **New document here**. When you have just picked a folder, the dialog
+defaults to saving a new document there rather than inserting into the open one. The path is
+still editable in the review step.
+
 Options, in both cases:
 
 - **Starter frontmatter** (new documents): `title` and `output_filename` from the source file

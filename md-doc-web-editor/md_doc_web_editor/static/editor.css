@@ -423,6 +423,10 @@ kbd {
 .tree-folder[open] > summary .chevron {
   transform: rotate(0);
 }
+.tree-folder > summary.target {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .tree-folder > summary:hover {
   background: var(--surface-hover);
 }

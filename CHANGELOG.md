@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Folder-aware import and a folder right-click menu in the editor.** The last folder you
+  clicked is highlighted and used as the destination for imports and new documents; right-click
+  a folder for *Import documents here* and *New document here*.
 - **Import in the web editor.** Upload one or more files, review the Markdown in a preview,
   then insert it at the cursor or save new documents (batch review for several). Embedded
   Word images are saved under `assets/`, merge fields can be added to `_merge_fields.yml`,
