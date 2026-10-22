@@ -379,7 +379,7 @@ def test_front_matter_and_init_directives_are_ignored():
         assert "<svg" in m.render_to_svg(pre + "flowchart TD\n A --> B")
 
 
-@pytest.mark.parametrize("kind", ["classDiagram", "journey", "gitGraph"])
+@pytest.mark.parametrize("kind", ["quadrantChart", "sankey-beta", "C4Context"])
 def test_unsupported_diagram_types_fail_cleanly(kind):
     with pytest.raises(m.UnsupportedDiagramError):
         m.render_to_svg(f"{kind}\n  anything")
@@ -483,3 +483,148 @@ def test_structural_diagrams_follow_the_brand_not_a_rainbow():
     svg = m.render_to_svg("flowchart TD\n A([Start]) --> B[Step] --> C{Ok?}", theme)
     assert 'fill="#7a1f5c"' in svg  # terminal uses the brand primary
     assert not any(c in svg for c in m._CATEGORICAL)
+
+
+def test_class_diagram_members_and_relations():
+    cd = m.parse_class(
+        "classDiagram\n class Animal {\n <<abstract>>\n +String name\n -int age\n"
+        " +makeSound()* void\n +count()$ int\n }\n class Pond {\n +List~Duck~ ducks\n }\n"
+        ' Animal <|-- Duck\n Fish --|> Animal\n Pond "1" *-- "many" Duck : contains\n'
+        ' Duck ..> Fish : eats\n Swimmer <|.. Duck\n note for Pond "one pond"'
+    )
+    animal = cd.classes["Animal"]
+    assert animal.annotation == "abstract"
+    assert [
+        (mb.visibility, mb.text, mb.method, mb.static, mb.abstract) for mb in animal.members
+    ] == [
+        ("+", "String name", False, False, False),
+        ("-", "int age", False, False, False),
+        ("+", "makeSound() void", True, False, True),
+        ("+", "count() int", True, True, False),
+    ]
+    assert cd.classes["Pond"].members[0].text == "List<Duck> ducks"
+    rels = [
+        (r.a, r.b, r.end_a, r.end_b, r.dashed, r.label, r.card_a, r.card_b) for r in cd.relations
+    ]
+    assert ("Animal", "Duck", "inherit", "none", False, "", "", "") in rels
+    assert ("Animal", "Fish", "inherit", "none", False, "", "", "") in rels  # parent laid out first
+    assert ("Pond", "Duck", "composition", "none", False, "contains", "1", "many") in rels
+    assert ("Duck", "Fish", "none", "arrow", True, "eats", "", "") in rels
+    assert ("Swimmer", "Duck", "inherit", "none", True, "", "", "") in rels
+    svg = m.render_class_svg(cd)
+    for marker in ("cls-inherit-s", "cls-composition-s", "cls-arrow"):
+        assert f"url(#{marker})" in svg
+    assert "&#171;abstract&#187;" in svg or "«abstract»" in svg
+    assert "one pond" in svg and ">many<" in svg
+    animal_box = re.search(r">Animal<", svg)
+    assert animal_box
+
+
+def test_journey_scores_use_status_colours():
+    jr = m.parse_journey(
+        "journey\n title Day\n section Work\n Make tea: 5: Me\n Do work: 1: Me, Cat"
+    )
+    assert [(x.name, x.score, x.actors, x.section) for x in jr.tasks] == [
+        ("Make tea", 5, ["Me"], "Work"),
+        ("Do work", 1, ["Me", "Cat"], "Work"),
+    ]
+    svg = m.render_journey_svg(jr)
+    assert m._SCORE_COLORS[5] in svg and m._SCORE_COLORS[1] in svg
+    assert ">Cat<" in svg and ">Work<" in svg
+
+
+def test_git_graph_branches_merges_and_cherry_picks():
+    gg = m.parse_git(
+        'gitGraph\n commit id: "a"\n branch dev\n checkout dev\n commit id: "b"\n'
+        ' checkout main\n merge dev tag: "v1"\n cherry-pick id: "b"\n'
+        " commit type: HIGHLIGHT"
+    )
+    assert gg.branches == ["main", "dev"]
+    kinds = [(c.branch, c.kind) for c in gg.commits]
+    assert kinds == [
+        ("main", "normal"),
+        ("dev", "normal"),
+        ("main", "merge"),
+        ("main", "cherry"),
+        ("main", "highlight"),
+    ]
+    merge = gg.commits[2]
+    assert merge.parents == ["a", "b"] and merge.tag == "v1"
+    assert gg.cherry_sources[3] == "b"
+    svg = m.render_git_svg(gg)
+    assert ">main<" in svg and ">dev<" in svg and ">v1<" in svg
+
+
+def test_wide_left_to_right_charts_fit_the_column():
+    src = (
+        "flowchart LR\n A([Customer submits an order]) --> B[Order form is validated]\n"
+        " B --> C{Is the order valid?}\n C -->|yes| D[Pick and pack the items]\n"
+        " D --> E[(Update inventory system)]\n E --> F([Delivered to the customer])"
+    )
+    fitted = m.svg_natural_width(m.render_to_svg(src, {"column_px": "628"}))
+    assert fitted is not None and fitted <= 628
+    off = m.render_to_svg(
+        '%%{init: {"flowchart": {"autoFit": false}}}%%\n' + src, {"column_px": "628"}
+    )
+    assert (m.svg_natural_width(off) or 0) > 628  # authors can keep the original layout
+
+
+def test_text_is_measured_with_the_real_font():
+    m._ACTIVE_FONT.set("DejaVu Sans")
+    path = m._font_file("DejaVu Sans", 400)
+    if path is None:
+        pytest.skip("fontconfig/DejaVu not available")
+    real = m._text_w("Reject and notify customer")
+    m._ACTIVE_FONT.set("Liberation Sans, Arial")
+    narrower = m._text_w("Reject and notify customer")
+    assert real > narrower  # DejaVu is wider; boxes are sized from the face actually used
+
+
+def test_registered_fonts_are_used_for_measurement(tmp_path):
+    ziamath = pytest.importorskip("ziamath")
+    from pathlib import Path
+
+    font = Path(ziamath.__file__).parent / "fonts" / "STIXTwoMath-Regular.ttf"
+    if not font.is_file():
+        pytest.skip("test font missing")
+    m.register_fonts([("Diagram Test Face", font, "400")])
+    assert m._font_file("Diagram Test Face, sans-serif", 400) == font
+
+
+def test_dark_mode_from_init_and_from_a_dark_theme():
+    dark = m.render_to_svg("%%{init: {'theme':'dark'}}%%\npie\n \"A\" : 1\n \"B\" : 2")
+    assert 'data-surface="#0d1117"' in dark and m._CATEGORICAL_DARK[0] in dark
+    theme = m.extract_theme_from_css("body { background: #111418; color: #e6e6e6; }")
+    assert theme["mode"] == "dark" and theme["surface"] == "#111418"
+    flow = m.render_to_svg("flowchart TD\n A[One] --> B[Two]", theme)
+    assert 'data-surface="#111418"' in flow and "#e6e6e6" in flow
+    light = m.render_to_svg('pie\n "A" : 1')
+    assert "data-surface" not in light
+
+
+def test_dark_diagrams_rasterise_on_their_surface():
+    from md_doc.builders._assets import _svg_to_png
+
+    png = _svg_to_png(m.render_to_svg("%%{init: {'theme':'dark'}}%%\nflowchart LR\n A --> B"))
+    if png is None:
+        pytest.skip("cairosvg not installed")
+    from io import BytesIO
+
+    from PIL import Image
+
+    assert Image.open(BytesIO(png[0])).convert("RGB").getpixel((1, 1)) == (13, 17, 23)
+
+
+def test_named_themes_and_theme_variables():
+    forest = m.render_to_svg("%%{init: {'theme':'forest'}}%%\nflowchart TD\n A([Go]) --> B")
+    assert 'fill="#2f6f3e"' in forest
+    base = m.render_to_svg(
+        '---\nconfig:\n  theme: base\n  themeVariables:\n    primaryColor: "#7a1f5c"\n---\n'
+        "flowchart TD\n A([Go]) --> B"
+    )
+    assert 'fill="#7a1f5c"' in base
+
+
+def test_front_matter_title_is_drawn():
+    svg = m.render_to_svg("---\ntitle: Order flow\n---\nflowchart LR\n A --> B")
+    assert ">Order flow<" in svg

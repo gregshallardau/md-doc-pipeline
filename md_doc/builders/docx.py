@@ -4539,14 +4539,16 @@ def build(
     css_text: str | None = None
     layout_css_path: Path | None = None
     try:
-        from .pdf import _resolve_css
-        from ..mermaid import extract_theme_from_css
+        from .pdf import _resolve_css, _resolve_logo
+        from ..mermaid import diagram_theme
 
         css_path = _resolve_css(config, repo_root, doc_path=doc_path)
         if css_path and css_path.exists():
             css_text = css_path.read_text(encoding="utf-8")
             layout_css_path = css_path
-            mermaid_theme = extract_theme_from_css(css_text)
+        mermaid_theme = diagram_theme(
+            css_text, config, lambda value: _resolve_logo(value, repo_root, doc_path)
+        )
     except Exception:
         mermaid_theme = None
     html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)

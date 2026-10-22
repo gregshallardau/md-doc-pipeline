@@ -908,6 +908,9 @@ which installs `cairosvg`; without it the code block stays as text).
 | Mind map | `mindmap` |
 | Entity-relationship | `erDiagram` |
 | State | `stateDiagram`, `stateDiagram-v2` |
+| Class (UML) | `classDiagram` |
+| User journey | `journey` |
+| Git graph | `gitGraph` |
 
 ````markdown
 ```mermaid
@@ -946,14 +949,20 @@ drawing is supported:
 
 Nodes are laid out in ranks with crossings minimised, long and looping edges run in their own
 lanes, and edges leaving one node fan out instead of sharing a line. Override individual nodes
-with `classDef` or `style`. A leading YAML front-matter block or `%%{init: ...}%%` line is
-accepted and ignored.
+with `classDef` or `style`.
 
 **How diagrams look.** Every diagram type shares one design system, so a document's diagrams
 read as a set:
 
-- *Size.* A diagram renders at its natural size, with 12px labels that sit beside body text, and
-  only shrinks when it is wider than the text column. Word and PowerPoint use the same size.
+- *Size.* A diagram renders at its natural size, with 12px labels that sit beside body text.
+  When a flowchart, state, ER or class diagram would be wider than the text column, long node
+  labels wrap, and if it is still too wide it is laid out in the other direction (left-to-right
+  becomes top-down) instead of shrinking its text. Turn that off for one diagram with
+  `%%{init: {"flowchart": {"autoFit": false}}}%%`. Word and PowerPoint use the same sizes.
+- *Fonts.* Diagrams use the theme's `body` font. Boxes are sized by measuring text with the font
+  file that will actually draw it, so wide faces such as DejaVu Sans never overflow. Fonts added
+  with the [`fonts`](#configuration) key are used in diagrams too, including the images embedded
+  in Word and PowerPoint.
 - *Structural diagrams* (flowchart, state, sequence, ER, timeline, mind map) take their colours
   from the theme: light brand-tinted cards with a hairline border, the primary colour for start
   and end shapes and ER headers, and the accent for decisions.
@@ -977,10 +986,39 @@ read as a set:
 | ER | attribute keys (`int id PK`, `string ref FK`, `PK,FK`), identifying `--` and non-identifying `..` links, crow's-foot ends for every cardinality |
 | Timeline | `title`, `section`, several events per period (`2022 : A : B`, or a line starting with `:`) |
 | Mind map | node shapes `((x))`, `(x)`, `[x]`, `{{x}}`, `))x((`; branches balanced either side of the root, one colour per branch |
+| Class | `class X { ... }` bodies or `X : +member`, visibility `+ - # ~`, static `$` (underlined), abstract `*` (italic), generics `List~int~`, `<<interface>>` and other stereotypes, `direction`, `namespace`, `note for X "..."`, relationships `<\|--` `*--` `o--` `-->` `--` `..>` `..\|>` `..` (either way round) with cardinalities `"1" --> "*"` and `: labels` |
+| User journey | `title`, `section`, `Task: score: Actor, Actor` (score 1-5 drawn as a satisfaction curve in good-to-bad status colours, actors as dots with a legend) |
+| Git graph | `commit` (`id`, `tag`, `type: HIGHLIGHT \| REVERSE`, `msg`), `branch` (`order`), `checkout` / `switch`, `merge` (`id`, `tag`), `cherry-pick id: "..."`, `gitGraph TB:` for a vertical graph |
 
-Diagram types that have no renderer here (`classDiagram`, `journey`, `gitGraph`,
-`quadrantChart`, `sankey`, `block`, `C4*` and similar) are left as an ordinary code block, with a
-warning in the build log, rather than drawn incorrectly.
+**Themes, dark mode and titles.** A diagram can carry Mermaid's own configuration, either as
+`%%{init: {...}}%%` or as a front-matter `config:` block:
+
+````markdown
+```mermaid
+---
+title: Order flow
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#7a1f5c"
+---
+flowchart LR
+    A --> B
+```
+````
+
+- `theme: dark` draws the diagram for a dark background, using lifted brand colours and the dark
+  steps of the data palette. A theme whose `body` or `@page` background is dark switches every
+  diagram to dark mode automatically, and Word/PowerPoint images get the dark background.
+- `theme: neutral` (greys) and `theme: forest` (greens) replace the brand colours;
+  `theme: default` keeps them.
+- `themeVariables`: `primaryColor`, `secondaryColor` (accent), `primaryBorderColor`,
+  `primaryTextColor` / `textColor`, `lineColor`, `fontFamily`, `background` and `darkMode`.
+- A front-matter `title` is drawn above any diagram.
+
+Diagram types that have no renderer here (`quadrantChart`, `sankey`, `block`, `packet`,
+`kanban`, `architecture`, `requirementDiagram`, `C4*`, `zenuml`, `radar`, `treemap`) are left as
+an ordinary code block, with a warning in the build log, rather than drawn incorrectly.
 
 <a id="markdown-values-and-placeholders"></a>
 

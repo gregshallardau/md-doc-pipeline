@@ -38,12 +38,20 @@ Supported flowchart syntax
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import json
 import logging
 import math
 import re
+import shutil
+import subprocess
 from collections import defaultdict
+from collections.abc import Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -248,6 +256,80 @@ class StateDiagram:
     transitions: list[StateTransition] = field(default_factory=list)
 
 
+@dataclass
+class ClassMember:
+    text: str
+    visibility: str = ""  # + - # ~
+    method: bool = False
+    static: bool = False
+    abstract: bool = False
+
+
+@dataclass
+class ClassDef:
+    name: str
+    label: str = ""
+    annotation: str = ""  # interface, abstract, enumeration, service, ...
+    members: list[ClassMember] = field(default_factory=list)
+
+
+@dataclass
+class ClassRelation:
+    a: str
+    b: str
+    end_a: str = "none"  # inherit | composition | aggregation | arrow | none
+    end_b: str = "none"
+    dashed: bool = False
+    label: str = ""
+    card_a: str = ""
+    card_b: str = ""
+
+
+@dataclass
+class ClassDiagram:
+    classes: dict[str, ClassDef] = field(default_factory=dict)
+    relations: list[ClassRelation] = field(default_factory=list)
+    notes: list[tuple[str, str]] = field(default_factory=list)  # (class, text)
+    namespaces: list[Subgraph] = field(default_factory=list)
+    direction: str = "TB"
+
+
+@dataclass
+class JourneyTask:
+    name: str
+    score: float
+    actors: list[str] = field(default_factory=list)
+    section: str = ""
+
+
+@dataclass
+class Journey:
+    title: str = ""
+    tasks: list[JourneyTask] = field(default_factory=list)
+
+
+@dataclass
+class GitCommit:
+    id: str
+    branch: str
+    parents: list[str] = field(default_factory=list)
+    tag: str = ""
+    kind: str = "normal"  # normal | highlight | reverse | merge | cherry
+    seq: int = 0
+    msg: str = ""
+    explicit_id: bool = False
+
+
+@dataclass
+class GitGraph:
+    commits: list[GitCommit] = field(default_factory=list)
+    branches: list[str] = field(default_factory=list)
+    branch_base: dict[str, str] = field(default_factory=dict)  # branch -> commit it starts from
+    order: dict[str, int] = field(default_factory=dict)
+    cherry_sources: dict[int, str] = field(default_factory=dict)  # seq -> source commit id
+    direction: str = "LR"
+
+
 # ---------------------------------------------------------------------------
 # Default theme (matches _pdf-theme.css palette)
 # ---------------------------------------------------------------------------
@@ -296,9 +378,176 @@ _OTHER = "#b9b8b0"  # folded tail ("Other") once the eight slots are used
 _CRITICAL = "#d03b3b"  # status colour, reserved for `crit` gantt tasks
 
 
-def _text_w(text: str, size: float = _FS) -> float:
-    """Estimated rendered width of ``text`` at ``size`` px."""
-    return len(text) * size * _CHAR_W
+# Validated dark-surface steps of the same eight hues (same order)
+_CATEGORICAL_DARK = [
+    "#3987e5",
+    "#d95926",
+    "#199e70",
+    "#c98500",
+    "#d55181",
+    "#008300",
+    "#9085e9",
+    "#e66767",
+]
+_OTHER_DARK = "#6e7681"
+_DARK_SURFACE = "#0d1117"
+
+
+# ---------------------------------------------------------------------------
+# Text measurement
+# ---------------------------------------------------------------------------
+# Layout needs real text widths: an estimate is fine for Inter but too narrow
+# for wide faces such as DejaVu Sans, which overflows its boxes. Widths come
+# from the actual font file (resolved the way the renderers resolve it), with
+# the estimate as a fallback when no file can be found.
+
+_ACTIVE_FONT: ContextVar[str] = ContextVar("mermaid_font", default="")
+_ACTIVE_SURFACE: ContextVar[str] = ContextVar("mermaid_surface", default="")
+_REGISTERED_FONTS: dict[str, dict[int, Path]] = {}  # family (lower) -> weight -> file
+_FONT_FILE_CACHE: dict[tuple[str, int], Path | None] = {}
+_METRICS_CACHE: dict[Path, "_FontMetrics | None"] = {}
+_FC_ADDED: set[Path] = set()
+
+
+class _FontMetrics:
+    """Advance widths from one font file (no shaping or kerning: close enough for layout)."""
+
+    def __init__(self, path: Path) -> None:
+        from fontTools.ttLib import TTFont
+
+        font = TTFont(str(path), lazy=True, fontNumber=0)
+        self.cmap = font.getBestCmap() or {}
+        self.hmtx = font["hmtx"].metrics
+        self.upm = float(font["head"].unitsPerEm)
+        fallback = self.cmap.get(ord("n"))
+        self.default = self.hmtx[fallback][0] if fallback in self.hmtx else self.upm * 0.55
+
+    def width(self, text: str, size: float) -> float:
+        total = 0.0
+        for ch in text:
+            glyph = self.cmap.get(ord(ch))
+            total += self.hmtx[glyph][0] if glyph in self.hmtx else self.default
+        return total / self.upm * size
+
+
+def _weight_num(weight: object) -> int:
+    text = str(weight).strip().lower()
+    if text.isdigit():
+        return int(text)
+    return 700 if text == "bold" else 400
+
+
+def register_fonts(faces: Iterable[tuple[str, str | Path, object]]) -> None:
+    """Make ``(family, file, weight)`` fonts available to diagrams.
+
+    Used for the ``fonts`` config key: layout measures text with these files, and
+    they are added to fontconfig so Word/PowerPoint rasters draw them too.
+    """
+    for family, path, weight in faces:
+        file = Path(path)
+        if not file.is_file():
+            continue
+        _REGISTERED_FONTS.setdefault(family.strip().lower(), {})[_weight_num(weight)] = file
+        if file not in _FC_ADDED:
+            _FC_ADDED.add(file)
+            try:
+                lib = ctypes.util.find_library("fontconfig")
+                if lib:
+                    fc = ctypes.CDLL(lib)
+                    fc.FcConfigAppFontAddFile(None, str(file).encode())
+            except Exception as exc:  # pragma: no cover - platform dependent
+                logger.debug("fontconfig registration failed for %s: %s", file, exc)
+    _FONT_FILE_CACHE.clear()
+
+
+def _font_file(stack: str, weight: int) -> Path | None:
+    """The file that will draw ``stack`` at ``weight``: registered fonts, then fontconfig."""
+    key = (stack, 700 if weight >= 600 else 500 if weight >= 500 else 400)
+    if key in _FONT_FILE_CACHE:
+        return _FONT_FILE_CACHE[key]
+    families = [f.strip().strip("'\"") for f in stack.split(",") if f.strip()]
+    found: Path | None = None
+    for fam in families:
+        faces = _REGISTERED_FONTS.get(fam.lower())
+        if faces:
+            found = faces[min(faces, key=lambda w: abs(w - key[1]))]
+            break
+    if found is None and shutil.which("fc-match"):
+        fc_weight = {400: 80, 500: 100, 700: 200}[key[1]]
+        pattern = ",".join(families or ["sans-serif"]) + f":weight={fc_weight}"
+        try:
+            out = subprocess.run(
+                ["fc-match", "-f", "%{file}", pattern],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            ).stdout.strip()
+            found = Path(out) if out and Path(out).is_file() else None
+        except Exception:  # pragma: no cover - fontconfig missing/misconfigured
+            found = None
+    _FONT_FILE_CACHE[key] = found
+    return found
+
+
+def _metrics(weight: int) -> "_FontMetrics | None":
+    stack = _ACTIVE_FONT.get() or DEFAULT_THEME["font"]
+    path = _font_file(stack, weight)
+    if path is None:
+        return None
+    if path not in _METRICS_CACHE:
+        try:
+            _METRICS_CACHE[path] = _FontMetrics(path)
+        except Exception as exc:
+            logger.debug("font metrics unavailable for %s: %s", path, exc)
+            _METRICS_CACHE[path] = None
+    return _METRICS_CACHE[path]
+
+
+def _text_w(text: str, size: float = _FS, weight: int = 400) -> float:
+    """Rendered width of ``text`` at ``size`` px in the active diagram font."""
+    m = _metrics(weight)
+    if m is None:
+        return len(text) * size * _CHAR_W * (1.06 if weight >= 600 else 1.0)
+    return m.width(text, size) * 1.03  # a hair of slack for kerning/hinting differences
+
+
+# ---------------------------------------------------------------------------
+# Colour helpers and token sets
+# ---------------------------------------------------------------------------
+
+
+def _rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _mix(color: str, toward: str, factor: float) -> str:
+    """Blend ``color`` toward ``toward`` by ``factor`` (0 = color, 1 = toward)."""
+    (r1, g1, b1), (r2, g2, b2) = _rgb(color), _rgb(toward)
+    return "#{:02x}{:02x}{:02x}".format(
+        *(int(round(a + (b - a) * factor)) for a, b in ((r1, r2), (g1, g2), (b1, b2)))
+    )
+
+
+def _luminance(color: str) -> float:
+    def lin(c: float) -> float:
+        c /= 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = _rgb(color)
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def _tint(color: str, factor: float, t: dict[str, str]) -> str:
+    """A tint of ``color`` toward the diagram surface (white, or the dark surface)."""
+    return _mix(color, t["surface"], factor)
+
+
+def _palette(t: dict[str, str]) -> list[str]:
+    return _CATEGORICAL_DARK if t.get("mode") == "dark" else _CATEGORICAL
 
 
 def _tokens(theme: dict[str, str] | None = None) -> dict[str, str]:
@@ -306,32 +555,83 @@ def _tokens(theme: dict[str, str] | None = None) -> dict[str, str]:
 
     Brand colours come from the theme (``primary``/``accent``/``body``/``font``);
     every tint is derived from them so diagrams follow the document's brand.
-    Explicit keys in ``theme`` (e.g. ``node_fill``) still win.
+    ``mode: dark`` switches to the dark token set. Explicit keys in ``theme``
+    (e.g. ``node_fill``) still win.
     """
-    t = {**DEFAULT_THEME, **(theme or {})}
+    given = theme or {}
+    t = {**DEFAULT_THEME, **given}
+    dark = t.get("mode") == "dark"
+    surface = t.get("surface") or (_DARK_SURFACE if dark else "#ffffff")
+    t["surface"] = surface
     primary, accent = t["primary"], t["accent"]
-    derived = {
-        "ink": t.get("body", _INK),
-        "ink2": _INK_2,
-        "chrome": _MUTED,
-        "grid": _GRID,
-        "baseline": _BASELINE,
-        "edge": _EDGE,
-        "node_fill": _lighten(primary, 0.94),
-        "node_stroke": _lighten(primary, 0.55),
-        "term_fill": primary,
-        "term_text": "#ffffff",
-        "diamond_fill": _lighten(accent, 0.9),
-        "diamond_stroke": _lighten(accent, 0.35),
-        "subgraph_fill": _lighten(primary, 0.975),
-        "subgraph_stroke": _lighten(primary, 0.82),
-        "subgraph_label": _INK_2,
-        "note_fill": "#fff8e6",
-        "note_stroke": "#ecd9a6",
-    }
+    if dark:
+        # Brand colours are usually dark; lift them until they read on the surface
+        while _luminance(primary) < 0.12:
+            primary = _mix(primary, "#ffffff", 0.18)
+        while _luminance(accent) < 0.16:
+            accent = _mix(accent, "#ffffff", 0.18)
+        body = t.get("body", "")
+        derived = {
+            "ink": body if body and _luminance(body) > 0.5 else "#e6edf3",
+            "ink2": "#b1bac4",
+            "chrome": "#8b949e",
+            "grid": "#262c33",
+            "baseline": "#3d444d",
+            "edge": "#7d8590",
+            "hairline": "#262c33",
+            "card": _mix(surface, "#ffffff", 0.05),
+            "shadow": "0",
+            "msg": "#b1bac4",
+            "lifeline": "#3d444d",
+            "frame": "#3d444d",
+            "tag_fill": _mix(surface, "#ffffff", 0.08),
+            "node_fill": _mix(primary, surface, 0.78),
+            "node_stroke": _mix(primary, surface, 0.25),
+            "term_fill": primary,
+            "diamond_fill": _mix(accent, surface, 0.8),
+            "diamond_stroke": _mix(accent, surface, 0.2),
+            "subgraph_fill": _mix(primary, surface, 0.93),
+            "subgraph_stroke": _mix(primary, surface, 0.7),
+            "subgraph_label": "#b1bac4",
+            "note_fill": "#2d2610",
+            "note_stroke": "#5c4a1a",
+            "other": _OTHER_DARK,
+        }
+    else:
+        derived = {
+            "ink": t.get("body", _INK),
+            "ink2": _INK_2,
+            "chrome": _MUTED,
+            "grid": _GRID,
+            "baseline": _BASELINE,
+            "edge": _EDGE,
+            "hairline": "#eef0f2",
+            "card": "#ffffff",
+            "shadow": "0.07",
+            "msg": "#57606a",
+            "lifeline": "#d0d7de",
+            "frame": "#c9ced4",
+            "tag_fill": "#f3f4f6",
+            "node_fill": _mix(primary, surface, 0.94),
+            "node_stroke": _mix(primary, surface, 0.55),
+            "term_fill": primary,
+            "diamond_fill": _mix(accent, surface, 0.9),
+            "diamond_stroke": _mix(accent, surface, 0.35),
+            "subgraph_fill": _mix(primary, surface, 0.975),
+            "subgraph_stroke": _mix(primary, surface, 0.82),
+            "subgraph_label": _INK_2,
+            "note_fill": "#fff8e6",
+            "note_stroke": "#ecd9a6",
+            "other": _OTHER,
+        }
+    t["primary"], t["accent"] = primary, accent
     for key, value in derived.items():
-        if key not in (theme or {}):
+        if key not in given:
             t[key] = value
+    if "term_text" not in given:
+        t["term_text"] = "#ffffff" if _luminance(t["term_fill"]) < 0.4 else "#1f2328"
+    _ACTIVE_FONT.set(t["font"])
+    _ACTIVE_SURFACE.set(surface if dark else "")
     return t
 
 
@@ -340,9 +640,19 @@ def _svg_root(width: float, height: float, body: str | list[str], font: str = ""
     if isinstance(body, list):
         body = "\n".join(body)
     font_attr = f' font-family="{_escape(font)}"' if font else ""
+    surface = _ACTIVE_SURFACE.get()
+    surface_attr = f' data-surface="{surface}"' if surface else ""
+    if surface and 'data-panel="1"' not in body:
+        # A dark diagram brings its own panel, so it reads on a light page too
+        width, height = width + 28, height + 28
+        body = (
+            f'<rect data-panel="1" width="{width:g}" height="{height:g}" rx="8" fill="{surface}"/>\n'
+            f'<g transform="translate(14,14)">\n{body}\n</g>'
+        )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width:g} {height:g}" preserveAspectRatio="xMidYMid meet"{font_attr}>\n'
+        f'viewBox="0 0 {width:g} {height:g}" preserveAspectRatio="xMidYMid meet"'
+        f"{font_attr}{surface_attr}>\n"
         f"{body}\n</svg>"
     )
 
@@ -404,6 +714,14 @@ def extract_theme_from_css(css_text: str) -> dict[str, str]:
     font = _find(r"\bbody\b[^{]*\{[^}]*font-family\s*:\s*([^;]+)")
     if font:
         theme["font"] = font.strip("'\"")
+
+    # A dark page or body background puts diagrams in dark mode
+    background = _find(
+        r"\bbody\b[^{]*\{[^}]*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})"
+    ) or _find(r"@page[^{]*\{[^}]*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})")
+    if background and len(background) in (4, 7) and _luminance(background) < 0.2:
+        theme["mode"] = "dark"
+        theme["surface"] = background
 
     return theme
 
@@ -1078,7 +1396,7 @@ def parse_mindmap(source: str) -> MindNode:
 # ---------------------------------------------------------------------------
 
 
-def _er_marker_defs(color: str) -> str:
+def _er_marker_defs(color: str, surface: str = "#ffffff") -> str:
     """Crow's-foot ends (one, zero-or-one, one-or-many, zero-or-many) for both line ends."""
     shapes = {
         "one": "M 13,2 V 12 M 9,2 V 12",
@@ -1090,7 +1408,7 @@ def _er_marker_defs(color: str) -> str:
     out = ["<defs>"]
     for kind, d in shapes.items():
         circle = (
-            f'<circle cx="{circles[kind]:g}" cy="7" r="3.2" fill="#ffffff" stroke="{color}" '
+            f'<circle cx="{circles[kind]:g}" cy="7" r="3.2" fill="{surface}" stroke="{color}" '
             f'stroke-width="1.25"/>'
             if kind in circles
             else ""
@@ -1441,10 +1759,9 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
         if node.shape == "fixed":  # caller-sized (ER entity cards)
             continue
         lines = re.split(r"<br\s*/?>|\n", node.label)
-        max_chars = max(len(line) for line in lines)
         num_lines = len(lines)
 
-        node.w = max(max_chars * font_size * _CHAR_W + 32, 96)
+        node.w = max(max(_text_w(line, font_size, 500) for line in lines) + 32, 96)
         node.h = max(num_lines * font_size * 1.3 + 22, 40)
 
         if node.shape == "diamond":
@@ -1638,9 +1955,9 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
             f'<marker id="{prefix}arr-s{sfx}" markerWidth="9" markerHeight="7" refX="1" refY="3.5" {common}>'
             f'<polygon points="9 0.5, 1 3.5, 9 6.5" fill="{c}"/></marker>',
             f'<marker id="{prefix}circle{sfx}" markerWidth="10" markerHeight="10" refX="9" refY="5" {common}>'
-            f'<circle cx="5" cy="5" r="3.6" fill="#ffffff" stroke="{c}" stroke-width="1.4"/></marker>',
+            f'<circle cx="5" cy="5" r="3.6" fill="{t["surface"]}" stroke="{c}" stroke-width="1.4"/></marker>',
             f'<marker id="{prefix}circle-s{sfx}" markerWidth="10" markerHeight="10" refX="1" refY="5" {common}>'
-            f'<circle cx="5" cy="5" r="3.6" fill="#ffffff" stroke="{c}" stroke-width="1.4"/></marker>',
+            f'<circle cx="5" cy="5" r="3.6" fill="{t["surface"]}" stroke="{c}" stroke-width="1.4"/></marker>',
             f'<marker id="{prefix}cross{sfx}" markerWidth="10" markerHeight="10" refX="9" refY="5" {common}>'
             f'<path d="M2 2 L8 8 M8 2 L2 8" stroke="{c}" stroke-width="1.6" fill="none"/></marker>',
             f'<marker id="{prefix}cross-s{sfx}" markerWidth="10" markerHeight="10" refX="1" refY="5" {common}>'
@@ -1655,17 +1972,8 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
 # ---------------------------------------------------------------------------
 
 
-def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
-    """Render a laid-out Flowchart to an SVG string."""
-    t = _tokens(theme)
-    layout(fc, t)
-
-    if not fc.nodes:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
-
-    parts: list[str] = []
-
-    # Tight canvas around everything drawn (nodes, frames, edge lanes)
+def _flow_extent(fc: Flowchart, pad: float = 10.0) -> tuple[float, float, float, float]:
+    """(origin x, origin y, width, height) of everything drawn: nodes, frames, lanes, labels."""
     xs0 = [n.x for n in fc.nodes.values()] + [sg.x for sg in fc.subgraphs if sg.w > 0]
     ys0 = [n.y for n in fc.nodes.values()] + [sg.y for sg in fc.subgraphs if sg.w > 0]
     xs1 = [n.x + n.w for n in fc.nodes.values()] + [sg.x + sg.w for sg in fc.subgraphs if sg.w > 0]
@@ -1675,12 +1983,71 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         xs1 += [px for px, _ in pts]
         ys0 += [py for _, py in pts]
         ys1 += [py for _, py in pts]
-    longest_label = max((len(e.label) for e in fc.edges), default=0)
-    pad = 10.0
-    right_pad = pad + (longest_label * 3.0 if fc.direction not in ("LR", "RL") else 0)
+    longest_label = max((_text_w(e.label, _FS_SM) for e in fc.edges), default=0.0)
+    right_pad = pad + (longest_label / 2 + 8 if fc.direction not in ("LR", "RL") else 0)
     ox, oy = min(xs0) - pad, min(ys0) - pad
-    width = max(xs1) - ox + right_pad
-    height = max(ys1) - oy + pad
+    return ox, oy, max(xs1) - ox + right_pad, max(ys1) - oy + pad
+
+
+def _wrap_label(label: str, max_w: float, weight: int = 500) -> str:
+    """Word-wrap a node label (keeping explicit line breaks) to ``max_w`` px."""
+    out: list[str] = []
+    for line in re.split(r"<br\s*/?>|\n", label):
+        words, cur = line.split(), ""
+        for word in words:
+            trial = f"{cur} {word}".strip()
+            if cur and _text_w(trial, _FS, weight) > max_w:
+                out.append(cur)
+                cur = word
+            else:
+                cur = trial
+        out.append(cur)
+    return "\n".join(out)
+
+
+def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
+    """Keep a laid-out diagram within the text column instead of shrinking its text.
+
+    Too wide: wrap long node labels; still too wide, try the other flow direction
+    (left-to-right <-> top-down) and keep it if it fits or is clearly narrower.
+    Opt out per diagram with ``%%{init: {"flowchart": {"autoFit": false}}}%%``.
+    """
+    if t.get("auto_fit") == "0" or not fc.nodes:
+        return
+    column = float(t.get("column_px") or 640)
+    width = _flow_extent(fc)[2]
+    if width <= column:
+        return
+    if wrap:
+        for node in fc.nodes.values():
+            if node.shape not in ("start", "end", "fixed", "dummy"):
+                node.label = _wrap_label(node.label, 132)
+        layout(fc, t)
+        width = _flow_extent(fc)[2]
+        if width <= column:
+            return
+    original = fc.direction
+    fc.direction = "TD" if original in ("LR", "RL") else "LR"
+    layout(fc, t)
+    flipped = _flow_extent(fc)[2]
+    if flipped <= column or flipped < width * 0.8:
+        return
+    fc.direction = original
+    layout(fc, t)
+
+
+def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
+    """Render a laid-out Flowchart to an SVG string."""
+    t = _tokens(theme)
+    layout(fc, t)
+    _fit_to_column(fc, t)
+
+    if not fc.nodes:
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+
+    parts: list[str] = []
+
+    ox, oy, width, height = _flow_extent(fc)
 
     edge_colors = tuple(sorted({e.css["stroke"] for e in fc.edges if "stroke" in e.css}))
     parts.append(_make_arrow_defs(t, colors=edge_colors))
@@ -1776,7 +2143,7 @@ def _apply_node_css(parts: list[str], css: dict[str, str]) -> list[str]:
     """Apply ``style`` / ``classDef`` overrides to a node's SVG elements."""
     out: list[str] = []
     for part in parts:
-        if 'fill-opacity="0.07"' in part:  # the soft shadow keeps its own look
+        if "data-shadow" in part:  # the soft shadow keeps its own look
             out.append(part)
             continue
         if part.startswith("<text"):
@@ -1808,7 +2175,9 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
         primary = t["term_fill"]
         parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2}" fill="{primary}"/>')
         if node.shape == "end":
-            parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 3}" fill="#ffffff"/>')
+            parts.append(
+                f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 3}" fill="{t["surface"]}"/>'
+            )
             parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 5}" fill="{primary}"/>')
         return "\n".join(parts)
 
@@ -1826,7 +2195,7 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     if node.shape in _SHADOW_SHAPES:
         parts.append(
             f'<rect x="{node.x}" y="{node.y + 1.5}" width="{node.w}" height="{node.h}" '
-            f'rx="{corner}" fill="#0b1f33" fill-opacity="0.07"/>'
+            f'rx="{corner}" fill="#0b1f33" fill-opacity="{t["shadow"]}" data-shadow="1"/>'
         )
 
     poly = _node_polygon(node)
@@ -2085,7 +2454,7 @@ def _render_edge(
         est_w = _text_w(label, _FS_SM) + 10
         parts.append(
             f'<rect x="{lx - est_w / 2:g}" y="{ly - 11:g}" width="{est_w:g}" height="15" '
-            f'rx="3" fill="#ffffff"/>'
+            f'rx="3" fill="{t["surface"]}"/>'
         )
         parts.append(
             f'<text x="{lx:g}" y="{ly:g}" text-anchor="middle" '
@@ -2153,7 +2522,7 @@ def _text_on(fill: str, t: dict[str, str]) -> str:
         return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
 
     lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
-    return "#ffffff" if lum < 0.45 else t["ink"]
+    return "#ffffff" if lum < 0.45 else "#1f2328"
 
 
 def _svg_text(
@@ -2198,22 +2567,24 @@ def _wrap_words(text: str, max_w: float, size: float = _FS) -> list[str]:
     return lines or [""]
 
 
-def _fold_slices(slices: list[tuple[str, float]]) -> list[tuple[str, float, str]]:
+def _fold_slices(
+    slices: list[tuple[str, float]], palette: list[str] = _CATEGORICAL, other_color: str = _OTHER
+) -> list[tuple[str, float, str]]:
     """Assign categorical slots in source order; past eight, fold the smallest into Other."""
     data = [(label, value) for label, value in slices if value > 0]
-    if len(data) > len(_CATEGORICAL):
-        keep = sorted(range(len(data)), key=lambda i: -data[i][1])[: len(_CATEGORICAL) - 1]
+    if len(data) > len(palette):
+        keep = sorted(range(len(data)), key=lambda i: -data[i][1])[: len(palette) - 1]
         kept = [data[i] for i in sorted(keep)]
         other = sum(v for i, (_, v) in enumerate(data) if i not in keep)
-        return [(lbl, v, _CATEGORICAL[i]) for i, (lbl, v) in enumerate(kept)] + [
-            ("Other", other, _OTHER)
+        return [(lbl, v, palette[i]) for i, (lbl, v) in enumerate(kept)] + [
+            ("Other", other, other_color)
         ]
-    return [(lbl, v, _CATEGORICAL[i]) for i, (lbl, v) in enumerate(data)]
+    return [(lbl, v, palette[i]) for i, (lbl, v) in enumerate(data)]
 
 
 def _render_part_to_whole(pc: PieChart, t: dict[str, str], hole: float) -> str:
     """Pie (``hole`` = 0) or donut (``hole`` = inner/outer radius ratio)."""
-    slices = _fold_slices(pc.slices)
+    slices = _fold_slices(pc.slices, _palette(t), t["other"])
     if not slices:
         return _svg_root(120, 40, _svg_text(0, 20, "No data", t, color=t["ink2"]), t["font"])
     total = sum(v for _, v, _ in slices)
@@ -2230,7 +2601,7 @@ def _render_part_to_whole(pc: PieChart, t: dict[str, str], hole: float) -> str:
         if share >= 0.9999:
             parts.append(f'<circle cx="{cx:g}" cy="{cy:g}" r="{r:g}" fill="{color}"/>')
             if ri:
-                parts.append(f'<circle cx="{cx:g}" cy="{cy:g}" r="{ri:g}" fill="#ffffff"/>')
+                parts.append(f'<circle cx="{cx:g}" cy="{cy:g}" r="{ri:g}" fill="{t["surface"]}"/>')
         else:
             a0, a1 = angle, angle + sweep
             large = 1 if sweep > math.pi else 0
@@ -2250,7 +2621,7 @@ def _render_part_to_whole(pc: PieChart, t: dict[str, str], hole: float) -> str:
                 )
             # 2px surface gap between neighbouring slices
             parts.append(
-                f'<path d="{d}" fill="{color}" stroke="#ffffff" stroke-width="2" '
+                f'<path d="{d}" fill="{color}" stroke="{t["surface"]}" stroke-width="2" '
                 f'stroke-linejoin="round"/>'
             )
         # Direct label only where the slice is big enough to hold it
@@ -2355,9 +2726,9 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
             120, 40, _svg_text(0, 20, "No participants", t, color=t["ink2"]), t["font"]
         )
 
-    msg_color = "#57606a"
-    life_color = "#d0d7de"
-    frame_color = "#c9ced4"
+    msg_color = t["msg"]
+    life_color = t["lifeline"]
+    frame_color = t["frame"]
     n = len(sd.participants)
     index = {p: i for i, p in enumerate(sd.participants)}
     label_of = {p: sd.labels.get(p, p) for p in sd.participants}
@@ -2538,9 +2909,11 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
             nx = px[msg.src]
             drawn.append(
                 f'<circle cx="{nx:g}" cy="{line_y:g}" r="8" fill="{t["term_fill"]}" '
-                f'stroke="#ffffff" stroke-width="1.5"/>'
+                f'stroke="{t["surface"]}" stroke-width="1.5"/>'
             )
-            drawn.append(_svg_text(nx, line_y + 3.5, str(number), t, 9.5, "#ffffff", 600, "middle"))
+            drawn.append(
+                _svg_text(nx, line_y + 3.5, str(number), t, 9.5, t["term_text"], 600, "middle")
+            )
         if msg.activate == "+":
             active[msg.dst].append(line_y)
         elif msg.activate == "-" and active[msg.src]:
@@ -2585,7 +2958,7 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
         tag_w = _text_w(tag, 10) + 16
         fx1 = max(fx1, fx0 + tag_w + _text_w(f"[{f['label']}]", _FS_SM) + 24)
         fy0, fy1 = f["y0"] + 2, f["y1"] + 4
-        fill = _lighten(t["primary"], 0.97) if tag == "rect" else "none"
+        fill = _tint(t["primary"], 0.97, t) if tag == "rect" else "none"
         parts.append(
             f'<rect x="{fx0:g}" y="{fy0:g}" width="{fx1 - fx0:g}" height="{fy1 - fy0:g}" rx="4" '
             f'fill="{fill}" stroke="{frame_color}" stroke-width="1"/>'
@@ -2593,7 +2966,7 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
         if tag != "rect":
             parts.append(
                 f'<path d="M {fx0:g},{fy0 + 4:g} Q {fx0:g},{fy0:g} {fx0 + 4:g},{fy0:g} H {fx0 + tag_w:g} '
-                f'V {fy0 + 12:g} L {fx0 + tag_w - 6:g},{fy0 + 18:g} H {fx0:g} Z" fill="#f3f4f6" '
+                f'V {fy0 + 12:g} L {fx0 + tag_w - 6:g},{fy0 + 18:g} H {fx0:g} Z" fill="{t["tag_fill"]}" '
                 f'stroke="{frame_color}" stroke-width="1"/>'
             )
             parts.append(_svg_text(fx0 + 7, fy0 + 13, tag, t, 10, t["ink2"], 600))
@@ -2632,7 +3005,7 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
                 hy = top + 8
                 parts.append(
                     f'<g fill="none" stroke="{t["ink2"]}" stroke-width="1.4" stroke-linecap="round">'
-                    f'<circle cx="{cx:g}" cy="{hy:g}" r="6" fill="#ffffff"/>'
+                    f'<circle cx="{cx:g}" cy="{hy:g}" r="6" fill="{t["surface"]}"/>'
                     f'<path d="M {cx:g},{hy + 6:g} V {hy + 18:g} M {cx - 9:g},{hy + 10:g} H {cx + 9:g} '
                     f"M {cx:g},{hy + 18:g} L {cx - 7:g},{hy + 27:g} M {cx:g},{hy + 18:g} "
                     f'L {cx + 7:g},{hy + 27:g}"/></g>'
@@ -2646,7 +3019,7 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
                 by = head_h - box_h if top == 0.0 else top
                 parts.append(
                     f'<rect x="{cx - box_w[i] / 2:g}" y="{by:g}" width="{box_w[i]:g}" height="{box_h:g}" '
-                    f'rx="6" fill="#ffffff" stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
+                    f'rx="6" fill="{t["card"]}" stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
                 )
                 parts.append(
                     _svg_text(
@@ -2670,7 +3043,7 @@ def render_bar_svg(bc: BarChart, theme: dict[str, str] | None = None) -> str:
         return _svg_root(120, 40, _svg_text(0, 20, "No data", t, color=t["ink2"]), t["font"])
     n_cat = max(len(v) for _, v in series)
     labels = (bc.labels + [""] * n_cat)[:n_cat]
-    colors = [_CATEGORICAL[i % len(_CATEGORICAL)] for i in range(len(series))]
+    colors = [_palette(t)[i % 8] for i in range(len(series))]
     bar_idx = [i for i, (kind, _) in enumerate(series) if kind == "bar"]
     line_idx = [i for i, (kind, _) in enumerate(series) if kind == "line"]
 
@@ -2848,7 +3221,7 @@ def render_bar_svg(bc: BarChart, theme: dict[str, str] | None = None) -> str:
         for px, py in pts:
             parts.append(
                 f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="{colors[i]}" '
-                f'stroke="#ffffff" stroke-width="2"/>'
+                f'stroke="{t["surface"]}" stroke-width="2"/>'
             )
 
     extra = 13 * (max(len(lines) for lines in label_lines) - 1)
@@ -2889,7 +3262,7 @@ def render_gauge_svg(gc: GaugeChart, theme: dict[str, str] | None = None) -> str
     """Render a semicircular meter: tinted track, filled arc, hero value."""
     t = _tokens(theme)
     fill = t["accent"]
-    track = _lighten(fill, 0.85)
+    track = _tint(fill, 0.85, t)
     parts, top = _chart_title(gc.title, t)
     r, sw = 86.0, 16.0
     cx, cy = r + sw / 2 + 4, top + r + sw / 2 + 4
@@ -2981,7 +3354,7 @@ def render_timeline_svg(tl: Timeline, theme: dict[str, str] | None = None) -> st
     )
     dots = [
         f'<circle cx="{axis_x:g}" cy="{cy:g}" r="5" fill="{t["term_fill"]}" '
-        f'stroke="#ffffff" stroke-width="2"/>'
+        f'stroke="{t["surface"]}" stroke-width="2"/>'
         for cy in dot_rows
     ]
     parts = [axis, *dots, *parts]
@@ -3067,7 +3440,7 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
     for task in gc.tasks:
         if task.section not in sections:
             sections.append(task.section)
-    sec_color = {s: _CATEGORICAL[i % len(_CATEGORICAL)] for i, s in enumerate(sections)}
+    sec_color = {s: _palette(t)[i % 8] for i, s in enumerate(sections)}
 
     parts, top = _chart_title(gc.title, t)
     label_w = min(
@@ -3257,7 +3630,7 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
         y = 0.0
         tops = []
         for i, branch in branches:
-            color = _CATEGORICAL[i % len(_CATEGORICAL)]
+            color = _palette(t)[i % 8]
             cy, y = place(branch, 1, side, offsets, y, color)
             tops.append(cy)
             y += 10
@@ -3310,19 +3683,19 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
         mx = (sx + ex) / 2
         parts.append(
             f'<path d="M {sx:.1f},{sy:.1f} C {mx:.1f},{sy:.1f} {mx:.1f},{ey:.1f} {ex:.1f},{ey:.1f}" '
-            f'fill="none" stroke="{_lighten(color, 0.25 if depth == 1 else 0.45)}" '
+            f'fill="none" stroke="{_tint(color, 0.25 if depth == 1 else 0.45, t)}" '
             f'stroke-width="{2 if depth == 1 else 1.5}" stroke-linecap="round"/>'
         )
     parts.append(
         f'<rect x="{-rw / 2:g}" y="{root_cy - lw / 2:g}" width="{rw:g}" height="{lw:g}" '
         f'rx="{lw / 2:g}" fill="{t["term_fill"]}"/>'
     )
-    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, "#ffffff", 600, "middle"))
+    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, t["term_text"], 600, "middle"))
     for node, depth, x, by, w, h, color in boxes:
         if depth == 1:
-            fill, stroke, fs, weight = _lighten(color, 0.86), _lighten(color, 0.35), _FS, 500
+            fill, stroke, fs, weight = _tint(color, 0.86, t), _tint(color, 0.35, t), _FS, 500
         else:
-            fill, stroke, fs, weight = "#ffffff", _lighten(color, 0.6), 11.5, 400
+            fill, stroke, fs, weight = t["card"], _tint(color, 0.6, t), 11.5, 400
         parts.append(
             f'<rect x="{x:g}" y="{by:g}" width="{w:g}" height="{h:g}" rx="{h / 2:g}" '
             f'fill="{fill}" stroke="{stroke}" stroke-width="1.25"/>'
@@ -3373,7 +3746,9 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
     for rel in erd.relations:
         fc.edges.append(Edge(rel.entity_a, rel.entity_b, rel.label))
     layout(fc, t)
+    _fit_to_column(fc, t, wrap=False)
     ports = _assign_ports(fc)
+    vertical = fc.direction not in ("LR", "RL")
 
     color = t["edge"]
     xs0 = [n.x for n in fc.nodes.values()]
@@ -3387,7 +3762,7 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
         ys1 += [p[1] for p in pts]
     pad = 10.0
     ox, oy = min(xs0) - pad, min(ys0) - pad
-    parts = [_er_marker_defs(color), f'<g transform="translate({-ox:g},{-oy:g})">']
+    parts = [_er_marker_defs(color, t["surface"]), f'<g transform="translate({-ox:g},{-oy:g})">']
 
     for i, rel in enumerate(erd.relations):
         src, dst = fc.nodes.get(rel.entity_a), fc.nodes.get(rel.entity_b)
@@ -3397,7 +3772,7 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
             src,
             dst,
             fc.waypoints.get(i, []),
-            True,
+            not vertical,
             rel.label,
             ports.get((i, "out")),
             ports.get((i, "in")),
@@ -3414,7 +3789,7 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
             )
             lw = _text_w(rel.label, _FS_SM) + 10
             parts.append(
-                f'<rect x="{lx - lw / 2:g}" y="{ly - 11:g}" width="{lw:g}" height="15" rx="3" fill="#ffffff"/>'
+                f'<rect x="{lx - lw / 2:g}" y="{ly - 11:g}" width="{lw:g}" height="15" rx="3" fill="{t["surface"]}"/>'
             )
             parts.append(_svg_text(lx, ly, rel.label, t, _FS_SM, t["ink2"], anchor="middle"))
 
@@ -3425,10 +3800,10 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
         r = 6.0
         parts.append(
             f'<rect x="{x:g}" y="{y + 1.5:g}" width="{w:g}" height="{h:g}" rx="{r:g}" '
-            f'fill="#0b1f33" fill-opacity="0.07"/>'
+            f'fill="#0b1f33" fill-opacity="{t["shadow"]}"/>'
         )
         parts.append(
-            f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{r:g}" fill="#ffffff" '
+            f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{r:g}" fill="{t["card"]}" '
             f'stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
         )
         hb = head_h if ent.attributes else h
@@ -3443,7 +3818,9 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
             )
             + f'Z" fill="{t["term_fill"]}"/>'
         )
-        parts.append(_svg_text(x + w / 2, y + hb / 2 + 4.3, name, t, _FS, "#ffffff", 600, "middle"))
+        parts.append(
+            _svg_text(x + w / 2, y + hb / 2 + 4.3, name, t, _FS, t["term_text"], 600, "middle")
+        )
         for k, (attr, key) in enumerate(
             zip(ent.attributes, ent.keys or [""] * len(ent.attributes))
         ):
@@ -3452,7 +3829,7 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
             if k:
                 parts.append(
                     f'<line x1="{x + 1:g}" y1="{ry:g}" x2="{x + w - 1:g}" y2="{ry:g}" '
-                    f'stroke="#eef0f2" stroke-width="1"/>'
+                    f'stroke="{t["hairline"]}" stroke-width="1"/>'
                 )
             parts.append(_svg_text(x + 12, ry + row_h / 2 + 3.8, typ, t, _FS_SM, t["chrome"]))
             parts.append(_svg_text(x + 12 + type_col + 14, ry + row_h / 2 + 4, aname, t, 11.5))
@@ -3467,6 +3844,750 @@ def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
 # ---------------------------------------------------------------------------
 # SVG renderer — state diagram
 # ---------------------------------------------------------------------------
+
+
+def _uml_text(text: str) -> str:
+    """Mermaid generics ``List~int~`` -> ``List<int>``."""
+    return re.sub(r"~([^~]+)~", r"<\1>", text)
+
+
+def _parse_member(raw: str) -> ClassMember:
+    text = raw.strip()
+    member = ClassMember(text=text)
+    if text.endswith("$"):
+        member.static, text = True, text[:-1].rstrip()
+    elif text.endswith("*"):
+        member.abstract, text = True, text[:-1].rstrip()
+    # Method return-type classifiers can also sit right after the parentheses
+    m = re.match(r"^(.*\))\s*([$*])\s*(.*)$", text)
+    if m:
+        member.static = member.static or m.group(2) == "$"
+        member.abstract = member.abstract or m.group(2) == "*"
+        text = f"{m.group(1)} {m.group(3)}".strip()
+    if text[:1] in "+-#~":
+        member.visibility, text = text[0], text[1:].strip()
+    member.text = _uml_text(text)
+    member.method = "(" in text
+    return member
+
+
+_CLASS_REL_RE = re.compile(
+    r'^([\w.`-]+)\s*(?:"([^"]*)"\s*)?'
+    r"(<\|--|<\|\.\.|\*--|o--|<--|<\.\.|--\|>|\.\.\|>|--\*|--o|-->|\.\.>|<\|--\|>|--|\.\.)"
+    r'\s*(?:"([^"]*)"\s*)?([\w.`-]+)\s*(?::\s*(.+))?$'
+)
+
+
+def parse_class(source: str) -> ClassDiagram:
+    """Parse a Mermaid class diagram."""
+    cd = ClassDiagram()
+    current: str | None = None
+    namespace: Subgraph | None = None
+
+    def ensure(name: str) -> ClassDef:
+        name = name.strip("`")
+        if name not in cd.classes:
+            generic = re.match(r"^(\w+)~(.+)~$", name)
+            label = f"{generic.group(1)}<{generic.group(2)}>" if generic else name
+            base = generic.group(1) if generic else name
+            cd.classes[base] = ClassDef(name=base, label=label)
+            if namespace is not None:
+                namespace.node_ids.append(base)
+            return cd.classes[base]
+        return cd.classes[name]
+
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^classDiagram", line, re.IGNORECASE):
+            continue
+        if current is not None:
+            if line.startswith("}"):
+                current = None
+                continue
+            ann = re.match(r"^<<(.+)>>$", line)
+            if ann:
+                cd.classes[current].annotation = ann.group(1).strip()
+            else:
+                cd.classes[current].members.append(_parse_member(line))
+            continue
+
+        m = re.match(r"^direction\s+(TB|TD|BT|LR|RL)$", line, re.IGNORECASE)
+        if m:
+            cd.direction = m.group(1).upper()
+            continue
+        m = re.match(r"^namespace\s+([\w.-]+)\s*\{$", line)
+        if m:
+            namespace = Subgraph(id=m.group(1), label=m.group(1))
+            cd.namespaces.append(namespace)
+            continue
+        if line == "}" and namespace is not None:
+            namespace = None
+            continue
+        m = re.match(r'^class\s+([\w`~.-]+)(?:\s*\["([^"]*)"\])?\s*(?:::::?\w+)?\s*(\{)?\s*$', line)
+        if m:
+            cls = ensure(m.group(1))
+            if m.group(2):
+                cls.label = m.group(2)
+            if m.group(3):
+                current = cls.name
+            continue
+        m = re.match(r"^<<(.+)>>\s+([\w`~.-]+)$", line)
+        if m:
+            ensure(m.group(2)).annotation = m.group(1).strip()
+            continue
+        m = re.match(r'^note\s+for\s+([\w`~.-]+)\s+"(.*)"$', line)
+        if m:
+            cd.notes.append((ensure(m.group(1)).name, m.group(2).replace("\\n", "\n")))
+            continue
+        if re.match(r'^note\s+"', line) or line.startswith(
+            ("click ", "link ", "callback ", "style ", "classDef ", "cssClass ")
+        ):
+            continue
+        m = _CLASS_REL_RE.match(line)
+        if m:
+            a, card_a, op, card_b, b, label = m.groups()
+            a, b = ensure(a).name, ensure(b).name
+            dashed = ".." in op
+            left = {"<|": "inherit", "*": "composition", "o": "aggregation", "<": "arrow"}
+            right = {"|>": "inherit", "*": "composition", "o": "aggregation", ">": "arrow"}
+            body = op.replace("--", " ").replace("..", " ")
+            lhs, _, rhs = body.partition(" ")
+            rel = ClassRelation(
+                a,
+                b,
+                left.get(lhs.strip(), "none"),
+                right.get(rhs.strip(), "none"),
+                dashed,
+                (label or "").strip(),
+                card_a or "",
+                card_b or "",
+            )
+            # Lay parents/wholes above (or before) their children/parts
+            if rel.end_b in ("inherit", "composition", "aggregation") and rel.end_a == "none":
+                rel = ClassRelation(
+                    b, a, rel.end_b, "none", dashed, rel.label, rel.card_b, rel.card_a
+                )
+            cd.relations.append(rel)
+            continue
+        m = re.match(r"^([\w`~.-]+)\s*:\s*(.+)$", line)
+        if m:
+            ensure(m.group(1)).members.append(_parse_member(m.group(2)))
+            continue
+        m = re.match(r"^([\w`~.-]+)$", line)
+        if m:
+            ensure(m.group(1))
+    return cd
+
+
+def _class_marker_defs(color: str, surface: str) -> str:
+    """UML relationship ends: inheritance triangle, composition/aggregation diamonds, open arrow."""
+    shapes = {
+        "inherit": f'<path d="M 1,1 L 15,7 L 1,13 Z" fill="{surface}" stroke="{color}" stroke-width="1.25" stroke-linejoin="round"/>',
+        "composition": f'<path d="M 1,7 L 8,2 L 15,7 L 8,12 Z" fill="{color}" stroke="{color}" stroke-width="1.25"/>',
+        "aggregation": f'<path d="M 1,7 L 8,2 L 15,7 L 8,12 Z" fill="{surface}" stroke="{color}" stroke-width="1.25"/>',
+        "arrow": f'<path d="M 6,2 L 15,7 L 6,12" fill="none" stroke="{color}" stroke-width="1.25" stroke-linecap="round"/>',
+    }
+    out = ["<defs>"]
+    common = (
+        'markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="14" refY="7" orient="auto"'
+    )
+    for kind, body in shapes.items():
+        out.append(f'<marker id="cls-{kind}" refX="15" {common}>{body}</marker>')
+        out.append(
+            f'<marker id="cls-{kind}-s" refX="1" {common}>'
+            f'<g transform="matrix(-1 0 0 1 16 0)">{body}</g></marker>'
+        )
+    out.append("</defs>")
+    return "\n".join(out)
+
+
+def _path_ends(
+    d: str,
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]:
+    """First two and last two distinct points of an SVG path (for placing end labels)."""
+    nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", d)]
+    pts: list[tuple[float, float]] = []
+    for i in range(0, len(nums) - 1, 2):
+        pt = (nums[i], nums[i + 1])
+        if not pts or abs(pts[-1][0] - pt[0]) > 0.01 or abs(pts[-1][1] - pt[1]) > 0.01:
+            pts.append(pt)
+    if len(pts) < 2:
+        pts = pts * 2 if pts else [(0.0, 0.0), (1.0, 0.0)]
+    return pts[0], pts[1], pts[-1], pts[-2]
+
+
+def _path_midpoint(d: str) -> tuple[float, float]:
+    """Point halfway along a path's vertices (by length)."""
+    nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", d)]
+    pts = [(nums[i], nums[i + 1]) for i in range(0, len(nums) - 1, 2)]
+    segs = [(a, b, math.hypot(b[0] - a[0], b[1] - a[1])) for a, b in zip(pts, pts[1:])]
+    half = sum(length for _, _, length in segs) / 2
+    for a, b, length in segs:
+        if half <= length and length > 0:
+            f = half / length
+            return a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f
+        half -= length
+    return pts[len(pts) // 2] if pts else (0.0, 0.0)
+
+
+def render_class_svg(cd: ClassDiagram, theme: dict[str, str] | None = None) -> str:
+    """Render a UML class diagram."""
+    t = _tokens(theme)
+    if not cd.classes:
+        return _svg_root(120, 40, _svg_text(0, 20, "No classes", t, color=t["ink2"]), t["font"])
+
+    row_h, head_h, pad = 19.0, 30.0, 12.0
+    sizes: dict[str, tuple[float, float, float, float]] = {}  # w, h, header h, attr h
+    for name, cls in cd.classes.items():
+        attrs = [mb for mb in cls.members if not mb.method]
+        methods = [mb for mb in cls.members if mb.method]
+        hh = head_h + (13 if cls.annotation else 0)
+        widths = [_text_w(cls.label, _FS, 600) + 28, 120.0]
+        if cls.annotation:
+            widths.append(_text_w(f"«{cls.annotation}»", _FS_SM) + 28)
+        for mb in cls.members:
+            widths.append(_text_w(mb.text, 11.5) + (16 if mb.visibility else 0) + 2 * pad)
+        ah = len(attrs) * row_h + 10
+        mh = len(methods) * row_h + 10
+        sizes[name] = (max(widths), hh + ah + mh, hh, ah)
+
+    fc = Flowchart(
+        direction={"TB": "TD", "BT": "TD"}.get(cd.direction, cd.direction), end_marker_space=12.0
+    )
+    for name, (w, h, _, _) in sizes.items():
+        fc.nodes[name] = Node(name, "", "fixed", w=w, h=h)
+    note_ids: list[str] = []
+    for i, (target, text) in enumerate(cd.notes):
+        nid = f"__note{i}"
+        lines = text.split("\n")
+        fc.nodes[nid] = Node(
+            nid, "", "fixed", w=max(_text_w(x, 11) for x in lines) + 24, h=16 * len(lines) + 14
+        )
+        note_ids.append(nid)
+        fc.edges.append(Edge(nid, target, ""))
+    rel_offset = len(fc.edges)
+    for rel in cd.relations:
+        fc.edges.append(Edge(rel.a, rel.b, rel.label))
+    fc.subgraphs = [Subgraph(ns.id, ns.label, list(ns.node_ids)) for ns in cd.namespaces]
+    layout(fc, t)
+    _fit_to_column(fc, t, wrap=False)
+    ports = _assign_ports(fc)
+    horizontal = fc.direction in ("LR", "RL")
+
+    ox, oy, width, height = _flow_extent(fc, pad=14.0)
+    color = t["edge"]
+    parts = [_class_marker_defs(color, t["surface"]), f'<g transform="translate({-ox:g},{-oy:g})">']
+    for sg in fc.subgraphs:
+        parts.append(_render_subgraph(sg, t))
+
+    # Note connectors
+    for i, nid in enumerate(note_ids):
+        src, dst = fc.nodes[nid], fc.nodes[cd.notes[i][0]]
+        d, _ = _routed_path(
+            src,
+            dst,
+            fc.waypoints.get(i, []),
+            horizontal,
+            "",
+            ports.get((i, "out")),
+            ports.get((i, "in")),
+        )
+        parts.append(
+            f'<path d="{d}" fill="none" stroke="{t["note_stroke"]}" stroke-width="1.25" stroke-dasharray="4 3"/>'
+        )
+
+    cards: list[tuple[float, float, str, float]] = []
+    for k, rel in enumerate(cd.relations):
+        i = rel_offset + k
+        src, dst = fc.nodes[rel.a], fc.nodes[rel.b]
+        d, label_xy = _routed_path(
+            src,
+            dst,
+            fc.waypoints.get(i, []),
+            horizontal,
+            rel.label,
+            ports.get((i, "out")),
+            ports.get((i, "in")),
+        )
+        dash = ' stroke-dasharray="5 3"' if rel.dashed else ""
+        mk = ""
+        if rel.end_a != "none":
+            mk += f' marker-start="url(#cls-{rel.end_a}-s)"'
+        if rel.end_b != "none":
+            mk += f' marker-end="url(#cls-{rel.end_b})"'
+        parts.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="1.25"{dash}{mk}/>')
+        if rel.label:
+            lx, ly = _path_midpoint(d)
+            ly += _FS_SM * 0.35
+            lw = _text_w(rel.label, _FS_SM) + 10
+            parts.append(
+                f'<rect x="{lx - lw / 2:g}" y="{ly - 11:g}" width="{lw:g}" height="15" rx="3" '
+                f'fill="{t["surface"]}"/>'
+            )
+            parts.append(_svg_text(lx, ly, rel.label, t, _FS_SM, t["ink2"], anchor="middle"))
+        start, nxt, end, prev = _path_ends(d)
+        for (p0, p1), card in (((start, nxt), rel.card_a), ((end, prev), rel.card_b)):
+            if not card:
+                continue
+            dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+            length = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / length, dy / length
+            cw = _text_w(card, _FS_SM) + 6
+            # Beside the line, just past the end marker
+            cx = p0[0] + ux * 24 + (-uy) * (cw / 2 + 5)
+            cy = p0[1] + uy * 24 + ux * 11
+            cards.append((cx, cy, card, cw))
+
+    for cx, cy, card, cw in cards:
+        parts.append(
+            f'<rect x="{cx - cw / 2:g}" y="{cy - 10:g}" width="{cw:g}" height="14" rx="3" '
+            f'fill="{t["surface"]}"/>'
+        )
+        parts.append(_svg_text(cx, cy + 1, card, t, _FS_SM, t["ink2"], anchor="middle"))
+
+    for i, nid in enumerate(note_ids):
+        n = fc.nodes[nid]
+        parts.append(
+            f'<rect x="{n.x:g}" y="{n.y:g}" width="{n.w:g}" height="{n.h:g}" rx="4" '
+            f'fill="{t["note_fill"]}" stroke="{t["note_stroke"]}" stroke-width="1"/>'
+        )
+        for li, text in enumerate(cd.notes[i][1].split("\n")):
+            parts.append(_svg_text(n.x + 12, n.y + 20 + li * 16, text, t, 11))
+
+    for name, cls in cd.classes.items():
+        n = fc.nodes[name]
+        x, y, w, h = n.x, n.y, n.w, n.h
+        _, _, hh, ah = sizes[name]
+        r = 6.0
+        parts.append(
+            f'<rect x="{x:g}" y="{y + 1.5:g}" width="{w:g}" height="{h:g}" rx="{r:g}" '
+            f'fill="#0b1f33" fill-opacity="{t["shadow"]}"/>'
+        )
+        parts.append(
+            f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{r:g}" fill="{t["card"]}" '
+            f'stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
+        )
+        parts.append(
+            f'<path d="M {x:g},{y + hh:g} V {y + r:g} Q {x:g},{y:g} {x + r:g},{y:g} H {x + w - r:g} '
+            f'Q {x + w:g},{y:g} {x + w:g},{y + r:g} V {y + hh:g} Z" fill="{t["node_fill"]}" '
+            f'stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
+        )
+        ty = y + 19
+        if cls.annotation:
+            parts.append(
+                _svg_text(
+                    x + w / 2, ty - 2, f"«{cls.annotation}»", t, _FS_SM, t["ink2"], anchor="middle"
+                )
+            )
+            ty += 13
+        abstract = cls.annotation.lower() in ("abstract", "interface")
+        parts.append(
+            _svg_text(
+                x + w / 2,
+                ty,
+                cls.label,
+                t,
+                _FS,
+                weight=600,
+                anchor="middle",
+                extra=' font-style="italic"' if abstract else "",
+            )
+        )
+        parts.append(
+            f'<line x1="{x:g}" y1="{y + hh + ah:g}" x2="{x + w:g}" y2="{y + hh + ah:g}" '
+            f'stroke="{t["node_stroke"]}" stroke-width="1"/>'
+        )
+        attrs = [mb for mb in cls.members if not mb.method]
+        methods = [mb for mb in cls.members if mb.method]
+        for group, top in ((attrs, y + hh + 5), (methods, y + hh + ah + 5)):
+            for k, mb in enumerate(group):
+                by = top + k * row_h + 13.5
+                tx = x + pad
+                if mb.visibility:
+                    parts.append(_svg_text(tx, by, mb.visibility, t, 11.5, t["chrome"], 600))
+                    tx += 14
+                extra = ' font-style="italic"' if mb.abstract else ""
+                parts.append(_svg_text(tx, by, mb.text, t, 11.5, extra=extra))
+                if mb.static:
+                    uw = _text_w(mb.text, 11.5)
+                    parts.append(
+                        f'<line x1="{tx:g}" y1="{by + 2:g}" x2="{tx + uw:g}" y2="{by + 2:g}" '
+                        f'stroke="{t["ink"]}" stroke-width="0.8"/>'
+                    )
+    parts.append("</g>")
+    return _svg_root(width, height, parts, t["font"])
+
+
+def parse_journey(source: str) -> Journey:
+    """Parse a Mermaid user journey."""
+    jr = Journey()
+    section = ""
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%") or re.match(r"^journey\b", line, re.IGNORECASE):
+            continue
+        m = re.match(r"^title\s+(.+)$", line, re.IGNORECASE)
+        if m:
+            jr.title = m.group(1).strip()
+            continue
+        m = re.match(r"^section\s+(.+)$", line, re.IGNORECASE)
+        if m:
+            section = m.group(1).strip()
+            continue
+        m = re.match(r"^(.+?)\s*:\s*(\d+(?:\.\d+)?)\s*(?::\s*(.*))?$", line)
+        if m:
+            actors = [a.strip() for a in (m.group(3) or "").split(",") if a.strip()]
+            score = max(1.0, min(5.0, float(m.group(2))))
+            jr.tasks.append(JourneyTask(m.group(1).strip(), score, actors, section))
+    return jr
+
+
+# Satisfaction carries meaning (good / bad), so it uses the reserved status colours
+_SCORE_COLORS = {1: "#d03b3b", 2: "#ec835a", 3: "#fab219", 4: "#5cb85c", 5: "#0ca30c"}
+
+
+def render_journey_svg(jr: Journey, theme: dict[str, str] | None = None) -> str:
+    """Render a user journey: sections, task cards, a satisfaction curve and actors."""
+    t = _tokens(theme)
+    if not jr.tasks:
+        return _svg_root(120, 40, _svg_text(0, 20, "No tasks", t, color=t["ink2"]), t["font"])
+    parts, top = _chart_title(jr.title, t)
+
+    actors: list[str] = []
+    for task in jr.tasks:
+        for a in task.actors:
+            if a not in actors:
+                actors.append(a)
+    actor_color = {a: _palette(t)[i % 8] for i, a in enumerate(actors)}
+    sections: list[str] = []
+    for task in jr.tasks:
+        if task.section not in sections:
+            sections.append(task.section)
+    sec_color = {s: _palette(t)[i % 8] for i, s in enumerate(sections)}
+
+    axis_w = 26.0
+    col_w = max(104.0, max(min(_text_w(task.name, 11.5) + 20, 150.0) for task in jr.tasks))
+    lines = [_wrap_words(task.name, col_w - 16, 11.5) for task in jr.tasks]
+    card_h = 14 + 15 * max(len(x) for x in lines)
+    band_y = top
+    card_y = band_y + (30 if any(sections) else 0)
+    track_y = card_y + card_h + 22
+    level_h = 22.0
+    track_h = level_h * 4
+
+    def cx(i: int) -> float:
+        return axis_w + i * col_w + col_w / 2
+
+    def sy(score: float) -> float:
+        return track_y + (5 - score) * level_h
+
+    # Section bands
+    for sec in sections:
+        idx = [i for i, task in enumerate(jr.tasks) if task.section == sec]
+        if not sec:
+            continue
+        x0 = axis_w + idx[0] * col_w + 3
+        x1 = axis_w + (idx[-1] + 1) * col_w - 3
+        color = sec_color[sec]
+        parts.append(
+            f'<rect x="{x0:g}" y="{band_y:g}" width="{x1 - x0:g}" height="22" rx="5" '
+            f'fill="{_tint(color, 0.85, t)}"/>'
+        )
+        parts.append(_svg_text(x0 + 10, band_y + 15, sec, t, 11, t["ink"], 600))
+
+    # Task cards
+    for i, task in enumerate(jr.tasks):
+        x0 = axis_w + i * col_w + 4
+        stroke = _tint(sec_color[task.section], 0.55, t) if task.section else t["node_stroke"]
+        parts.append(
+            f'<rect x="{x0:g}" y="{card_y:g}" width="{col_w - 8:g}" height="{card_h:g}" rx="6" '
+            f'fill="{t["card"]}" stroke="{stroke}" stroke-width="1.25"/>'
+        )
+        for li, text in enumerate(lines[i]):
+            parts.append(_svg_text(cx(i), card_y + 19 + li * 15, text, t, 11.5, anchor="middle"))
+
+    # Satisfaction track: five hairline levels, labelled at the left
+    for score in range(1, 6):
+        y = sy(score)
+        parts.append(
+            f'<line x1="{axis_w:g}" y1="{y:g}" x2="{axis_w + col_w * len(jr.tasks):g}" y2="{y:g}" '
+            f'stroke="{t["grid"]}" stroke-width="1"/>'
+        )
+        parts.append(
+            _svg_text(axis_w - 8, y + 3.5, str(score), t, _FS_SM, t["chrome"], anchor="end")
+        )
+
+    pts = [(cx(i), sy(task.score)) for i, task in enumerate(jr.tasks)]
+    if len(pts) > 1:
+        d = f"M {pts[0][0]:.1f},{pts[0][1]:.1f}"
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            mx = (x0 + x1) / 2
+            d += f" C {mx:.1f},{y0:.1f} {mx:.1f},{y1:.1f} {x1:.1f},{y1:.1f}"
+        parts.append(
+            f'<path d="{d}" fill="none" stroke="{t["ink2"]}" stroke-width="2" stroke-linecap="round"/>'
+        )
+    for (px, py), task in zip(pts, jr.tasks):
+        color = _SCORE_COLORS[int(round(task.score))]
+        parts.append(
+            f'<circle cx="{px:.1f}" cy="{py:.1f}" r="9" fill="{color}" stroke="{t["surface"]}" stroke-width="2"/>'
+        )
+        parts.append(
+            _svg_text(px, py + 3.6, f"{task.score:g}", t, 10, _text_on(color, t), 700, "middle")
+        )
+
+    # Actors under each task, then a legend
+    actor_y = track_y + track_h + 22
+    for i, task in enumerate(jr.tasks):
+        n = len(task.actors)
+        for k, a in enumerate(task.actors):
+            ax = cx(i) + (k - (n - 1) / 2) * 13
+            parts.append(
+                f'<circle cx="{ax:.1f}" cy="{actor_y:g}" r="4.5" fill="{actor_color[a]}"/>'
+            )
+    height = actor_y + 10
+    if actors:
+        lx, ly = axis_w, actor_y + 24
+        for a in actors:
+            parts.append(
+                f'<circle cx="{lx + 5:g}" cy="{ly - 4:g}" r="4.5" fill="{actor_color[a]}"/>'
+            )
+            parts.append(_svg_text(lx + 14, ly, a, t, _FS_SM, t["ink2"]))
+            lx += 14 + _text_w(a, _FS_SM) + 18
+        height = ly + 8
+    width = axis_w + col_w * len(jr.tasks) + 4
+    return _svg_root(width, height, parts, t["font"])
+
+
+def parse_git(source: str) -> GitGraph:
+    """Parse a Mermaid gitGraph into commits on branches."""
+    gg = GitGraph()
+    branches: dict[str, list[str]] = {"main": []}  # branch -> commit ids
+    gg.branches = ["main"]
+    current = "main"
+    seq = 0
+
+    def quoted(text: str) -> dict[str, str]:
+        out = {k.lower(): v for k, v in re.findall(r'(\w+):\s*"([^"]*)"', text)}
+        for k, v in re.findall(r"(\w+):\s*([A-Za-z0-9_-]+)(?=\s|$)", text):
+            out.setdefault(k.lower(), v)
+        return out
+
+    def add(branch: str, parents: list[str], o: dict[str, str], kind: str = "normal") -> None:
+        nonlocal seq
+        cid = o.get("id") or f"c{seq}"
+        commit_type = o.get("type", "").upper()
+        gg.commits.append(
+            GitCommit(
+                cid,
+                branch,
+                [p for p in parents if p],
+                o.get("tag", ""),
+                (
+                    kind
+                    if kind != "normal"
+                    else (
+                        commit_type.lower() if commit_type in ("HIGHLIGHT", "REVERSE") else "normal"
+                    )
+                ),
+                seq,
+                o.get("msg", ""),
+                "id" in o,
+            )
+        )
+        branches.setdefault(branch, []).append(cid)
+        seq += 1
+
+    def head(branch: str) -> str:
+        return branches[branch][-1] if branches.get(branch) else gg.branch_base.get(branch, "")
+
+    for raw_line in source.strip().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("%%"):
+            continue
+        m = re.match(r"^gitGraph\s*(LR|TB|BT)?\s*:?\s*$", line, re.IGNORECASE)
+        if m:
+            if m.group(1):
+                gg.direction = m.group(1).upper()
+            continue
+        if re.match(r"^commit\b", line):
+            add(current, [head(current)], quoted(line))
+            continue
+        m = re.match(r"^branch\s+(\S+)(.*)$", line)
+        if m:
+            name = m.group(1)
+            if name not in gg.branches:
+                gg.branches.append(name)
+                order = quoted(m.group(2)).get("order")
+                if order and order.lstrip("-").isdigit():
+                    gg.order[name] = int(order)
+            gg.branch_base[name] = head(current)
+            branches.setdefault(name, [])
+            current = name
+            continue
+        m = re.match(r"^(?:checkout|switch)\s+(\S+)", line)
+        if m:
+            current = m.group(1)
+            if current not in gg.branches:
+                gg.branches.append(current)
+                branches.setdefault(current, [])
+            continue
+        m = re.match(r"^merge\s+(\S+)(.*)$", line)
+        if m:
+            add(current, [head(current), head(m.group(1))], quoted(m.group(2)), "merge")
+            continue
+        m = re.match(r"^cherry-pick\s+(.*)$", line)
+        if m:
+            o = quoted(m.group(1))
+            src = o.pop("id", "")
+            o.pop("parent", None)
+            gg.cherry_sources[seq] = src
+            o.setdefault("tag", "")
+            add(current, [head(current)], o, "cherry")
+            continue
+    return gg
+
+
+def render_git_svg(gg: GitGraph, theme: dict[str, str] | None = None) -> str:
+    """Render a git graph: one lane per branch, commits along a shared timeline."""
+    t = _tokens(theme)
+    if not gg.commits:
+        return _svg_root(120, 40, _svg_text(0, 20, "No commits", t, color=t["ink2"]), t["font"])
+    lanes = sorted(gg.branches, key=lambda b: (gg.order.get(b, 0), gg.branches.index(b)))
+    used = {c.branch for c in gg.commits} | set(gg.branch_base)
+    lanes = [b for b in lanes if b in used or b == "main"]
+    color = {b: _palette(t)[i % 8] for i, b in enumerate(lanes)}
+    vertical = gg.direction in ("TB", "BT")
+
+    pill_w = max(_text_w(b, 11, 600) for b in lanes) + 16
+    step = 54.0
+    lane_gap = max(46.0, pill_w + 14) if vertical else 46.0
+    major0 = 44.0 if vertical else pill_w + 32
+    has_tags = any(c.tag for c in gg.commits)
+    minor0 = pill_w / 2 + 4 if vertical else (44.0 if has_tags else 26.0)
+    by_id = {c.id: c for c in gg.commits}
+
+    def pos(c: GitCommit) -> tuple[float, float]:
+        major = major0 + c.seq * step
+        minor = minor0 + lanes.index(c.branch) * lane_gap
+        return (minor, major) if vertical else (major, minor)
+
+    parts: list[str] = []
+    # Branch rails: from the branch point (or first commit) to the last commit on the lane
+    for b in lanes:
+        commits = [c for c in gg.commits if c.branch == b]
+        if not commits:
+            continue
+        first, last = pos(commits[0]), pos(commits[-1])
+        lane_minor = first[0] if vertical else first[1]
+        start_major = first[1] if vertical else first[0]
+        end_major = last[1] if vertical else last[0]
+        if vertical:
+            parts.append(
+                f'<line x1="{lane_minor:g}" y1="{start_major:g}" x2="{lane_minor:g}" y2="{end_major:g}" '
+                f'stroke="{color[b]}" stroke-width="2.5" stroke-linecap="round"/>'
+            )
+        else:
+            parts.append(
+                f'<line x1="{start_major:g}" y1="{lane_minor:g}" x2="{end_major:g}" y2="{lane_minor:g}" '
+                f'stroke="{color[b]}" stroke-width="2.5" stroke-linecap="round"/>'
+            )
+
+    # Branch-off and merge links between lanes (rounded elbows)
+    r = 10.0
+    for c in gg.commits:
+        cx_, cy_ = pos(c)
+        for k, pid in enumerate(c.parents):
+            p = by_id.get(pid)
+            if p is None or p.branch == c.branch and k == 0:
+                continue
+            px_, py_ = pos(p)
+            if vertical:
+                # mirror of the horizontal case
+                if k == 0:  # first commit on a new branch: leave the parent lane, turn, run down
+                    sgn = 1 if cx_ > px_ else -1
+                    d = f"M {px_:g},{py_:g} V {cy_ - step / 2 - r:g} Q {px_:g},{cy_ - step / 2:g} {px_ + sgn * r:g},{cy_ - step / 2:g} H {cx_ - sgn * r:g} Q {cx_:g},{cy_ - step / 2:g} {cx_:g},{cy_ - step / 2 + r:g} V {cy_:g}"
+                    stroke = color[c.branch]
+                else:
+                    sgn = 1 if cx_ > px_ else -1
+                    d = f"M {px_:g},{py_:g} V {cy_ - r:g} Q {px_:g},{cy_:g} {px_ + sgn * r:g},{cy_:g} H {cx_:g}"
+                    stroke = color[p.branch]
+            else:
+                if k == 0:
+                    sgn = 1 if cy_ > py_ else -1
+                    d = f"M {px_:g},{py_:g} H {cx_ - step / 2 - r:g} Q {cx_ - step / 2:g},{py_:g} {cx_ - step / 2:g},{py_ + sgn * r:g} V {cy_ - sgn * r:g} Q {cx_ - step / 2:g},{cy_:g} {cx_ - step / 2 + r:g},{cy_:g} H {cx_:g}"
+                    stroke = color[c.branch]
+                else:
+                    sgn = 1 if cy_ > py_ else -1
+                    d = f"M {px_:g},{py_:g} H {cx_ - r:g} Q {cx_:g},{py_:g} {cx_:g},{py_ + sgn * r:g} V {cy_:g}"
+                    stroke = color[p.branch]
+            parts.append(
+                f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="2.5" stroke-linecap="round"/>'
+            )
+        if c.kind == "cherry":
+            src = by_id.get(gg.cherry_sources.get(c.seq, ""))
+            if src is not None:
+                sx_, sy_ = pos(src)
+                parts.append(
+                    f'<path d="M {sx_:g},{sy_:g} Q {(sx_ + cx_) / 2:g},{min(sy_, cy_) - 20:g} {cx_:g},{cy_:g}" '
+                    f'fill="none" stroke="{t["chrome"]}" stroke-width="1.25" stroke-dasharray="4 3"/>'
+                )
+
+    # Commits, ids and tags
+    for c in gg.commits:
+        x, y = pos(c)
+        col = color[c.branch]
+        if c.kind == "highlight":
+            parts.append(
+                f'<rect x="{x - 7:g}" y="{y - 7:g}" width="14" height="14" rx="3" fill="{col}" '
+                f'stroke="{t["surface"]}" stroke-width="2"/>'
+            )
+        else:
+            parts.append(
+                f'<circle cx="{x:g}" cy="{y:g}" r="7.5" fill="{col}" stroke="{t["surface"]}" stroke-width="2"/>'
+            )
+        if c.kind == "merge":
+            parts.append(f'<circle cx="{x:g}" cy="{y:g}" r="3" fill="{t["surface"]}"/>')
+        elif c.kind == "reverse":
+            parts.append(
+                f'<path d="M {x - 3.5:g},{y - 3.5:g} L {x + 3.5:g},{y + 3.5:g} M {x + 3.5:g},{y - 3.5:g} '
+                f'L {x - 3.5:g},{y + 3.5:g}" stroke="{t["surface"]}" stroke-width="1.6"/>'
+            )
+        elif c.kind == "cherry":
+            parts.append(f'<circle cx="{x:g}" cy="{y:g}" r="2.5" fill="{t["surface"]}"/>')
+        caption = c.msg or (c.id if c.explicit_id else "")
+        if caption:
+            if vertical:
+                parts.append(_svg_text(x + 14, y + 4, caption, t, 10, t["ink2"]))
+            else:
+                parts.append(_svg_text(x, y + 22, caption, t, 10, t["ink2"], anchor="middle"))
+        if c.tag:
+            tw = _text_w(c.tag, 9.5, 600) + 12
+            tx, ty = (x - tw - 12, y - 8) if vertical else (x - tw / 2, y - 29)
+            parts.append(
+                f'<rect x="{tx:g}" y="{ty:g}" width="{tw:g}" height="16" rx="8" fill="{t["card"]}" '
+                f'stroke="{t["baseline"]}" stroke-width="1"/>'
+            )
+            parts.append(_svg_text(tx + tw / 2, ty + 11.5, c.tag, t, 9.5, t["ink2"], 600, "middle"))
+
+    # Branch name pills at the start of each lane
+    for i, b in enumerate(lanes):
+        minor = minor0 + i * lane_gap
+        bw = _text_w(b, 11, 600) + 16
+        if vertical:
+            bx, by_ = minor - bw / 2, 0.0
+        else:
+            bx, by_ = 0.0, minor - 10
+        parts.append(
+            f'<rect x="{bx:g}" y="{by_:g}" width="{bw:g}" height="20" rx="10" '
+            f'fill="{_tint(color[b], 0.82, t)}" stroke="{_tint(color[b], 0.3, t)}" stroke-width="1"/>'
+        )
+        parts.append(_svg_text(bx + bw / 2, by_ + 14, b, t, 11, t["ink"], 600, "middle"))
+
+    major_end = major0 + max(c.seq for c in gg.commits) * step + 40
+    minor_end = minor0 + (len(lanes) - 1) * lane_gap + 30
+    if vertical:
+        return _svg_root(minor_end + 90, major_end, parts, t["font"])
+    return _svg_root(major_end + 30, minor_end, parts, t["font"])
 
 
 def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> str:
@@ -3506,9 +4627,6 @@ class UnsupportedDiagramError(ValueError):
 
 # Mermaid diagram keywords with no renderer here; the original code block is kept.
 _UNSUPPORTED_TYPES = (
-    "classDiagram",
-    "journey",
-    "gitGraph",
     "quadrantChart",
     "requirementDiagram",
     "sankey",
@@ -3525,6 +4643,97 @@ _UNSUPPORTED_TYPES = (
     "radar",
     "treemap",
 )
+
+
+_NAMED_THEMES: dict[str, dict[str, str]] = {
+    "default": {},
+    "dark": {"mode": "dark"},
+    "neutral": {"primary": "#4b5563", "accent": "#6b7280"},
+    "forest": {"primary": "#2f6f3e", "accent": "#5a9e4b"},
+    "base": {},
+}
+
+
+def _diagram_config(source: str) -> dict:
+    """Mermaid config from a front-matter ``config:`` block and ``%%{init: …}%%`` directives."""
+    import yaml
+
+    text = source.strip()
+    config: dict = {}
+
+    def merge(into: dict, new: dict) -> None:
+        for key, value in new.items():
+            if isinstance(value, dict) and isinstance(into.get(key), dict):
+                merge(into[key], value)
+            else:
+                into[key] = value
+
+    fm = re.match(r"^---\s*\n(.*?)\n---[ \t]*\n", text + "\n", re.DOTALL)
+    if fm:
+        try:
+            data = yaml.safe_load(fm.group(1)) or {}
+        except yaml.YAMLError:
+            data = {}
+        if isinstance(data, dict):
+            if isinstance(data.get("config"), dict):
+                merge(config, data["config"])
+            if data.get("title"):
+                config["title"] = str(data["title"])
+    for m in re.finditer(r"%%\{\s*(?:init|initialize)\s*:\s*(\{.*?\})\s*\}%%", text, re.DOTALL):
+        raw = m.group(1)
+        for candidate in (raw, raw.replace("'", '"')):
+            try:
+                data = json.loads(candidate)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                merge(config, data)
+            break
+    return config
+
+
+def _config_theme(config: dict) -> dict[str, str]:
+    """Theme overrides from a Mermaid config (named theme, themeVariables, autoFit)."""
+    out: dict[str, str] = dict(_NAMED_THEMES.get(str(config.get("theme", "")).lower(), {}))
+    variables = config.get("themeVariables") or {}
+    if isinstance(variables, dict):
+        mapping = {
+            "primaryColor": "primary",
+            "secondaryColor": "accent",
+            "primaryBorderColor": "node_stroke",
+            "primaryTextColor": "body",
+            "textColor": "body",
+            "lineColor": "edge",
+            "fontFamily": "font",
+            "background": "surface",
+        }
+        for key, target in mapping.items():
+            value = variables.get(key)
+            if isinstance(value, str) and value.strip():
+                out[target] = value.strip()
+        if variables.get("darkMode") is True:
+            out["mode"] = "dark"
+    flow = config.get("flowchart")
+    if isinstance(flow, dict) and flow.get("autoFit") is False:
+        out["auto_fit"] = "0"
+    return out
+
+
+def _with_title(svg: str, title: str, t: dict[str, str]) -> str:
+    """Prepend a front-matter title above a diagram that has none of its own."""
+    m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    if not m:
+        return svg
+    width, height = float(m.group(1)), float(m.group(2))
+    width = max(width, _text_w(title, _FS_TITLE, 600) + 4)
+    body = svg[svg.index(">") + 1 : svg.rindex("</svg>")]
+    head = _svg_text(0, _FS_TITLE, title, t, _FS_TITLE, weight=600)
+    return _svg_root(
+        width,
+        height + _FS_TITLE + 12,
+        [head, f'<g transform="translate(0,{_FS_TITLE + 12:g})">', body, "</g>"],
+        t["font"],
+    )
 
 
 def _strip_preamble(source: str) -> str:
@@ -3559,6 +4768,12 @@ def _detect_diagram_type(source: str) -> str:
             return "timeline"
         if re.match(r"^mindmap\b", line, re.IGNORECASE):
             return "mindmap"
+        if re.match(r"^classDiagram(?:-v2)?\b", line, re.IGNORECASE):
+            return "class"
+        if re.match(r"^journey\b", line, re.IGNORECASE):
+            return "journey"
+        if re.match(r"^gitGraph\b", line, re.IGNORECASE):
+            return "git"
         if re.match(rf"^(?:{'|'.join(_UNSUPPORTED_TYPES)})\b", line, re.IGNORECASE):
             return "unsupported"
         if re.match(r"^stateDiagram", line, re.IGNORECASE):
@@ -3577,8 +4792,17 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
     Dispatches on the detected diagram type. Used by both the HTML pipeline
     (PDF) and the docx builder (which rasterizes the SVG for embedding).
     """
+    config = _diagram_config(source)
+    theme = {**(theme or {}), **_config_theme(config)}
     source = _strip_preamble(source)
     diagram_type = _detect_diagram_type(source)
+    svg = _render_by_type(diagram_type, source, theme)
+    if config.get("title"):
+        svg = _with_title(svg, config["title"], _tokens(theme))
+    return svg
+
+
+def _render_by_type(diagram_type: str, source: str, theme: dict[str, str]) -> str:
 
     if diagram_type == "unsupported":
         kind = source.split(None, 1)[0] if source else "diagram"
@@ -3603,6 +4827,12 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
         return render_er_svg(parse_er(source), theme)
     elif diagram_type == "state":
         return render_state_svg(parse_state(source), theme)
+    elif diagram_type == "class":
+        return render_class_svg(parse_class(source), theme)
+    elif diagram_type == "journey":
+        return render_journey_svg(parse_journey(source), theme)
+    elif diagram_type == "git":
+        return render_git_svg(parse_git(source), theme)
     else:
         # flowchart (default for unrecognized types too)
         return render_svg(parse(source), theme)
@@ -3617,6 +4847,48 @@ def _unescape_mermaid_source(source: str) -> str:
         .replace("&quot;", '"')
         .replace("&#39;", "'")
     )
+
+
+def diagram_theme(
+    css_text: str | None,
+    config: dict | None = None,
+    resolve: object = None,
+    column_px: float | None = None,
+) -> dict[str, str]:
+    """Everything a builder passes to the renderers for one document.
+
+    Brand colours and font from the theme CSS, the text-column width from its
+    ``@page`` (so wide diagrams can be fitted), and the ``fonts`` config key
+    registered for measurement and rasterising.
+    """
+    theme: dict[str, str] = {}
+    if css_text:
+        try:
+            theme = extract_theme_from_css(css_text)
+        except Exception:  # pragma: no cover - malformed CSS falls back to defaults
+            theme = {}
+    if column_px is None:
+        try:
+            from .builders._assets import _page_geometry
+
+            geom = _page_geometry(css_text)
+            column_px = (geom["w"] - geom["left"] - geom["right"]) / 25.4 * 96
+        except Exception:
+            column_px = None
+    if column_px:
+        theme["column_px"] = f"{column_px:.0f}"
+    if config and callable(resolve):
+        try:
+            from .pdf_features import font_faces
+
+            register_fonts(
+                (family, path, weight)
+                for family, path, weight, style in font_faces(config, resolve)  # type: ignore[arg-type]
+                if style == "normal"
+            )
+        except Exception as exc:  # pragma: no cover - fonts are best effort
+            logger.debug("diagram fonts not registered: %s", exc)
+    return theme
 
 
 def _wrap_diagram(svg: str) -> str:

@@ -341,14 +341,14 @@ def _font_face(family: str, path: Path, weight: str, style: str) -> str:
     )
 
 
-def font_face_css(config: dict[str, Any], resolve: Resolver) -> str:
-    """``@font-face`` rules for the ``fonts`` key, as a ``<style>`` block.
+def font_faces(config: dict[str, Any], resolve: Resolver) -> list[tuple[str, Path, str, str]]:
+    """Resolved ``(family, file, weight, style)`` faces for the ``fonts`` key.
 
     Each entry is ``{family, path, weight, style}`` for one file, or
     ``{family, regular, bold, italic, bold_italic}`` for a family. A bare
     string is a path whose file name is the family.
     """
-    rules: list[str] = []
+    out: list[tuple[str, Path, str, str]] = []
     for entry in _as_list(config.get("fonts")):
         if isinstance(entry, str):
             entry = {"path": entry}
@@ -381,7 +381,13 @@ def font_face_css(config: dict[str, Any], resolve: Resolver) -> str:
             if path is None or not path.is_file():
                 logger.warning("fonts: %r was not found; skipped.", raw)
                 continue
-            rules.append(_font_face(family, path, weight, style))
+            out.append((family, path, weight, style))
+    return out
+
+
+def font_face_css(config: dict[str, Any], resolve: Resolver) -> str:
+    """``@font-face`` rules for the ``fonts`` key, as a ``<style>`` block."""
+    rules = [_font_face(*face) for face in font_faces(config, resolve)]
     if not rules:
         return ""
     return "<style>\n" + "\n".join(rules) + "\n</style>"

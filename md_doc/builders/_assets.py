@@ -36,6 +36,8 @@ def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
     if svg_match:
         svg = svg_match.group(0)
 
+    surface_m = re.search(r'data-surface="(#[0-9a-fA-F]{3,8})"', svg)
+    surface = surface_m.group(1) if surface_m else "white"
     m = re.search(r'viewBox="[\d.\-]+ [\d.\-]+ ([\d.]+) ([\d.]+)"', svg)
     if m:
         vb_w, vb_h = float(m.group(1)), float(m.group(2))
@@ -49,7 +51,7 @@ def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
             output_height=int(vb_h * scale),
             # Diagrams are transparent (they sit on the page in PDF); pictures in
             # Word/PowerPoint get a white card so they read on any slide background.
-            background_color="white",
+            background_color=surface,
         )
     except Exception as exc:  # pragma: no cover - depends on system cairo
         logger.warning("Mermaid SVG rasterization failed: %s", exc)

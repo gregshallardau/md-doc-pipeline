@@ -185,3 +185,80 @@ gauge
     value: 72
     max: 100
 ```
+
+<!-- pagebreak -->
+
+## Class
+
+```mermaid
+classDiagram
+    class Animal {
+        <<abstract>>
+        +String name
+        -int age
+        +makeSound()* void
+        +getCount()$ int
+    }
+    class Duck {
+        +swim()
+        +quack()
+    }
+    class Fish {
+        -int sizeInFeet
+        -canEat()
+    }
+    class Pond {
+        +List~Duck~ ducks
+    }
+    Animal <|-- Duck
+    Animal <|-- Fish
+    Pond "1" *-- "many" Duck : contains
+    Duck ..> Fish : eats
+```
+
+## User journey
+
+```mermaid
+journey
+    title My working day
+    section Go to work
+      Make tea: 5: Me
+      Go upstairs: 3: Me
+      Do work: 1: Me, Cat
+    section Go home
+      Go downstairs: 5: Me
+      Sit down: 4: Me, Cat
+```
+
+## Git graph
+
+```mermaid
+gitGraph
+    commit id: "init"
+    commit
+    branch develop
+    checkout develop
+    commit id: "feature-a"
+    branch feature
+    checkout feature
+    commit id: "wip" type: HIGHLIGHT
+    checkout main
+    merge develop tag: "v1.0"
+    checkout feature
+    commit
+    checkout develop
+    merge feature
+    checkout main
+    commit tag: "v1.1"
+```
+
+## Dark diagram
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+flowchart LR
+    A([Request]) --> B{Cached?}
+    B -->|yes| C[Serve cache]
+    B -->|no| D[Render page]
+    D --> C
+```
