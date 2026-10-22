@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from md_doc import mermaid as m
@@ -118,17 +120,34 @@ def test_gauge_wrapper_rasterizes_for_word():
     assert result is not None and result[0].startswith(b"\x89PNG")
 
 
-def test_office_diagram_preserves_pdf_sizing():
+def test_office_diagram_uses_natural_size_like_pdf():
     from md_doc.builders._assets import _render_mermaid_to_images
 
-    full, images = _render_mermaid_to_images(
-        '<pre><code class="language-mermaid">flowchart LR\n A --&gt; B</code></pre>', None
+    for src in ("flowchart LR\n A --&gt; B", "gauge\n value 42"):
+        html, images = _render_mermaid_to_images(
+            f'<pre><code class="language-mermaid">{src}</code></pre>', None
+        )
+        natural = m.svg_natural_width(m.render_to_svg(src.replace("&gt;", ">")))
+        assert images and f'width="{int(natural)}"' in html
+
+
+def test_pdf_wrapper_keeps_natural_size_and_shrinks_to_fit():
+    html = m.process_html(
+        '<pre><code class="language-mermaid">flowchart LR\n A --&gt; B</code></pre>'
     )
-    assert images and 'width="100%"' in full
-    gauge, images = _render_mermaid_to_images(
-        '<pre><code class="language-mermaid">gauge\n value 42</code></pre>', None
-    )
-    assert images and 'width="280"' in gauge
+    natural = m.svg_natural_width(html)
+    assert f"width:{natural:.0f}px;max-width:100%" in html
+
+
+def test_diagram_text_uses_one_type_scale():
+    sizes = set()
+    for src in (
+        "flowchart TD\n A[One] --> B[Two]",
+        "sequenceDiagram\n A->>B: hi",
+        'pie\n "A" : 1\n "B" : 2',
+    ):
+        sizes |= set(re.findall(r'font-size="([\d.]+)"', m.render_to_svg(src)))
+    assert sizes <= {"9.5", "10", "10.5", "11", "11.5", "12", "13", "13.5", "22", "30"}
 
 
 def _overlaps(fc: m.Flowchart) -> list[tuple[str, str]]:
@@ -165,7 +184,16 @@ def test_gantt_bars_follow_dates_and_dependencies():
     _, spans = m._resolve_gantt(gc)
     assert spans == [(0.0, 10.0), (10.0, 30.0), (30.0, 40.0)]
     svg = m.render_gantt_svg(gc)
-    assert svg.count("<rect") >= 4 and "01 Jan" in svg
+    bars = [
+        (float(x), float(w))
+        for x, w in re.findall(r'<rect x="([\d.]+)" y="[\d.]+" width="([\d.]+)" height="12"', svg)
+    ]
+    assert len(bars) == 3
+    (ax, aw), (bx, bw), (cx, _cw) = bars
+    assert bw == pytest.approx(2 * aw, rel=0.02)  # 20d is twice 10d
+    assert bx == pytest.approx(ax + aw, abs=0.2)  # B starts when A ends
+    assert cx == pytest.approx(bx + bw, abs=0.2)
+    assert ">5 Jan<" in svg and ">12 Jan<" in svg  # weekly ticks fall on Mondays
 
 
 def test_gantt_status_tags_are_not_task_ids():
@@ -362,3 +390,96 @@ def test_unsupported_diagram_types_fail_cleanly(kind):
 def test_edge_corners_are_rounded():
     svg = m.render_to_svg("flowchart TD\n A --> B\n A --> C")
     assert " Q " in svg
+
+
+def test_sequence_aliases_actors_notes_blocks_and_activation():
+    sd = m.parse_sequence(
+        "sequenceDiagram\n autonumber\n actor C as Customer\n participant W as Web app\n"
+        " C->>+W: Checkout\n alt ok\n W-->>C: Done\n else failed\n W--xC: Error\n end\n"
+        " Note over C,W: idempotent\n W-)C: async\n W-->>-C: bye"
+    )
+    assert sd.participants == ["C", "W"]
+    assert sd.labels == {"C": "Customer", "W": "Web app"} and sd.actors == {"C"}
+    assert sd.autonumber
+    kinds = [type(e).__name__ for e in sd.events]
+    assert kinds.count("SeqBlock") == 3 and "SeqNote" in kinds
+    assert [(x.arrow, x.activate) for x in sd.messages] == [
+        ("->>", "+"),
+        ("-->>", ""),
+        ("--x", ""),
+        ("-)", ""),
+        ("-->>", "-"),
+    ]
+    svg = m.render_sequence_svg(sd)
+    assert "Customer" in svg and "Web app" in svg and ">alt<" in svg and "[failed]" in svg
+    assert "idempotent" in svg and "url(#seq-cross)" in svg and "url(#seq-open)" in svg
+
+
+def test_gauge_accepts_colon_syntax():
+    gc = m.parse_gauge("gauge\n title CSAT\n value: 72\n min: 0\n max: 100")
+    assert (gc.title, gc.value, gc.min_val, gc.max_val) == ("CSAT", 72, 0, 100)
+    assert ">72<" in m.render_gauge_svg(gc)
+
+
+def test_pie_title_and_show_data_on_header_line():
+    pc = m.parse_pie('pie showData title Pets\n "Dogs" : 386\n "Cats" : 85')
+    assert pc.title == "Pets" and pc.show_data
+    svg = m.render_pie_svg(pc)
+    assert ">Pets<" in svg and "386" in svg
+
+
+def test_pie_uses_validated_palette_in_order_and_folds_tail():
+    slices = "".join(f'\n "S{i}" : {20 - i}' for i in range(10))
+    svg = m.render_pie_svg(m.parse_pie("pie" + slices))
+    fills = re.findall(r'<path d="[^"]+" fill="(#[0-9a-f]{6})"', svg)
+    assert fills[:7] == m._CATEGORICAL[:7] and fills[-1] == m._OTHER
+    assert ">Other<" in svg
+
+
+def test_bar_axis_uses_round_ticks():
+    assert m._nice_ticks(0, 190) == [0, 50, 100, 150, 200]
+    assert m._nice_ticks(0, 7.3) == [0, 2, 4, 6, 8]
+    svg = m.render_bar_svg(m.parse_bar("xychart-beta\n x-axis [Q1, Q2]\n bar [120, 190]"))
+    assert ">150<" in svg and ">152<" not in svg
+    assert m._fmt_num(1250) == "1.3K" and m._fmt_num(2_500_000) == "2.5M"
+
+
+def test_er_keys_and_cardinality():
+    erd = m.parse_er(
+        "erDiagram\n CUSTOMER ||--o{ ORDER : places\n ORDER }|..|| SHIP : uses\n"
+        " ORDER {\n int id PK\n string customer_id FK\n }"
+    )
+    assert erd.entities["ORDER"].keys == ["PK", "FK"]
+    a, b = erd.relations
+    assert (a.card_a, a.card_b, a.style) == ("one", "zero_many", "solid")
+    assert (b.card_a, b.card_b, b.style) == ("one_many", "one", "dotted")
+    svg = m.render_er_svg(erd)
+    assert "url(#er-zero_many)" in svg and "url(#er-one-s)" in svg and ">PK<" in svg
+
+
+def test_timeline_sections_and_continuation_lines():
+    tl = m.parse_timeline(
+        "timeline\n section Early\n 2021 : Founded\n : Seed\n section Later\n 2023 : A"
+    )
+    assert [(e.period, e.events, e.section) for e in tl.entries] == [
+        ("2021", ["Founded", "Seed"], "Early"),
+        ("2023", ["A"], "Later"),
+    ]
+
+
+def test_mindmap_strips_shapes_and_balances_sides():
+    root = m.parse_mindmap(
+        "mindmap\n  root((Plan))\n    a[Alpha]\n    b(Beta)\n    c{{Gamma}}\n    d))Delta(("
+    )
+    assert root.label == "Plan"
+    assert [c.label for c in root.children] == ["Alpha", "Beta", "Gamma", "Delta"]
+    svg = m.render_mindmap_svg(root)
+    xs = [float(x) for x in re.findall(r'<rect x="(-?[\d.]+)"', svg)]
+    assert min(xs) < 0 < max(xs) or len(set(xs)) > 2  # branches on both sides of the root
+
+
+def test_structural_diagrams_follow_the_brand_not_a_rainbow():
+    theme = {"primary": "#7a1f5c", "accent": "#0f766e"}
+    svg = m.render_to_svg("flowchart TD\n A([Start]) --> B[Step] --> C{Ok?}", theme)
+    assert 'fill="#7a1f5c"' in svg  # terminal uses the brand primary
+    assert not any(c in svg for c in m._CATEGORICAL)

@@ -36,7 +36,7 @@ def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
     if svg_match:
         svg = svg_match.group(0)
 
-    m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    m = re.search(r'viewBox="[\d.\-]+ [\d.\-]+ ([\d.]+) ([\d.]+)"', svg)
     if m:
         vb_w, vb_h = float(m.group(1)), float(m.group(2))
     else:
@@ -47,6 +47,9 @@ def _svg_to_png(svg: str, scale: float = 2.0) -> tuple[bytes, int, int] | None:
             bytestring=svg.encode("utf-8"),
             output_width=int(vb_w * scale),
             output_height=int(vb_h * scale),
+            # Diagrams are transparent (they sit on the page in PDF); pictures in
+            # Word/PowerPoint get a white card so they read on any slide background.
+            background_color="white",
         )
     except Exception as exc:  # pragma: no cover - depends on system cairo
         logger.warning("Mermaid SVG rasterization failed: %s", exc)
@@ -79,9 +82,8 @@ def _render_mermaid_to_images(
             return m.group(0)  # leave original code block
         images.append(png)
         idx = len(images) - 1
-        # SVG diagrams fill their containing block in PDF; preserve that sizing
-        # rather than treating viewBox coordinates as natural raster pixels.
-        width = "280" if "max-width:280px" in svg else "100%"
+        # Natural size, as in the PDF; the builder caps it at the text width.
+        width = str(int(png[1]))
         return f'<p><img src="mermaid://{idx}" width="{width}"></p>'
 
     return _MERMAID_BLOCK_RE.sub(_replace, html), images

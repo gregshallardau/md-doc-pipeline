@@ -101,12 +101,14 @@ class Flowchart:
     waypoints: dict[int, list[tuple[float, float]]] = field(default_factory=dict)
     crossings: int = 0  # edge crossings between adjacent levels after ordering
     crossings_unordered: int = 0  # same, before ordering (for comparison)
+    end_marker_space: float = 0.0  # extra gap per edge end for wide markers (crow's feet)
 
 
 @dataclass
 class PieChart:
     title: str = ""
     slices: list[tuple[str, float]] = field(default_factory=list)
+    show_data: bool = False
 
 
 @dataclass
@@ -114,21 +116,50 @@ class SeqMessage:
     src: str
     dst: str
     label: str = ""
-    arrow: str = "->"  # -> | ->> | --> | -->>
+    arrow: str = "->"  # -> | ->> | --> | -->> | -x | --x | -) | --) | <<->> | <<-->>
+    activate: str = ""  # "+" activates the target, "-" deactivates the source
+
+
+@dataclass
+class SeqNote:
+    position: str  # left | right | over
+    targets: list[str]
+    text: str
+
+
+@dataclass
+class SeqBlock:
+    kind: str  # loop | alt | opt | par | critical | break | rect | else | and | option | end
+    label: str = ""
+
+
+@dataclass
+class SeqActivation:
+    participant: str
+    on: bool
 
 
 @dataclass
 class SequenceDiagram:
-    participants: list[str] = field(default_factory=list)
+    participants: list[str] = field(default_factory=list)  # ids, in order of appearance
     messages: list[SeqMessage] = field(default_factory=list)
+    labels: dict[str, str] = field(default_factory=dict)  # id -> display name (`as` alias)
+    actors: set[str] = field(default_factory=set)
+    events: list[SeqMessage | SeqNote | SeqBlock | SeqActivation] = field(default_factory=list)
+    autonumber: bool = False
 
 
 @dataclass
 class BarChart:
     title: str = ""
     labels: list[str] = field(default_factory=list)
-    datasets: list[tuple[str, list[float]]] = field(default_factory=list)  # (name, values)
+    datasets: list[tuple[str, list[float]]] = field(default_factory=list)  # (kind, values)
     horizontal: bool = False
+    series_names: list[str] = field(default_factory=list)  # optional, parallel to datasets
+    x_title: str = ""
+    y_title: str = ""
+    y_min: float | None = None
+    y_max: float | None = None
 
 
 @dataclass
@@ -144,6 +175,7 @@ class GaugeChart:
 class TimelineEntry:
     period: str = ""
     events: list[str] = field(default_factory=list)
+    section: str = ""
 
 
 @dataclass
@@ -159,6 +191,7 @@ class GanttTask:
     start: str = ""
     duration: str = ""
     section: str = ""
+    tags: set[str] = field(default_factory=set)  # done | active | crit | milestone
 
 
 @dataclass
@@ -179,14 +212,17 @@ class MindNode:
 @dataclass
 class EREntity:
     name: str = ""
-    attributes: list[str] = field(default_factory=list)
+    attributes: list[str] = field(default_factory=list)  # "type name"
+    keys: list[str] = field(
+        default_factory=list
+    )  # parallel to attributes: "PK", "FK", "PK,FK" or ""
 
 
 @dataclass
 class ERRelation:
     entity_a: str = ""
     entity_b: str = ""
-    card_a: str = ""  # ||, |{, o{, }|, }o
+    card_a: str = ""  # one | zero_one | one_many | zero_many
     card_b: str = ""
     label: str = ""
     style: str = "solid"  # solid or dotted
@@ -219,43 +255,102 @@ class StateDiagram:
 DEFAULT_THEME: dict[str, str] = {
     "primary": "#1b4f72",
     "accent": "#2e86c1",
-    "body": "#1a1a2e",
+    "body": "#1f2328",
     "muted": "#5d6d7e",
-    "node_fill": "#d6eaf8",
-    "node_stroke": "#1b4f72",
-    "diamond_fill": "#fef5e7",
-    "diamond_stroke": "#e67e22",
-    "subgraph_fill": "#f8f9fa",
-    "subgraph_stroke": "#dee2e6",
-    "subgraph_label": "#495057",
     "font": "Segoe UI, Helvetica Neue, Arial, sans-serif",
 }
 
-# Palette for pie chart slices
-_PIE_COLORS = [
-    "#2e86c1",
-    "#e67e22",
-    "#27ae60",
-    "#c0392b",
-    "#8e44ad",
-    "#16a085",
-    "#d35400",
-    "#2980b9",
-    "#f39c12",
-    "#1abc9c",
-]
+# ---------------------------------------------------------------------------
+# Design tokens
+# ---------------------------------------------------------------------------
+# One type scale, one ink ramp and one validated categorical palette shared by
+# every renderer, so all diagrams read as one family and sit at body-text size
+# (1 SVG px renders as 0.75pt, so 12px labels sit beside ~10pt body text).
 
-# Palette for sequence diagram participants
-_SEQ_COLORS = [
-    "#d6eaf8",
-    "#fef5e7",
-    "#eaf5ea",
-    "#fce4ec",
-    "#e8f0fe",
-    "#e0f2f1",
-    "#fff3e0",
-    "#f3e5f5",
+_FS = 12.0  # primary labels: node text, slice names, categories
+_FS_SM = 10.5  # secondary text: edge labels, ticks, legend values
+_FS_TITLE = 13.5  # diagram titles
+_CHAR_W = 0.56  # average glyph advance as a fraction of font size (layout estimate)
+
+_INK = "#1f2328"
+_INK_2 = "#57606a"
+_MUTED = "#8c959f"
+_GRID = "#e8e7e2"
+_BASELINE = "#c3c2b7"
+_EDGE = "#8a939d"
+
+# Categorical slots for data charts, assigned in this fixed order (never cycled):
+# the order is what keeps adjacent slots distinguishable with colour-vision
+# deficiencies (adjacent-pair CVD delta-E >= 9 on a light surface).
+_CATEGORICAL = [
+    "#2a78d6",
+    "#eb6834",
+    "#1baf7a",
+    "#eda100",
+    "#e87ba4",
+    "#008300",
+    "#6250d6",
+    "#e34948",
 ]
+_OTHER = "#b9b8b0"  # folded tail ("Other") once the eight slots are used
+_CRITICAL = "#d03b3b"  # status colour, reserved for `crit` gantt tasks
+
+
+def _text_w(text: str, size: float = _FS) -> float:
+    """Estimated rendered width of ``text`` at ``size`` px."""
+    return len(text) * size * _CHAR_W
+
+
+def _tokens(theme: dict[str, str] | None = None) -> dict[str, str]:
+    """Resolve the full colour/typography token set for one render.
+
+    Brand colours come from the theme (``primary``/``accent``/``body``/``font``);
+    every tint is derived from them so diagrams follow the document's brand.
+    Explicit keys in ``theme`` (e.g. ``node_fill``) still win.
+    """
+    t = {**DEFAULT_THEME, **(theme or {})}
+    primary, accent = t["primary"], t["accent"]
+    derived = {
+        "ink": t.get("body", _INK),
+        "ink2": _INK_2,
+        "chrome": _MUTED,
+        "grid": _GRID,
+        "baseline": _BASELINE,
+        "edge": _EDGE,
+        "node_fill": _lighten(primary, 0.94),
+        "node_stroke": _lighten(primary, 0.55),
+        "term_fill": primary,
+        "term_text": "#ffffff",
+        "diamond_fill": _lighten(accent, 0.9),
+        "diamond_stroke": _lighten(accent, 0.35),
+        "subgraph_fill": _lighten(primary, 0.975),
+        "subgraph_stroke": _lighten(primary, 0.82),
+        "subgraph_label": _INK_2,
+        "note_fill": "#fff8e6",
+        "note_stroke": "#ecd9a6",
+    }
+    for key, value in derived.items():
+        if key not in (theme or {}):
+            t[key] = value
+    return t
+
+
+def _svg_root(width: float, height: float, body: str | list[str], font: str = "") -> str:
+    """Wrap SVG content in a root element sized by its viewBox."""
+    if isinstance(body, list):
+        body = "\n".join(body)
+    font_attr = f' font-family="{_escape(font)}"' if font else ""
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
+        f'viewBox="0 0 {width:g} {height:g}" preserveAspectRatio="xMidYMid meet"{font_attr}>\n'
+        f"{body}\n</svg>"
+    )
+
+
+def svg_natural_width(svg: str) -> float | None:
+    """The diagram's natural width in px (its viewBox width), if known."""
+    m = re.search(r'viewBox="[\d.\-]+ [\d.\-]+ ([\d.]+) ([\d.]+)"', svg)
+    return float(m.group(1)) if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +378,6 @@ def extract_theme_from_css(css_text: str) -> dict[str, str]:
     )
     if primary:
         theme["primary"] = primary
-        theme["node_stroke"] = primary
 
     # Accent colour — from h2 color or a color or .cover-label color
     accent = (
@@ -293,7 +387,6 @@ def extract_theme_from_css(css_text: str) -> dict[str, str]:
     )
     if accent:
         theme["accent"] = accent
-        theme["diamond_stroke"] = accent
 
     # Body text colour
     body = _find(r"\bbody\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
@@ -306,13 +399,6 @@ def extract_theme_from_css(css_text: str) -> dict[str, str]:
     )
     if muted:
         theme["muted"] = muted
-        theme["subgraph_label"] = muted
-
-    # Node fill — lighten primary if we have one
-    if primary:
-        theme["node_fill"] = _lighten(primary, 0.85)
-    if accent:
-        theme["diamond_fill"] = _lighten(accent, 0.88)
 
     # Font family
     font = _find(r"\bbody\b[^{]*\{[^}]*font-family\s*:\s*([^;]+)")
@@ -644,22 +730,28 @@ def _parse_edge_line(fc: Flowchart, line: str) -> None:
 
 
 def parse_pie(source: str) -> PieChart:
-    """Parse a Mermaid pie chart definition."""
+    """Parse a Mermaid pie chart definition (``pie [showData] [title …]``)."""
     pc = PieChart()
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("%%"):
             continue
-        if line.lower().startswith("pie"):
+        head = re.match(r"^(?:pie|donut)\b(.*)$", line, re.IGNORECASE)
+        if head:
+            rest = head.group(1).strip()
+            if re.match(r"^showData\b", rest, re.IGNORECASE):
+                pc.show_data = True
+                rest = rest[8:].strip()
+            title_m = re.match(r"^title\s+(.+)$", rest, re.IGNORECASE)
+            if title_m:
+                pc.title = title_m.group(1).strip()
             continue
 
-        # title line
         title_m = re.match(r"^title\s+(.+)$", line, re.IGNORECASE)
         if title_m:
             pc.title = title_m.group(1).strip()
             continue
 
-        # slice: "Label" : value
         slice_m = re.match(r'^"([^"]+)"\s*:\s*([\d.]+)\s*$', line)
         if slice_m:
             pc.slices.append((slice_m.group(1), float(slice_m.group(2))))
@@ -671,7 +763,10 @@ def parse_pie(source: str) -> PieChart:
 # Sequence diagram parser
 # ---------------------------------------------------------------------------
 
-_SEQ_MSG_RE = re.compile(r"^(\S+?)\s*(-->>|->>|-->|->)\s*(\S+)\s*:\s*(.*)$")
+_SEQ_MSG_RE = re.compile(
+    r"^(.+?)\s*(<<-->>|<<->>|-->>|->>|--x|-x|--\)|-\)|-->|->)\s*([+-]?)\s*([^:]+?)"
+    r"(?:\s*:\s*(.*))?$"
+)
 
 _SEQ_NOTE_RE = re.compile(r"^Note\s+(left|right|over)\s+(?:of\s+)?(.+?):\s*(.+)$", re.IGNORECASE)
 
@@ -679,41 +774,56 @@ _SEQ_NOTE_RE = re.compile(r"^Note\s+(left|right|over)\s+(?:of\s+)?(.+?):\s*(.+)$
 def parse_sequence(source: str) -> SequenceDiagram:
     """Parse a Mermaid sequence diagram definition."""
     sd = SequenceDiagram()
-    seen_participants: set[str] = set()
+
+    def add(pid: str, label: str = "", actor: bool = False) -> None:
+        if pid not in sd.participants:
+            sd.participants.append(pid)
+        if label:
+            sd.labels[pid] = label
+        if actor:
+            sd.actors.add(pid)
 
     for raw_line in source.strip().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("%%") or line.lower() == "sequencediagram":
+        line = raw_line.strip().rstrip(";")
+        if not line or line.startswith("%%") or line.lower().startswith("sequencediagram"):
             continue
 
-        # participant declaration
-        p_m = re.match(r"^participant\s+(\S+)(?:\s+as\s+(.+))?$", line, re.IGNORECASE)
-        if p_m:
-            name = p_m.group(1)
-            if name not in seen_participants:
-                sd.participants.append(name)
-                seen_participants.add(name)
+        m = re.match(r"^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$", line, re.IGNORECASE)
+        if m:
+            add(m.group(2).strip(), (m.group(3) or "").strip(), m.group(1).lower() == "actor")
             continue
-
-        # actor declaration (same as participant visually)
-        a_m = re.match(r"^actor\s+(\S+)(?:\s+as\s+(.+))?$", line, re.IGNORECASE)
-        if a_m:
-            name = a_m.group(1)
-            if name not in seen_participants:
-                sd.participants.append(name)
-                seen_participants.add(name)
+        if re.match(r"^autonumber\b", line, re.IGNORECASE):
+            sd.autonumber = True
             continue
-
-        # message line
+        m = re.match(r"^(activate|deactivate)\s+(.+)$", line, re.IGNORECASE)
+        if m:
+            add(m.group(2).strip())
+            sd.events.append(SeqActivation(m.group(2).strip(), m.group(1).lower() == "activate"))
+            continue
+        m = _SEQ_NOTE_RE.match(line)
+        if m:
+            targets = [x.strip() for x in m.group(2).split(",") if x.strip()]
+            for x in targets:
+                add(x)
+            sd.events.append(SeqNote(m.group(1).lower(), targets, m.group(3).strip()))
+            continue
+        m = re.match(
+            r"^(loop|alt|opt|par|critical|break|rect|else|and|option|end)\b\s*(.*)$",
+            line,
+            re.IGNORECASE,
+        )
+        if m:
+            sd.events.append(SeqBlock(m.group(1).lower(), m.group(2).strip()))
+            continue
         msg_m = _SEQ_MSG_RE.match(line)
         if msg_m:
-            src, arrow, dst, label = msg_m.groups()
-            # Auto-register participants
-            for p in (src, dst):
-                if p not in seen_participants:
-                    sd.participants.append(p)
-                    seen_participants.add(p)
-            sd.messages.append(SeqMessage(src=src, dst=dst, label=label.strip(), arrow=arrow))
+            src, arrow, act, dst, label = msg_m.groups()
+            src, dst, label = src.strip(), dst.strip(), label or ""
+            add(src)
+            add(dst)
+            msg = SeqMessage(src=src, dst=dst, label=label.strip(), arrow=arrow, activate=act)
+            sd.messages.append(msg)
+            sd.events.append(msg)
 
     return sd
 
@@ -724,13 +834,13 @@ def parse_sequence(source: str) -> SequenceDiagram:
 
 
 def parse_bar(source: str) -> BarChart:
-    """Parse a bar chart definition."""
+    """Parse ``xychart-beta`` (or the simple ``bar`` keyword) into a BarChart."""
     bc = BarChart()
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("%%"):
             continue
-        if re.match(r"^(xychart-beta|bar)\b", line, re.IGNORECASE) and "[" not in line:
+        if re.match(r"^(xychart-beta|xychart|bar)\b", line, re.IGNORECASE) and "[" not in line:
             if "horizontal" in line.lower():
                 bc.horizontal = True
             continue
@@ -740,18 +850,32 @@ def parse_bar(source: str) -> BarChart:
             bc.title = title_m.group(1).strip()
             continue
 
-        # x-axis ["Q1", "Q2", ...]
-        xaxis_m = re.match(r"^x-axis\s+\[(.+)\]\s*$", line, re.IGNORECASE)
+        # x-axis ["Q1", "Q2", ...]  /  x-axis "Quarter" [Q1, Q2]
+        xaxis_m = re.match(r'^x-axis\s+(?:"([^"]*)"\s*)?\[(.+)\]\s*$', line, re.IGNORECASE)
         if xaxis_m:
-            bc.labels = [s.strip().strip('"').strip("'") for s in xaxis_m.group(1).split(",")]
+            bc.x_title = xaxis_m.group(1) or ""
+            bc.labels = [s.strip().strip('"').strip("'") for s in xaxis_m.group(2).split(",")]
             continue
 
-        # bar [120, 150, ...]  or  line [100, 130, ...]
-        data_m = re.match(r"^(bar|line)\s+\[(.+)\]\s*$", line, re.IGNORECASE)
+        # y-axis "Revenue" 0 --> 200
+        yaxis_m = re.match(
+            r'^y-axis\s+(?:"([^"]*)"|(\S+))?\s*(?:(-?[\d.]+)\s*-->\s*(-?[\d.]+))?\s*$',
+            line,
+            re.IGNORECASE,
+        )
+        if yaxis_m:
+            bc.y_title = yaxis_m.group(1) or ""
+            if yaxis_m.group(3) is not None:
+                bc.y_min, bc.y_max = float(yaxis_m.group(3)), float(yaxis_m.group(4))
+            continue
+
+        # bar [120, 150, ...]  /  line "Target" [100, 130, ...]
+        data_m = re.match(r'^(bar|line)\s+(?:"([^"]*)"\s*)?\[(.+)\]\s*$', line, re.IGNORECASE)
         if data_m:
-            name = data_m.group(1)
-            vals = [float(v.strip()) for v in data_m.group(2).split(",") if v.strip()]
-            bc.datasets.append((name, vals))
+            kind = data_m.group(1).lower()
+            vals = [float(v.strip()) for v in data_m.group(3).split(",") if v.strip()]
+            bc.datasets.append((kind, vals))
+            bc.series_names.append(data_m.group(2) or "")
             continue
 
         # Simple format: "Label": value
@@ -759,7 +883,8 @@ def parse_bar(source: str) -> BarChart:
         if simple_m:
             bc.labels.append(simple_m.group(1))
             if not bc.datasets:
-                bc.datasets.append(("", []))
+                bc.datasets.append(("bar", []))
+                bc.series_names.append("")
             bc.datasets[0][1].append(float(simple_m.group(2)))
 
     return bc
@@ -771,7 +896,7 @@ def parse_bar(source: str) -> BarChart:
 
 
 def parse_gauge(source: str) -> GaugeChart:
-    """Parse a gauge chart definition."""
+    """Parse a gauge definition (``value 42`` or ``value: 42``)."""
     gc = GaugeChart()
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
@@ -779,31 +904,23 @@ def parse_gauge(source: str) -> GaugeChart:
             continue
         if re.match(r"^gauge\b", line, re.IGNORECASE):
             continue
-
-        title_m = re.match(r"^title\s+(.+)$", line, re.IGNORECASE)
-        if title_m:
-            gc.title = title_m.group(1).strip()
+        m = re.match(r"^(title|value|max|min|label)\s*:?\s*(.+?)\s*$", line, re.IGNORECASE)
+        if not m:
             continue
-
-        val_m = re.match(r"^value\s+([\d.]+)\s*$", line, re.IGNORECASE)
-        if val_m:
-            gc.value = float(val_m.group(1))
+        key, val = m.group(1).lower(), m.group(2).strip().strip('"')
+        if key in ("title", "label"):
+            setattr(gc, key, val)
             continue
-
-        max_m = re.match(r"^max\s+([\d.]+)\s*$", line, re.IGNORECASE)
-        if max_m:
-            gc.max_val = float(max_m.group(1))
+        try:
+            num = float(val)
+        except ValueError:
             continue
-
-        min_m = re.match(r"^min\s+([\d.]+)\s*$", line, re.IGNORECASE)
-        if min_m:
-            gc.min_val = float(min_m.group(1))
-            continue
-
-        label_m = re.match(r"^label\s+(.+)$", line, re.IGNORECASE)
-        if label_m:
-            gc.label = label_m.group(1).strip()
-
+        if key == "value":
+            gc.value = num
+        elif key == "max":
+            gc.max_val = num
+        else:
+            gc.min_val = num
     return gc
 
 
@@ -813,8 +930,9 @@ def parse_gauge(source: str) -> GaugeChart:
 
 
 def parse_timeline(source: str) -> Timeline:
-    """Parse a Mermaid timeline definition."""
+    """Parse a Mermaid timeline definition (with optional sections)."""
     tl = Timeline()
+    section = ""
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("%%"):
@@ -826,13 +944,21 @@ def parse_timeline(source: str) -> Timeline:
         if title_m:
             tl.title = title_m.group(1).strip()
             continue
+        sec_m = re.match(r"^section\s+(.+)$", line, re.IGNORECASE)
+        if sec_m:
+            section = sec_m.group(1).strip()
+            continue
 
-        # "period : event1 : event2"
+        # "period : event1 : event2"; a line starting with ":" adds events to the last period
         if ":" in line:
             parts = [p.strip() for p in line.split(":")]
-            period = parts[0]
             events = [e for e in parts[1:] if e]
-            tl.entries.append(TimelineEntry(period=period, events=events))
+            if not parts[0] and tl.entries:
+                tl.entries[-1].events.extend(events)
+            else:
+                tl.entries.append(TimelineEntry(period=parts[0], events=events, section=section))
+        else:
+            tl.entries.append(TimelineEntry(period=line, events=[], section=section))
 
     return tl
 
@@ -866,7 +992,11 @@ def parse_gantt(source: str) -> GanttChart:
             gc.date_format = fmt_m.group(1).strip()
             continue
 
-        if line.lower().startswith("axisformat"):
+        if re.match(
+            r"^(axisFormat|excludes|includes|todayMarker|tickInterval|weekday)\b",
+            line,
+            re.IGNORECASE,
+        ):
             continue
 
         sec_m = re.match(r"^section\s+(.+)$", line, re.IGNORECASE)
@@ -874,15 +1004,15 @@ def parse_gantt(source: str) -> GanttChart:
             current_section = sec_m.group(1).strip()
             continue
 
-        # Task line: "Task name :id, start, duration" or "Task name :start, duration"
+        # Task line: "Task name :[tags,] [id,] [start,] duration"
         task_m = re.match(r"^(.+?)\s*:\s*(.+)$", line)
         if task_m:
             name = task_m.group(1).strip()
             params = [p.strip() for p in task_m.group(2).split(",")]
             task = GanttTask(name=name, section=current_section)
-            # Parse params — could be: id,start,dur or start,dur or after id,dur
             for p in params:
                 if p.lower() in _GANTT_TAGS:
+                    task.tags.add(p.lower())
                     continue
                 if p.startswith("after "):
                     task.start = p
@@ -912,34 +1042,26 @@ def parse_mindmap(source: str) -> MindNode:
             continue
         if re.match(r"^\s*mindmap\b", raw_line, re.IGNORECASE):
             continue
-
-        # Calculate indent level (count leading spaces / 4 or tabs)
         stripped = raw_line.lstrip()
+        if stripped.startswith("::icon(") or stripped.startswith(":::"):
+            continue
         indent = len(raw_line) - len(stripped)
 
-        # Extract label — remove shape markers
-        label = stripped.strip()
-        # root((label)) or ((label)) or (label) or [label] or {{label}} or )label(
-        for pattern in [
-            r"^root\(\((.+)\)\)$",
-            r"^\(\((.+)\)\)$",
-            r"^\((.+)\)$",
-            r"^\[(.+)\]$",
-            r"^\{\{(.+)\}\}$",
-            r"^\)(.+)\($",
-        ]:
-            m = re.match(pattern, label)
-            if m:
-                label = m.group(1)
-                break
+        label = re.sub(r"\s*:::.*$", "", stripped.strip())
+        # Shape decorations around the label: id((x)), (x), [x], {{x}}, ))x((, )x(
+        shape_m = re.match(
+            r"^[\w-]*\s*(\(\((.+)\)\)|\(\[(.+)\]\)|\{\{(.+)\}\}|\)\)(.+)\(\(|\)(.+)\(|\((.+)\)|\[(.+)\])$",
+            label,
+        )
+        if shape_m:
+            label = next(g for g in shape_m.groups()[1:] if g is not None)
+        label = label.strip().strip('"')
 
         node = MindNode(label=label)
-
         if not stack:
             root = node
             stack.append((indent, node))
         else:
-            # Find parent: walk back up the stack to find a node with lower indent
             while stack and stack[-1][0] >= indent:
                 stack.pop()
             if stack:
@@ -955,20 +1077,39 @@ def parse_mindmap(source: str) -> MindNode:
 # ER diagram parser
 # ---------------------------------------------------------------------------
 
-_ER_REL_RE = re.compile(
-    r"^(\S+)\s+(\|\|--|\|\|\.\.|\|o--|}o--|}\|--|\|\{--|o\|--|o\{--"
-    r"|--\|\||--\.\.\||--o\||--o\{|--\|\{|--\|o"
-    r"|\|\|--o\{|\|\|--\|\{|o\|--\|\{|\}o--o\{"
-    r"|\|\|--o\||o\{--\|\||\}\|--o\{|\|\|\.\.o\{"
-    r")\s+(\S+)\s*:\s*(.+)$"
-)
 
-# Simpler regex that catches the common patterns
-_ER_REL_SIMPLE = re.compile(r"^(\S+)\s+([|o}{]+[-.][-.]?[|o}{]+)\s+(\S+)\s*:\s*(.+)$")
+def _er_marker_defs(color: str) -> str:
+    """Crow's-foot ends (one, zero-or-one, one-or-many, zero-or-many) for both line ends."""
+    shapes = {
+        "one": "M 13,2 V 12 M 9,2 V 12",
+        "zero_one": "M 13,2 V 12",
+        "one_many": "M 19,1 L 11,7 L 19,13 M 11,7 H 19 M 8,2 V 12",
+        "zero_many": "M 19,1 L 11,7 L 19,13 M 11,7 H 19",
+    }
+    circles = {"zero_one": 6.0, "zero_many": 6.0}
+    out = ["<defs>"]
+    for kind, d in shapes.items():
+        circle = (
+            f'<circle cx="{circles[kind]:g}" cy="7" r="3.2" fill="#ffffff" stroke="{color}" '
+            f'stroke-width="1.25"/>'
+            if kind in circles
+            else ""
+        )
+        body = f'<path d="{d}" fill="none" stroke="{color}" stroke-width="1.25"/>{circle}'
+        common = (
+            'markerUnits="userSpaceOnUse" markerWidth="20" markerHeight="14" refY="7" orient="auto"'
+        )
+        out.append(f'<marker id="er-{kind}" refX="19" {common}>{body}</marker>')
+        out.append(
+            f'<marker id="er-{kind}-s" refX="1" {common}>'
+            f'<g transform="matrix(-1 0 0 1 20 0)">{body}</g></marker>'
+        )
+    out.append("</defs>")
+    return "\n".join(out)
 
 
 def parse_er(source: str) -> ERDiagram:
-    """Parse a Mermaid ER diagram."""
+    """Parse a Mermaid ER diagram (entities, typed attributes with keys, relationships)."""
     erd = ERDiagram()
     current_entity: str | None = None
     for raw_line in source.strip().splitlines():
@@ -978,61 +1119,50 @@ def parse_er(source: str) -> ERDiagram:
         if re.match(r"^erDiagram\b", line, re.IGNORECASE):
             continue
 
-        # End of an attribute block
         if line == "}":
             current_entity = None
             continue
 
-        # Attribute line inside an entity block ("type name" pairs)
         if current_entity is not None:
-            attr_m = re.match(r"^(\w+)\s+(\w+)", line)
+            attr_m = re.match(
+                r"^([\w()\[\],.-]+)\s+(\w+)(?:\s+((?:PK|FK|UK)(?:\s*,\s*(?:PK|FK|UK))*))?", line
+            )
             if attr_m:
-                erd.entities[current_entity].attributes.append(
-                    f"{attr_m.group(1)} {attr_m.group(2)}"
-                )
+                ent = erd.entities[current_entity]
+                ent.attributes.append(f"{attr_m.group(1)} {attr_m.group(2)}")
+                ent.keys.append(re.sub(r"\s+", "", attr_m.group(3) or ""))
             continue
 
-        # Try relationship line
-        m = _ER_REL_SIMPLE.match(line)
-        if m:
-            a, cardinality, b, label = m.groups()
-            is_dotted = ".." in cardinality
-            # Parse cardinality markers from the full string
-            card_a = ""
-            card_b = ""
-            if "||" in cardinality:
-                card_a = "||"
-            elif "|o" in cardinality or "o|" in cardinality:
-                card_a = "o|"
-            if "|{" in cardinality or "{|" in cardinality:
-                card_b = "|{"
-            elif "o{" in cardinality:
-                card_b = "o{"
-
+        rel_m = re.match(
+            r'^(\S+?)\s*([|}o][|o])(--|\.\.)([|o][|{o])\s*(\S+?)\s*:\s*"?(.*?)"?\s*$', line
+        )
+        if rel_m:
+            a, left, link, right, b, label = rel_m.groups()
             erd.relations.append(
                 ERRelation(
                     entity_a=a,
                     entity_b=b,
-                    card_a=card_a,
-                    card_b=card_b,
+                    card_a=_ER_LEFT.get(left, "one"),
+                    card_b=_ER_RIGHT.get(right, "one"),
                     label=label.strip(),
-                    style="dotted" if is_dotted else "solid",
+                    style="dotted" if link == ".." else "solid",
                 )
             )
-            # Auto-register entities
             for name in (a, b):
                 if name not in erd.entities:
                     erd.entities[name] = EREntity(name=name)
             continue
 
-        # Entity block opener: "NAME {"
-        ent_m = re.match(r"^(\S+)\s*\{", line)
+        ent_m = re.match(r"^([\w-]+)\s*\{\s*$", line)
         if ent_m:
             name = ent_m.group(1)
             if name not in erd.entities:
                 erd.entities[name] = EREntity(name=name)
             current_entity = name
             continue
+        bare_m = re.match(r"^([\w-]+)$", line)
+        if bare_m and bare_m.group(1) not in erd.entities:
+            erd.entities[bare_m.group(1)] = EREntity(name=bare_m.group(1))
 
     return erd
 
@@ -1210,6 +1340,7 @@ def _layout_layered(
     horizontal: bool,
     padding: float,
     gap: float,
+    major_size: dict[int, float] | None = None,
 ) -> int:
     """Place nodes level by level, minimising crossings and overlaps.
 
@@ -1285,10 +1416,13 @@ def _layout_layered(
     for n, c in center.items():
         node = fc.nodes[n]
         pos = c - minor(n) / 2 - shift
+        lvl = levels[n]
+        # Centre each node within its column (LR) or row (TD)
+        extent = (major_size or {}).get(lvl, node.w if horizontal else node.h)
         if horizontal:
-            node.x, node.y = major_pos[levels[n]], pos
+            node.x, node.y = major_pos[lvl] + (extent - node.w) / 2, pos
         else:
-            node.x, node.y = pos, major_pos[levels[n]]
+            node.x, node.y = pos, major_pos[lvl] + (extent - node.h) / 2
     return crossings
 
 
@@ -1304,12 +1438,14 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
         if node.shape in ("start", "end"):
             node.w = node.h = 20
             continue
+        if node.shape == "fixed":  # caller-sized (ER entity cards)
+            continue
         lines = re.split(r"<br\s*/?>|\n", node.label)
         max_chars = max(len(line) for line in lines)
         num_lines = len(lines)
 
-        node.w = max(max_chars * font_size * 0.55 + 32, 90)
-        node.h = max(num_lines * (font_size + 6) + 20, 44)
+        node.w = max(max_chars * font_size * _CHAR_W + 32, 96)
+        node.h = max(num_lines * font_size * 1.3 + 22, 40)
 
         if node.shape == "diamond":
             node.w = max(node.w * 1.4, 100)
@@ -1374,8 +1510,17 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     major_pos: dict[int, float] = {}
     cursor: float = padding
     if is_horizontal:
-        longest_label = max((len(e.label) for e in fc.edges), default=0)
-        gap_major = max(gap_major, longest_label * 5.5 + 56)
+        # Each gap is as wide as the labels drawn in it need: a label sits on its
+        # edge's last segment, i.e. in the gap just before the target column
+        # (or just after it for an edge running backwards).
+        gap_need: dict[int, float] = defaultdict(float)
+        for e in fc.edges:
+            if e.label and e.src in levels and e.dst in levels:
+                ls, ld = levels[e.src], levels[e.dst]
+                gap = ld - 1 if ld > ls else ld
+                gap_need[gap] = max(
+                    gap_need[gap], _text_w(e.label, _FS_SM) + 28 + 2 * fc.end_marker_space
+                )
 
         # Normalize widths in each column
         for lvl, nids in level_groups.items():
@@ -1389,23 +1534,48 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
 
         for lvl in sorted(level_groups):
             major_pos[lvl] = cursor
-            cursor += max(fc.nodes[n].w for n in level_groups[lvl]) + gap_major
+            cursor += max(fc.nodes[n].w for n in level_groups[lvl])
+            cursor += max(48.0 + 2 * fc.end_marker_space, gap_need.get(lvl, 0.0))
     else:
         for lvl in sorted(level_groups):
             major_pos[lvl] = cursor
             cursor += max(fc.nodes[n].h for n in level_groups[lvl]) + gap_major
 
     baseline = _total_crossings(level_groups, children_map)
+    major_size = {
+        lvl: max(fc.nodes[n].w if is_horizontal else fc.nodes[n].h for n in nids)
+        for lvl, nids in level_groups.items()
+    }
     fc.crossings = _layout_layered(
-        fc, levels, level_groups, children_map, major_pos, is_horizontal, padding, gap_minor
+        fc,
+        levels,
+        level_groups,
+        children_map,
+        major_pos,
+        is_horizontal,
+        padding,
+        gap_minor,
+        major_size,
     )
     fc.crossings_unordered = baseline
 
     # Hand the lane positions to the edge router and drop the helper nodes
-    fc.waypoints = {
-        i: [(fc.nodes[n].x + fc.nodes[n].w / 2, fc.nodes[n].y + fc.nodes[n].h / 2) for n in ids]
-        for i, ids in lanes.items()
-    }
+    # Each lane crosses its column (row) straight, entering and leaving at the
+    # column edges, so every bend of a long edge happens in a gap between ranks.
+    fc.waypoints = {}
+    for i, ids in lanes.items():
+        e = fc.edges[i]
+        forward = levels[e.src] <= levels[e.dst]
+        pts: list[tuple[float, float]] = []
+        for nid in ids:
+            lane = fc.nodes[nid]
+            lvl = levels[nid]
+            a, b = major_pos[lvl], major_pos[lvl] + major_size[lvl]
+            if not forward:
+                a, b = b, a
+            centre = lane.y + lane.h / 2 if is_horizontal else lane.x + lane.w / 2
+            pts += [(a, centre), (b, centre)] if is_horizontal else [(centre, a), (centre, b)]
+        fc.waypoints[i] = pts
     for nid in [n for n, node in fc.nodes.items() if node.shape == "dummy"]:
         del fc.nodes[nid]
 
@@ -1454,19 +1624,19 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
     Markers use fixed user-space sizes so arrowheads look the same on thin and thick
     lines, and one set is emitted per distinct edge colour.
     """
-    muted = t.get("muted", "#5d6d7e")
+    muted = t.get("edge", _EDGE)
     out = ["<defs>"]
     for color in (None, *colors):
         c = color or muted
         sfx = _color_suffix(color)
         common = 'markerUnits="userSpaceOnUse" orient="auto"'
         out += [
-            f'<marker id="{prefix}arr{sfx}" markerWidth="10" markerHeight="8" refX="9" refY="4" {common}>'
-            f'<polygon points="0 0.5, 9 4, 0 7.5" fill="{c}"/></marker>',
-            f'<marker id="{prefix}arr-thick{sfx}" markerWidth="13" markerHeight="10" refX="12" refY="5" {common}>'
-            f'<polygon points="0 0.5, 12 5, 0 9.5" fill="{c}"/></marker>',
-            f'<marker id="{prefix}arr-s{sfx}" markerWidth="10" markerHeight="8" refX="1" refY="4" {common}>'
-            f'<polygon points="10 0.5, 1 4, 10 7.5" fill="{c}"/></marker>',
+            f'<marker id="{prefix}arr{sfx}" markerWidth="9" markerHeight="7" refX="8" refY="3.5" {common}>'
+            f'<polygon points="0 0.5, 8 3.5, 0 6.5" fill="{c}"/></marker>',
+            f'<marker id="{prefix}arr-thick{sfx}" markerWidth="12" markerHeight="9" refX="11" refY="4.5" {common}>'
+            f'<polygon points="0 0.5, 11 4.5, 0 8.5" fill="{c}"/></marker>',
+            f'<marker id="{prefix}arr-s{sfx}" markerWidth="9" markerHeight="7" refX="1" refY="3.5" {common}>'
+            f'<polygon points="9 0.5, 1 3.5, 9 6.5" fill="{c}"/></marker>',
             f'<marker id="{prefix}circle{sfx}" markerWidth="10" markerHeight="10" refX="9" refY="5" {common}>'
             f'<circle cx="5" cy="5" r="3.6" fill="#ffffff" stroke="{c}" stroke-width="1.4"/></marker>',
             f'<marker id="{prefix}circle-s{sfx}" markerWidth="10" markerHeight="10" refX="1" refY="5" {common}>'
@@ -1487,7 +1657,7 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
 
 def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     """Render a laid-out Flowchart to an SVG string."""
-    t = {**DEFAULT_THEME, **(theme or {})}
+    t = _tokens(theme)
     layout(fc, t)
 
     if not fc.nodes:
@@ -1495,27 +1665,26 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
 
     parts: list[str] = []
 
-    # Calculate canvas size
-    max_x = max(n.x + n.w for n in fc.nodes.values()) + 30
-    max_y = max(n.y + n.h for n in fc.nodes.values()) + 30
-
-    # Account for subgraph bounding boxes
-    for sg in fc.subgraphs:
-        if sg.w > 0:
-            max_x = max(max_x, sg.x + sg.w + 30)
-            max_y = max(max_y, sg.y + sg.h + 30)
-
+    # Tight canvas around everything drawn (nodes, frames, edge lanes)
+    xs0 = [n.x for n in fc.nodes.values()] + [sg.x for sg in fc.subgraphs if sg.w > 0]
+    ys0 = [n.y for n in fc.nodes.values()] + [sg.y for sg in fc.subgraphs if sg.w > 0]
+    xs1 = [n.x + n.w for n in fc.nodes.values()] + [sg.x + sg.w for sg in fc.subgraphs if sg.w > 0]
+    ys1 = [n.y + n.h for n in fc.nodes.values()] + [sg.y + sg.h for sg in fc.subgraphs if sg.w > 0]
     for pts in fc.waypoints.values():
-        for px, py in pts:
-            max_x = max(max_x, px + 30)
-            max_y = max(max_y, py + 30)
-
-    width = max(max_x, 200)
-    height = max(max_y, 100)
+        xs0 += [px for px, _ in pts]
+        xs1 += [px for px, _ in pts]
+        ys0 += [py for _, py in pts]
+        ys1 += [py for _, py in pts]
+    longest_label = max((len(e.label) for e in fc.edges), default=0)
+    pad = 10.0
+    right_pad = pad + (longest_label * 3.0 if fc.direction not in ("LR", "RL") else 0)
+    ox, oy = min(xs0) - pad, min(ys0) - pad
+    width = max(xs1) - ox + right_pad
+    height = max(ys1) - oy + pad
 
     edge_colors = tuple(sorted({e.css["stroke"] for e in fc.edges if "stroke" in e.css}))
     parts.append(_make_arrow_defs(t, colors=edge_colors))
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
+    parts.append(f'<g transform="translate({-ox:g},{-oy:g})">')
 
     # Draw subgraphs (behind everything)
     for sg in fc.subgraphs:
@@ -1550,13 +1719,9 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     # Draw nodes
     for node in fc.nodes.values():
         parts.append(_render_node(node, t))
+    parts.append("</g>")
 
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    return _svg_root(width, height, parts, t["font"])
 
 
 def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
@@ -1564,16 +1729,16 @@ def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
     if sg.w <= 0 or sg.h <= 0:
         return ""
     font = t.get("font", DEFAULT_THEME["font"])
-    fill = t.get("subgraph_fill", "#f8f9fa")
-    stroke = t.get("subgraph_stroke", "#dee2e6")
-    label_color = t.get("subgraph_label", "#495057")
+    fill = t["subgraph_fill"]
+    stroke = t["subgraph_stroke"]
+    label_color = t["subgraph_label"]
 
     return "\n".join(
         [
             f'<rect x="{sg.x}" y="{sg.y}" width="{sg.w}" height="{sg.h}" '
             f'rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1"/>',
             f'<text x="{sg.x + 10}" y="{sg.y + 15}" '
-            f'font-family="{font}" font-size="10" font-weight="700" '
+            f'font-family="{font}" font-size="{_FS_SM:g}" font-weight="600" '
             f'fill="{label_color}">{_escape(sg.label)}</text>',
         ]
     )
@@ -1637,18 +1802,22 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     cx = node.x + node.w / 2
     cy = node.y + node.h / 2
     parts: list[str] = []
-    sw = 1.5
+    sw = 1.25
 
     if node.shape in ("start", "end"):
-        primary = t.get("primary", "#1b4f72")
+        primary = t["term_fill"]
         parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2}" fill="{primary}"/>')
         if node.shape == "end":
             parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 3}" fill="#ffffff"/>')
             parts.append(f'<circle cx="{cx}" cy="{cy}" r="{node.w / 2 - 5}" fill="{primary}"/>')
         return "\n".join(parts)
 
+    terminal = node.shape in ("stadium", "circle")
+    text_color = t["term_text"] if terminal else t["ink"]
     if node.shape == "diamond":
         fill, stroke = t["diamond_fill"], t["diamond_stroke"]
+    elif terminal:
+        fill, stroke = t["term_fill"], t["term_fill"]
     else:
         fill, stroke = t["node_fill"], t["node_stroke"]
     style = f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}"'
@@ -1656,8 +1825,8 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     corner = {"rect": 6, "rounded": 12, "subroutine": 4, "stadium": node.h / 2}.get(node.shape)
     if node.shape in _SHADOW_SHAPES:
         parts.append(
-            f'<rect x="{node.x + 1.2}" y="{node.y + 2}" width="{node.w}" height="{node.h}" '
-            f'rx="{corner}" fill="#000000" fill-opacity="0.07"/>'
+            f'<rect x="{node.x}" y="{node.y + 1.5}" width="{node.w}" height="{node.h}" '
+            f'rx="{corner}" fill="#0b1f33" fill-opacity="0.07"/>'
         )
 
     poly = _node_polygon(node)
@@ -1696,15 +1865,15 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     # Label (support multi-line via \n or <br>)
     label = re.sub(r"<br\s*/?>", "\n", node.label)
     lines = label.split("\n")
-    line_height = 14
+    line_height = _FS * 1.3
     start_y = cy - (len(lines) - 1) * line_height / 2
 
     for i, line_text in enumerate(lines):
-        text_y = start_y + i * line_height + 4
+        text_y = start_y + i * line_height + _FS * 0.35
         parts.append(
-            f'<text x="{cx}" y="{text_y}" text-anchor="middle" '
-            f'font-family="{font}" font-size="11" font-weight="600" '
-            f'fill="{t.get("body", "#1a1a2e")}">{_escape(line_text.strip())}</text>'
+            f'<text x="{cx}" y="{text_y:g}" text-anchor="middle" '
+            f'font-family="{font}" font-size="{_FS:g}" font-weight="500" '
+            f'fill="{text_color}">{_escape(line_text.strip())}</text>'
         )
 
     if node.css:
@@ -1712,7 +1881,7 @@ def _render_node(node: Node, t: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
-_PORT_SHAPES = ("rect", "rounded", "stadium", "subroutine")
+_PORT_SHAPES = ("rect", "rounded", "stadium", "subroutine", "fixed")
 _PORT_STEP = 5.0  # spacing between staggered edge turns
 
 
@@ -1832,8 +2001,10 @@ def _routed_path(
     last = len(pts) - 2
     verts = [pts[0]]
     mid = 0.0
+    seg_start = pts[0]
     straight_only = True
     for k, (p, q) in enumerate(zip(pts, pts[1:])):
+        seg_start = p
         direction = 1.0 if q[ax] >= p[ax] else -1.0
         mid = (p[ax] + q[ax]) / 2 + lane
         if k == 0:
@@ -1850,7 +2021,8 @@ def _routed_path(
     if straight_only:
         return d, None
     if horizontal:
-        label_xy = ((mid + end[0]) / 2, end[1] - 5)
+        # On the last bend, centred on its vertical run (the label's pill sits over the line)
+        label_xy = (mid, (seg_start[1] + end[1]) / 2 + _FS_SM * 0.35)
     else:
         label_xy = (end[0] + len(label) * 2.75 + 8, (mid + end[1]) / 2 + 3)
     return d, label_xy
@@ -1871,14 +2043,13 @@ def _render_edge(
 ) -> str:
     """Render an edge between two nodes."""
     font = t.get("font", DEFAULT_THEME["font"])
-    muted = t.get("muted", "#5d6d7e")
     parts: list[str] = []
     css = edge.css if edge else {}
     head = "none" if style == "none" else (edge.head if edge else "arrow")
     tail = edge.tail if edge else "none"
 
-    stroke = css.get("stroke", muted)
-    width = css.get("stroke-width", "3" if style == "thick" else "1.5")
+    stroke = css.get("stroke", t["edge"])
+    width = css.get("stroke-width", "2.5" if style == "thick" else "1.25")
     stroke_attrs = f'stroke="{stroke}" stroke-width="{width}" fill="none"'
     if style == "dotted":
         stroke_attrs += ' stroke-dasharray="5 3"'
@@ -1907,18 +2078,18 @@ def _render_edge(
         if label_xy:
             lx, ly = label_xy
         elif is_h:
-            ly += lane * 2.2 if lane else -8
+            ly += lane * 2.2 if lane else _FS_SM * 0.35
         else:
             lx += lane * 2.2 if lane else 10
-        # Background for readability
-        est_w = len(label) * 5.5 + 8
+        # White pill behind the text so it reads over crossing lines
+        est_w = _text_w(label, _FS_SM) + 10
         parts.append(
-            f'<rect x="{lx - est_w / 2}" y="{ly - 10}" width="{est_w}" height="14" '
-            f'rx="3" fill="#ffffff" fill-opacity="0.85"/>'
+            f'<rect x="{lx - est_w / 2:g}" y="{ly - 11:g}" width="{est_w:g}" height="15" '
+            f'rx="3" fill="#ffffff"/>'
         )
         parts.append(
-            f'<text x="{lx}" y="{ly}" text-anchor="middle" '
-            f'font-family="{font}" font-size="9" fill="{muted}">'
+            f'<text x="{lx:g}" y="{ly:g}" text-anchor="middle" '
+            f'font-family="{font}" font-size="{_FS_SM:g}" fill="{css.get("color", t["ink2"])}">'
             f"{_escape(label)}</text>"
         )
 
@@ -1930,99 +2101,245 @@ def _render_edge(
 # ---------------------------------------------------------------------------
 
 
-def render_pie_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
-    """Render a PieChart to an SVG string."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
+def _nice_step(span: float, target: int = 5) -> float:
+    """A 1/2/2.5/5 x 10^n step giving about ``target`` intervals over ``span``."""
+    if span <= 0:
+        return 1.0
+    raw = span / target
+    mag = 10 ** math.floor(math.log10(raw))
+    for mult in (1, 2, 2.5, 5, 10):
+        if mult * mag >= raw:
+            return mult * mag
+    return 10 * mag
 
-    if not pc.slices:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
 
-    total = sum(v for _, v in pc.slices)
-    if total <= 0:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+def _nice_ticks(lo: float, hi: float, target: int = 5) -> list[float]:
+    """Round tick values covering ``lo``..``hi`` (always including zero when in range)."""
+    if hi <= lo:
+        hi = lo + 1
+    step = _nice_step(hi - lo, target)
+    start = math.floor(lo / step) * step
+    end = math.ceil(hi / step) * step
+    count = int(round((end - start) / step))
+    return [round(start + i * step, 10) for i in range(count + 1)]
 
-    # Layout
-    cx, cy, r = 160, 140, 110
-    legend_x = cx + r + 40
-    width = legend_x + 180
-    height = max(cy + r + 40, len(pc.slices) * 22 + 80)
 
-    parts: list[str] = []
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
+def _fmt_num(value: float) -> str:
+    """Compact number: 950, 1.2K, 12K, 3.4M; integers stay integers."""
+    sign = "-" if value < 0 else ""
+    v = abs(value)
+    for limit, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if v >= limit:
+            scaled = v / limit
+            # Round half up (format() rounds half to even: 1.25 would show as 1.2)
+            if scaled < 10:
+                text = f"{math.floor(scaled * 10 + 0.5) / 10:.1f}".rstrip("0").rstrip(".")
+            else:
+                text = f"{math.floor(scaled + 0.5):.0f}"
+            return f"{sign}{text}{suffix}"
+    if float(v).is_integer():
+        return f"{sign}{int(v)}"
+    return f"{sign}{v:.2f}".rstrip("0").rstrip(".")
 
-    # Title
-    if pc.title:
-        parts.append(
-            f'<text x="{width / 2}" y="28" text-anchor="middle" '
-            f'font-family="{font}" font-size="14" font-weight="700" '
-            f'fill="{t.get("body", "#1a1a2e")}">{_escape(pc.title)}</text>'
-        )
 
-    # Draw slices
-    angle = -math.pi / 2  # start at top
-    for i, (label, value) in enumerate(pc.slices):
-        fraction = value / total
-        sweep = fraction * 2 * math.pi
-        color = _PIE_COLORS[i % len(_PIE_COLORS)]
+def _text_on(fill: str, t: dict[str, str]) -> str:
+    """Ink or white, whichever reads on ``fill`` (relative luminance)."""
+    h = fill.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    r, g, b = (int(h[i : i + 2], 16) / 255 for i in (0, 2, 4))
 
-        x1 = cx + r * math.cos(angle)
-        y1 = cy + r * math.sin(angle)
-        x2 = cx + r * math.cos(angle + sweep)
-        y2 = cy + r * math.sin(angle + sweep)
+    def lin(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
 
-        large_arc = 1 if sweep > math.pi else 0
+    lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    return "#ffffff" if lum < 0.45 else t["ink"]
 
-        if sweep >= 2 * math.pi - 1e-9:
-            # A single full-circle slice: an arc with coincident endpoints draws
-            # nothing, so emit a circle instead.
-            parts.append(
-                f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}" '
-                f'stroke="#ffffff" stroke-width="2"/>'
-            )
+
+def _svg_text(
+    x: float,
+    y: float,
+    text: str,
+    t: dict[str, str],
+    size: float = _FS,
+    color: str | None = None,
+    weight: int = 400,
+    anchor: str = "start",
+    extra: str = "",
+) -> str:
+    return (
+        f'<text x="{x:g}" y="{y:g}" text-anchor="{anchor}" font-family="{_escape(t["font"])}" '
+        f'font-size="{size:g}" font-weight="{weight}" fill="{color or t["ink"]}"{extra}>'
+        f"{_escape(text)}</text>"
+    )
+
+
+def _chart_title(title: str, t: dict[str, str], x: float = 0.0) -> tuple[list[str], float]:
+    """Left-aligned chart title; returns (elements, height consumed)."""
+    if not title:
+        return [], 0.0
+    return [_svg_text(x, _FS_TITLE, title, t, _FS_TITLE, weight=600)], _FS_TITLE + 14
+
+
+def _wrap_words(text: str, max_w: float, size: float = _FS) -> list[str]:
+    """Greedy word wrap by estimated width (at most two lines, ellipsis after)."""
+    words, lines, cur = text.split(), [], ""
+    for word in words:
+        trial = f"{cur} {word}".strip()
+        if cur and _text_w(trial, size) > max_w:
+            lines.append(cur)
+            cur = word
         else:
-            path = (
-                f"M {cx},{cy} L {x1:.1f},{y1:.1f} " f"A {r},{r} 0 {large_arc} 1 {x2:.1f},{y2:.1f} Z"
-            )
-            parts.append(f'<path d="{path}" fill="{color}" stroke="#ffffff" stroke-width="2"/>')
+            cur = trial
+    if cur:
+        lines.append(cur)
+    if len(lines) > 2:
+        lines = [lines[0], lines[1] + "…"]
+    return lines or [""]
 
-        # Percentage label on slice (if big enough)
-        if fraction > 0.05:
-            mid_angle = angle + sweep / 2
-            label_r = r * 0.65
-            lx = cx + label_r * math.cos(mid_angle)
-            ly = cy + label_r * math.sin(mid_angle)
-            pct = f"{fraction * 100:.0f}%"
+
+def _fold_slices(slices: list[tuple[str, float]]) -> list[tuple[str, float, str]]:
+    """Assign categorical slots in source order; past eight, fold the smallest into Other."""
+    data = [(label, value) for label, value in slices if value > 0]
+    if len(data) > len(_CATEGORICAL):
+        keep = sorted(range(len(data)), key=lambda i: -data[i][1])[: len(_CATEGORICAL) - 1]
+        kept = [data[i] for i in sorted(keep)]
+        other = sum(v for i, (_, v) in enumerate(data) if i not in keep)
+        return [(lbl, v, _CATEGORICAL[i]) for i, (lbl, v) in enumerate(kept)] + [
+            ("Other", other, _OTHER)
+        ]
+    return [(lbl, v, _CATEGORICAL[i]) for i, (lbl, v) in enumerate(data)]
+
+
+def _render_part_to_whole(pc: PieChart, t: dict[str, str], hole: float) -> str:
+    """Pie (``hole`` = 0) or donut (``hole`` = inner/outer radius ratio)."""
+    slices = _fold_slices(pc.slices)
+    if not slices:
+        return _svg_root(120, 40, _svg_text(0, 20, "No data", t, color=t["ink2"]), t["font"])
+    total = sum(v for _, v, _ in slices)
+    parts, top = _chart_title(pc.title, t)
+
+    r = 92.0
+    ri = r * hole
+    cx, cy = r + 2, top + r + 4
+
+    angle = -math.pi / 2
+    for label, value, color in slices:
+        share = value / total
+        sweep = share * 2 * math.pi
+        if share >= 0.9999:
+            parts.append(f'<circle cx="{cx:g}" cy="{cy:g}" r="{r:g}" fill="{color}"/>')
+            if ri:
+                parts.append(f'<circle cx="{cx:g}" cy="{cy:g}" r="{ri:g}" fill="#ffffff"/>')
+        else:
+            a0, a1 = angle, angle + sweep
+            large = 1 if sweep > math.pi else 0
+            x0, y0 = cx + r * math.cos(a0), cy + r * math.sin(a0)
+            x1, y1 = cx + r * math.cos(a1), cy + r * math.sin(a1)
+            if ri:
+                ix0, iy0 = cx + ri * math.cos(a1), cy + ri * math.sin(a1)
+                ix1, iy1 = cx + ri * math.cos(a0), cy + ri * math.sin(a0)
+                d = (
+                    f"M {x0:.2f},{y0:.2f} A {r:g},{r:g} 0 {large} 1 {x1:.2f},{y1:.2f} "
+                    f"L {ix0:.2f},{iy0:.2f} A {ri:g},{ri:g} 0 {large} 0 {ix1:.2f},{iy1:.2f} Z"
+                )
+            else:
+                d = (
+                    f"M {cx:g},{cy:g} L {x0:.2f},{y0:.2f} "
+                    f"A {r:g},{r:g} 0 {large} 1 {x1:.2f},{y1:.2f} Z"
+                )
+            # 2px surface gap between neighbouring slices
             parts.append(
-                f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" '
-                f'dominant-baseline="central" '
-                f'font-family="{font}" font-size="10" font-weight="700" '
-                f'fill="#ffffff">{pct}</text>'
+                f'<path d="{d}" fill="{color}" stroke="#ffffff" stroke-width="2" '
+                f'stroke-linejoin="round"/>'
             )
-
+        # Direct label only where the slice is big enough to hold it
+        if share >= 0.07:
+            mid = angle + sweep / 2
+            lr = (r + ri) / 2 if ri else r * 0.64
+            lx, ly = cx + lr * math.cos(mid), cy + lr * math.sin(mid)
+            if share >= 0.9999:
+                lx, ly = cx, cy - (r + ri) / 2 if ri else cy
+            parts.append(
+                _svg_text(
+                    lx,
+                    ly + 4,
+                    f"{share * 100:.0f}%",
+                    t,
+                    11,
+                    _text_on(color, t),
+                    600,
+                    "middle",
+                )
+            )
         angle += sweep
 
-    # Legend
-    ly_start = 60
-    for i, (label, value) in enumerate(pc.slices):
-        color = _PIE_COLORS[i % len(_PIE_COLORS)]
-        ly = ly_start + i * 22
-        parts.append(
-            f'<rect x="{legend_x}" y="{ly}" width="12" height="12" rx="2" fill="{color}"/>'
-        )
-        pct = f"{value / total * 100:.1f}%"
-        parts.append(
-            f'<text x="{legend_x + 18}" y="{ly + 10}" '
-            f'font-family="{font}" font-size="10" fill="{t.get("body", "#1a1a2e")}">'
-            f"{_escape(label)} ({pct})</text>"
-        )
+    if ri:
+        parts.append(_svg_text(cx, cy + 2, _fmt_num(total), t, 22, weight=600, anchor="middle"))
+        parts.append(_svg_text(cx, cy + 18, "Total", t, _FS_SM, t["ink2"], anchor="middle"))
 
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    # Legend: swatch, name, value (always present for two or more slices)
+    lx = cx + r + 32
+    name_w = max(_text_w(lbl) for lbl, _, _ in slices)
+    values = [
+        (f"{_fmt_num(v)}  ·  " if pc.show_data else "") + f"{v / total * 100:.0f}%"
+        for _, v, _ in slices
+    ]
+    val_w = max(_text_w(v, _FS_SM) for v in values)
+    row = 22.0
+    ly0 = cy - (len(slices) - 1) * row / 2
+    for i, ((label, _value, color), vtext) in enumerate(zip(slices, values)):
+        y = ly0 + i * row
+        parts.append(
+            f'<rect x="{lx:g}" y="{y - 5:g}" width="10" height="10" rx="2.5" fill="{color}"/>'
+        )
+        parts.append(_svg_text(lx + 18, y + 4, label, t))
+        parts.append(
+            _svg_text(
+                lx + 18 + name_w + 16 + val_w, y + 4, vtext, t, _FS_SM, t["ink2"], anchor="end"
+            )
+        )
+    width = lx + 18 + name_w + 16 + val_w + 4
+    height = max(cy + r + 4, ly0 + len(slices) * row)
+    return _svg_root(width, height, parts, t["font"])
+
+
+def _gantt_ticks(origin: date, lo: float, hi: float) -> tuple[list[float], str]:
+    """Calendar-aligned axis ticks (days, weeks or month starts) and their label style."""
+    span = max(hi - lo, 1.0)
+    start = origin + timedelta(days=math.floor(lo))
+    end = origin + timedelta(days=math.ceil(hi))
+    if span <= 70:
+        step = next(s for s in (1, 2, 7, 14) if span / s <= 8) if span > 8 else 1
+        first = start
+        if step >= 7:  # weeks start on Monday
+            first = start + timedelta(days=(7 - start.weekday()) % 7)
+        days = []
+        d = first
+        while d <= end:
+            days.append(float((d - origin).days))
+            d += timedelta(days=step)
+        return days, "day"
+    months = next(m for m in (1, 2, 3, 6, 12) if span / (30.4 * m) <= 8)
+    y, mo = start.year, start.month
+    if start.day != 1:
+        mo += 1
+    ticks = []
+    while True:
+        y += (mo - 1) // 12
+        mo = (mo - 1) % 12 + 1
+        d = date(y, mo, 1)
+        if d > end:
+            break
+        if (mo - 1) % months == 0:
+            ticks.append(float((d - origin).days))
+        mo += 1
+    return ticks, "month"
+
+
+def render_pie_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
+    """Render a PieChart to an SVG string."""
+    return _render_part_to_whole(pc, _tokens(theme), 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -2031,127 +2348,313 @@ def render_pie_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
 
 
 def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None) -> str:
-    """Render a SequenceDiagram to an SVG string."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    muted = t.get("muted", "#5d6d7e")
-
+    """Render a sequence diagram: participants, lifelines, messages, notes and frames."""
+    t = _tokens(theme)
     if not sd.participants:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
-
-    # Layout constants
-    col_width = 160
-    row_height = 40
-    box_h = 32
-    box_pad = 16
-    top_margin = 20
-    left_margin = 30
-
-    n_cols = len(sd.participants)
-    n_rows = len(sd.messages)
-
-    width = left_margin * 2 + n_cols * col_width
-    height = top_margin + box_h + 20 + n_rows * row_height + box_h + 40
-
-    # Participant x positions (center of each column)
-    px: dict[str, float] = {}
-    for i, p in enumerate(sd.participants):
-        px[p] = left_margin + i * col_width + col_width / 2
-
-    parts: list[str] = []
-    parts.append(_make_arrow_defs(t, "seq-"))
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    # Draw participant boxes (top)
-    box_y = top_margin
-    for i, p in enumerate(sd.participants):
-        x = px[p]
-        fill = _SEQ_COLORS[i % len(_SEQ_COLORS)]
-        bw = max(len(p) * 8 + box_pad * 2, 80)
-        bx = x - bw / 2
-        parts.append(
-            f'<rect x="{bx}" y="{box_y}" width="{bw}" height="{box_h}" '
-            f'rx="4" fill="{fill}" stroke="{muted}" stroke-width="1.2"/>'
-        )
-        parts.append(
-            f'<text x="{x}" y="{box_y + box_h / 2 + 4}" text-anchor="middle" '
-            f'font-family="{font}" font-size="11" font-weight="600" '
-            f'fill="{body_color}">{_escape(p)}</text>'
+        return _svg_root(
+            120, 40, _svg_text(0, 20, "No participants", t, color=t["ink2"]), t["font"]
         )
 
-    # Draw lifelines
-    lifeline_top = box_y + box_h
-    lifeline_bottom = height - box_h - 30
-    for p in sd.participants:
-        x = px[p]
-        parts.append(
-            f'<line x1="{x}" y1="{lifeline_top}" x2="{x}" y2="{lifeline_bottom}" '
-            f'stroke="{muted}" stroke-width="1" stroke-dasharray="4 3"/>'
+    msg_color = "#57606a"
+    life_color = "#d0d7de"
+    frame_color = "#c9ced4"
+    n = len(sd.participants)
+    index = {p: i for i, p in enumerate(sd.participants)}
+    label_of = {p: sd.labels.get(p, p) for p in sd.participants}
+    box_w = [max(_text_w(label_of[p], _FS) + 28, 92.0) for p in sd.participants]
+    box_h = 34.0
+    actor_h = 46.0
+    head_h = actor_h if sd.actors else box_h
+
+    def lines_of(text: str) -> list[str]:
+        return [s.strip() for s in re.split(r"<br\s*/?>", text)]
+
+    # Column spacing: wide enough for every message label and note it carries
+    dist = [max(box_w[i] / 2 + box_w[i + 1] / 2 + 36, 128.0) for i in range(n - 1)]
+    right_extra = 0.0
+    needs: list[tuple[int, int, float]] = []
+    for ev in sd.events:
+        if isinstance(ev, SeqMessage):
+            a, b = sorted((index[ev.src], index[ev.dst]))
+            w = max(_text_w(s, 11) for s in lines_of(ev.label)) + 36
+            if a == b:
+                if a < n - 1:
+                    needs.append((a, a + 1, w + 30))
+                else:
+                    right_extra = max(right_extra, w + 30)
+            else:
+                needs.append((a, b, w))
+        elif isinstance(ev, SeqNote):
+            w = max(_text_w(s, 11) for s in lines_of(ev.text)) + 24
+            idx = sorted(index[x] for x in ev.targets)
+            if ev.position == "right":
+                if idx[-1] < n - 1:
+                    needs.append((idx[-1], idx[-1] + 1, w + 24))
+                else:
+                    right_extra = max(right_extra, w + 16)
+            elif ev.position == "left" and idx[0] > 0:
+                needs.append((idx[0] - 1, idx[0], w + 24))
+            elif ev.position == "over" and idx[0] != idx[-1]:
+                needs.append((idx[0], idx[-1], w - 40))
+    for a, b, w in sorted(needs, key=lambda x: x[1] - x[0]):
+        have = sum(dist[a:b])
+        if have < w:
+            for k in range(a, b):
+                dist[k] += (w - have) / (b - a)
+
+    left_extra = 0.0
+    for ev in sd.events:
+        if isinstance(ev, SeqNote) and ev.position == "left" and index[ev.targets[0]] == 0:
+            left_extra = max(left_extra, max(_text_w(s, 11) for s in lines_of(ev.text)) + 40)
+
+    pad = 24.0
+    x0 = max(pad + box_w[0] / 2, left_extra + 8)
+    xs = [x0]
+    for d in dist:
+        xs.append(xs[-1] + d)
+    px = {p: xs[i] for i, p in enumerate(sd.participants)}
+
+    # ---- vertical layout pass
+    y = head_h + 26.0
+    active: dict[str, list[float]] = defaultdict(list)
+    bars: list[tuple[str, float, float, int]] = []
+    frames: list[dict] = []
+    open_frames: list[dict] = []
+    drawn: list[str] = []
+    number = 0
+
+    def act_offset(p: str) -> float:
+        return 5.0 * len(active[p])
+
+    def involve(*ps: str) -> None:
+        for f in open_frames:
+            f["who"].update(ps)
+
+    for ev in sd.events:
+        if isinstance(ev, SeqBlock):
+            if ev.kind in ("else", "and", "option"):
+                if open_frames:
+                    open_frames[-1]["dividers"].append((y, ev.label))
+                y += 28
+            elif ev.kind == "end":
+                if open_frames:
+                    f = open_frames.pop()
+                    f["y1"] = y
+                    f["depth"] = len(open_frames)
+                    frames.append(f)
+                y += 14
+            else:
+                open_frames.append(
+                    {"kind": ev.kind, "label": ev.label, "y0": y, "who": set(), "dividers": []}
+                )
+                y += 30
+            continue
+        if isinstance(ev, SeqActivation):
+            if ev.on:
+                active[ev.participant].append(y)
+            elif active[ev.participant]:
+                bars.append(
+                    (ev.participant, active[ev.participant].pop(), y, len(active[ev.participant]))
+                )
+            continue
+        if isinstance(ev, SeqNote):
+            idx = sorted(index[x] for x in ev.targets)
+            text_lines = lines_of(ev.text)
+            tw = max(_text_w(s, 11) for s in text_lines) + 20
+            nh = 12 + 15 * len(text_lines)
+            if ev.position == "over":
+                left, right = xs[idx[0]], xs[idx[-1]]
+                w = max(tw, right - left + 40)
+                nx = (left + right) / 2 - w / 2
+            elif ev.position == "right":
+                w, nx = tw, xs[idx[-1]] + 14
+            else:
+                w = tw
+                nx = xs[idx[0]] - 14 - w
+            drawn.append(
+                f'<rect x="{nx:g}" y="{y:g}" width="{w:g}" height="{nh:g}" rx="4" '
+                f'fill="{t["note_fill"]}" stroke="{t["note_stroke"]}" stroke-width="1"/>'
+            )
+            for li, s in enumerate(text_lines):
+                drawn.append(_svg_text(nx + w / 2, y + 17 + li * 15, s, t, 11, anchor="middle"))
+            involve(*ev.targets)
+            y += nh + 14
+            continue
+
+        # Message
+        msg: SeqMessage = ev  # type: ignore[assignment]
+        number += 1
+        text_lines = lines_of(msg.label) if msg.label else []
+        y += 15 * len(text_lines) + 4
+        sx_, dx_ = px[msg.src], px[msg.dst]
+        dashed = msg.arrow.startswith("--") or msg.arrow.startswith("<<--")
+        head = (
+            "arrow"
+            if msg.arrow.endswith(">>")
+            else (
+                "cross"
+                if msg.arrow.endswith("x")
+                else ("open" if msg.arrow.endswith(")") else "none")
+            )
         )
-
-    # Draw messages
-    msg_y_start = lifeline_top + 25
-    for i, msg in enumerate(sd.messages):
-        y = msg_y_start + i * row_height
-        x1 = px.get(msg.src, left_margin)
-        x2 = px.get(msg.dst, left_margin + col_width)
-
-        # Determine arrow style
-        is_dashed = msg.arrow.startswith("--")
-        stroke_style = 'stroke-dasharray="5 3"' if is_dashed else ""
-
-        # Self-message
+        both = msg.arrow.startswith("<<")
+        dash = ' stroke-dasharray="5 3"' if dashed else ""
+        mk_end = f' marker-end="url(#seq-{head})"' if head != "none" else ""
+        mk_start = ' marker-start="url(#seq-arrow-s)"' if both else ""
         if msg.src == msg.dst:
-            loop_w = 30
-            parts.append(
-                f'<path d="M {x1},{y} L {x1 + loop_w},{y} '
-                f'L {x1 + loop_w},{y + 20} L {x1},{y + 20}" '
-                f'stroke="{muted}" stroke-width="1.5" fill="none" {stroke_style} '
-                f'marker-end="url(#seq-arr)"/>'
+            x1 = sx_ + act_offset(msg.src)
+            loop_w = 34.0
+            drawn.append(
+                f'<path d="M {x1:g},{y:g} H {x1 + loop_w:g} V {y + 22:g} H {x1 + 2:g}" fill="none" '
+                f'stroke="{msg_color}" stroke-width="1.25"{dash}{mk_end}/>'
             )
-            parts.append(
-                f'<text x="{x1 + loop_w + 5}" y="{y + 12}" '
-                f'font-family="{font}" font-size="10" fill="{body_color}">'
-                f"{_escape(msg.label)}</text>"
-            )
+            for li, s in enumerate(text_lines):
+                drawn.append(
+                    _svg_text(
+                        x1 + loop_w + 8, y + 15 - 15 * (len(text_lines) - 1 - li) - 2, s, t, 11
+                    )
+                )
+            line_y = y
+            y += 34
         else:
-            parts.append(
-                f'<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" '
-                f'stroke="{muted}" stroke-width="1.5" {stroke_style} '
-                f'marker-end="url(#seq-arr)"/>'
+            direction = 1 if dx_ > sx_ else -1
+            x1 = sx_ + direction * act_offset(msg.src)
+            dst_off = act_offset(msg.dst) + (5.0 if msg.activate == "+" else 0.0)
+            x2 = dx_ - direction * dst_off
+            drawn.append(
+                f'<line x1="{x1:g}" y1="{y:g}" x2="{x2:g}" y2="{y:g}" stroke="{msg_color}" '
+                f'stroke-width="1.25"{dash}{mk_end}{mk_start}/>'
             )
-            # Label above the line
-            lx = (x1 + x2) / 2
-            parts.append(
-                f'<text x="{lx}" y="{y - 6}" text-anchor="middle" '
-                f'font-family="{font}" font-size="10" fill="{body_color}">'
-                f"{_escape(msg.label)}</text>"
+            cx = (x1 + x2) / 2
+            for li, s in enumerate(text_lines):
+                drawn.append(
+                    _svg_text(
+                        cx, y - 7 - 15 * (len(text_lines) - 1 - li), s, t, 11, anchor="middle"
+                    )
+                )
+            line_y = y
+            y += 22
+        if sd.autonumber:
+            nx = px[msg.src]
+            drawn.append(
+                f'<circle cx="{nx:g}" cy="{line_y:g}" r="8" fill="{t["term_fill"]}" '
+                f'stroke="#ffffff" stroke-width="1.5"/>'
             )
+            drawn.append(_svg_text(nx, line_y + 3.5, str(number), t, 9.5, "#ffffff", 600, "middle"))
+        if msg.activate == "+":
+            active[msg.dst].append(line_y)
+        elif msg.activate == "-" and active[msg.src]:
+            bars.append((msg.src, active[msg.src].pop(), line_y, len(active[msg.src])))
+        involve(msg.src, msg.dst)
 
-    # Draw participant boxes (bottom)
-    bottom_box_y = lifeline_bottom
+    # Close anything left open
+    for p, starts in active.items():
+        while starts:
+            bars.append((p, starts.pop(), y, len(starts)))
+    while open_frames:
+        f = open_frames.pop()
+        f["y1"], f["depth"] = y, len(open_frames)
+        frames.append(f)
+
+    bottom_y = y + 8
+    total_h = bottom_y + head_h + 6
+    width = xs[-1] + box_w[-1] / 2 + max(pad, right_extra)
+
+    parts: list[str] = [
+        "<defs>",
+        f'<marker id="seq-arrow" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" '
+        f'refX="8" refY="3.5" orient="auto"><polygon points="0 0.5, 8 3.5, 0 6.5" fill="{msg_color}"/></marker>',
+        f'<marker id="seq-arrow-s" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="7" '
+        f'refX="1" refY="3.5" orient="auto"><polygon points="9 0.5, 1 3.5, 9 6.5" fill="{msg_color}"/></marker>',
+        f'<marker id="seq-open" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" '
+        f'refX="8" refY="4" orient="auto"><path d="M1,0.5 L8,4 L1,7.5" fill="none" stroke="{msg_color}" '
+        f'stroke-width="1.25"/></marker>',
+        f'<marker id="seq-cross" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" '
+        f'refX="5" refY="5" orient="auto"><path d="M1.5,1.5 L8.5,8.5 M8.5,1.5 L1.5,8.5" stroke="{msg_color}" '
+        f'stroke-width="1.5"/></marker>',
+        "</defs>",
+    ]
+
+    # Frames (loop/alt/...) behind everything, outer ones first
+    for f in sorted(frames, key=lambda f: f["depth"]):
+        who = [index[p] for p in f["who"]] or list(range(n))
+        margin = 26.0 - 7 * f["depth"]
+        fx0 = xs[min(who)] - margin - 22
+        fx1 = xs[max(who)] + margin + 22
+        tag = f["kind"]
+        tag_w = _text_w(tag, 10) + 16
+        fx1 = max(fx1, fx0 + tag_w + _text_w(f"[{f['label']}]", _FS_SM) + 24)
+        fy0, fy1 = f["y0"] + 2, f["y1"] + 4
+        fill = _lighten(t["primary"], 0.97) if tag == "rect" else "none"
+        parts.append(
+            f'<rect x="{fx0:g}" y="{fy0:g}" width="{fx1 - fx0:g}" height="{fy1 - fy0:g}" rx="4" '
+            f'fill="{fill}" stroke="{frame_color}" stroke-width="1"/>'
+        )
+        if tag != "rect":
+            parts.append(
+                f'<path d="M {fx0:g},{fy0 + 4:g} Q {fx0:g},{fy0:g} {fx0 + 4:g},{fy0:g} H {fx0 + tag_w:g} '
+                f'V {fy0 + 12:g} L {fx0 + tag_w - 6:g},{fy0 + 18:g} H {fx0:g} Z" fill="#f3f4f6" '
+                f'stroke="{frame_color}" stroke-width="1"/>'
+            )
+            parts.append(_svg_text(fx0 + 7, fy0 + 13, tag, t, 10, t["ink2"], 600))
+            if f["label"]:
+                parts.append(
+                    _svg_text(fx0 + tag_w + 8, fy0 + 13, f"[{f['label']}]", t, _FS_SM, t["ink2"])
+                )
+        for dy, dlabel in f["dividers"]:
+            parts.append(
+                f'<line x1="{fx0:g}" y1="{dy:g}" x2="{fx1:g}" y2="{dy:g}" stroke="{frame_color}" '
+                f'stroke-width="1" stroke-dasharray="4 3"/>'
+            )
+            if dlabel:
+                parts.append(_svg_text(fx0 + 8, dy + 14, f"[{dlabel}]", t, _FS_SM, t["ink2"]))
+
+    # Lifelines
+    for p in sd.participants:
+        parts.append(
+            f'<line x1="{px[p]:g}" y1="{head_h:g}" x2="{px[p]:g}" y2="{bottom_y:g}" '
+            f'stroke="{life_color}" stroke-width="1" stroke-dasharray="4 4"/>'
+        )
+    # Activation bars
+    for p, ya, yb, depth in bars:
+        bx = px[p] - 5 + 5 * depth
+        parts.append(
+            f'<rect x="{bx:g}" y="{ya - 4:g}" width="10" height="{max(yb - ya + 8, 12):g}" rx="2" '
+            f'fill="{t["node_fill"]}" stroke="{t["node_stroke"]}" stroke-width="1"/>'
+        )
+    parts += drawn
+
+    # Participants, top and bottom
     for i, p in enumerate(sd.participants):
-        x = px[p]
-        fill = _SEQ_COLORS[i % len(_SEQ_COLORS)]
-        bw = max(len(p) * 8 + box_pad * 2, 80)
-        bx = x - bw / 2
-        parts.append(
-            f'<rect x="{bx}" y="{bottom_box_y}" width="{bw}" height="{box_h}" '
-            f'rx="4" fill="{fill}" stroke="{muted}" stroke-width="1.2"/>'
-        )
-        parts.append(
-            f'<text x="{x}" y="{bottom_box_y + box_h / 2 + 4}" text-anchor="middle" '
-            f'font-family="{font}" font-size="11" font-weight="600" '
-            f'fill="{body_color}">{_escape(p)}</text>'
-        )
+        for top in (0.0, bottom_y):
+            cx = xs[i]
+            if p in sd.actors:
+                hy = top + 8
+                parts.append(
+                    f'<g fill="none" stroke="{t["ink2"]}" stroke-width="1.4" stroke-linecap="round">'
+                    f'<circle cx="{cx:g}" cy="{hy:g}" r="6" fill="#ffffff"/>'
+                    f'<path d="M {cx:g},{hy + 6:g} V {hy + 18:g} M {cx - 9:g},{hy + 10:g} H {cx + 9:g} '
+                    f"M {cx:g},{hy + 18:g} L {cx - 7:g},{hy + 27:g} M {cx:g},{hy + 18:g} "
+                    f'L {cx + 7:g},{hy + 27:g}"/></g>'
+                )
+                parts.append(
+                    _svg_text(
+                        cx, top + actor_h - 2, label_of[p], t, _FS, weight=500, anchor="middle"
+                    )
+                )
+            else:
+                by = head_h - box_h if top == 0.0 else top
+                parts.append(
+                    f'<rect x="{cx - box_w[i] / 2:g}" y="{by:g}" width="{box_w[i]:g}" height="{box_h:g}" '
+                    f'rx="6" fill="#ffffff" stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
+                )
+                parts.append(
+                    _svg_text(
+                        cx, by + box_h / 2 + 4.2, label_of[p], t, _FS, weight=500, anchor="middle"
+                    )
+                )
 
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    return _svg_root(width, total_h, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -2160,120 +2663,211 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
 
 
 def render_bar_svg(bc: BarChart, theme: dict[str, str] | None = None) -> str:
-    """Render a BarChart to an SVG string."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    muted = t.get("muted", "#5d6d7e")
+    """Render a bar/line chart: thin rounded bars, hairline grid, round ticks."""
+    t = _tokens(theme)
+    series = [(kind, vals) for kind, vals in bc.datasets if vals]
+    if not series:
+        return _svg_root(120, 40, _svg_text(0, 20, "No data", t, color=t["ink2"]), t["font"])
+    n_cat = max(len(v) for _, v in series)
+    labels = (bc.labels + [""] * n_cat)[:n_cat]
+    colors = [_CATEGORICAL[i % len(_CATEGORICAL)] for i in range(len(series))]
+    bar_idx = [i for i, (kind, _) in enumerate(series) if kind == "bar"]
+    line_idx = [i for i, (kind, _) in enumerate(series) if kind == "line"]
 
-    if not bc.labels or not bc.datasets:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+    all_vals = [v for _, vals in series for v in vals]
+    lo = min(0.0, min(all_vals)) if bc.y_min is None else bc.y_min
+    hi = max(all_vals) if bc.y_max is None else bc.y_max
+    ticks = _nice_ticks(lo, hi)
+    lo, hi = ticks[0], ticks[-1]
 
-    all_vals = [v for _, vals in bc.datasets for v in vals]
-    max_val = max(all_vals) if all_vals else 1
-    n_bars = len(bc.labels)
-    n_datasets = len(bc.datasets)
-
-    # Layout
-    left_margin = 60
-    right_margin = 30
-    top_margin = 50
-    bottom_margin = 60
-    chart_w = max(n_bars * 60 * n_datasets, 200)
-    chart_h = 200
-    bar_gap = 8
-    group_gap = 20
-
-    width = left_margin + chart_w + right_margin
-    height = top_margin + chart_h + bottom_margin
-
-    group_w = (chart_w - group_gap * (n_bars - 1)) / n_bars
-    bar_w = max((group_w - bar_gap * (n_datasets - 1)) / n_datasets, 12)
-
-    parts: list[str] = []
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    # Title
-    if bc.title:
-        parts.append(
-            f'<text x="{width / 2}" y="28" text-anchor="middle" '
-            f'font-family="{font}" font-size="14" font-weight="700" '
-            f'fill="{body_color}">{_escape(bc.title)}</text>'
-        )
-
-    # Y-axis grid lines and labels
-    n_ticks = 5
-    for i in range(n_ticks + 1):
-        val = max_val * i / n_ticks
-        y = top_margin + chart_h - (chart_h * i / n_ticks)
-        parts.append(
-            f'<line x1="{left_margin}" y1="{y}" x2="{left_margin + chart_w}" y2="{y}" '
-            f'stroke="#e9ecef" stroke-width="0.8"/>'
-        )
-        parts.append(
-            f'<text x="{left_margin - 8}" y="{y + 4}" text-anchor="end" '
-            f'font-family="{font}" font-size="9" fill="{muted}">'
-            f"{val:.0f}</text>"
-        )
-
-    # Bars
-    for gi, label in enumerate(bc.labels):
-        group_x = left_margin + gi * (group_w + group_gap)
-        for di, (ds_name, vals) in enumerate(bc.datasets):
-            if gi >= len(vals):
+    parts, top = _chart_title(bc.title, t)
+    names = [n for n in bc.series_names if n]
+    if len(series) > 1 and names:
+        # Legend row under the title (identity is never colour alone)
+        x = 0.0
+        for i, (kind, _vals) in enumerate(series):
+            name = bc.series_names[i] if i < len(bc.series_names) else ""
+            if not name:
                 continue
-            val = vals[gi]
-            color = _PIE_COLORS[di % len(_PIE_COLORS)]
-            bh = (val / max_val) * chart_h if max_val > 0 else 0
-            bx = group_x + di * (bar_w + bar_gap)
-            by = top_margin + chart_h - bh
-            parts.append(
-                f'<rect x="{bx}" y="{by}" width="{bar_w}" height="{bh}" ' f'rx="2" fill="{color}"/>'
-            )
-            # Value label on top
-            parts.append(
-                f'<text x="{bx + bar_w / 2}" y="{by - 4}" text-anchor="middle" '
-                f'font-family="{font}" font-size="8" fill="{muted}">'
-                f"{val:.0f}</text>"
-            )
+            if kind == "line":
+                parts.append(
+                    f'<line x1="{x:g}" y1="{top + 5:g}" x2="{x + 14:g}" y2="{top + 5:g}" '
+                    f'stroke="{colors[i]}" stroke-width="2" stroke-linecap="round"/>'
+                )
+            else:
+                parts.append(
+                    f'<rect x="{x + 2:g}" y="{top:g}" width="10" height="10" rx="2.5" '
+                    f'fill="{colors[i]}"/>'
+                )
+            parts.append(_svg_text(x + 20, top + 9, name, t, _FS_SM, t["ink2"]))
+            x += 20 + _text_w(name, _FS_SM) + 18
+        top += 24
 
-        # X-axis label
-        label_x = group_x + group_w / 2
+    tick_w = max(_text_w(_fmt_num(v), _FS_SM) for v in ticks) + 10
+    n_bars = max(len(bar_idx), 1)
+
+    if bc.horizontal:
+        cat_w = min(max(_text_w(lbl) for lbl in labels) + 12, 180)
+        band = max(30.0, n_bars * 16 + 14)
+        plot_w = 400.0
+        x0, y0 = cat_w, top + 4
+        plot_h = band * n_cat
+
+        def sx(v: float) -> float:
+            return x0 + (v - lo) / (hi - lo) * plot_w
+
+        for v in ticks:
+            gx = sx(v)
+            color = t["baseline"] if v == 0 else t["grid"]
+            parts.append(
+                f'<line x1="{gx:g}" y1="{y0:g}" x2="{gx:g}" y2="{y0 + plot_h:g}" '
+                f'stroke="{color}" stroke-width="1"/>'
+            )
+            parts.append(
+                _svg_text(
+                    gx, y0 + plot_h + 16, _fmt_num(v), t, _FS_SM, t["chrome"], anchor="middle"
+                )
+            )
+        thick = min(16.0, (band - 12) / n_bars)
+        for c in range(n_cat):
+            by = y0 + c * band + (band - thick * n_bars - 2 * (n_bars - 1)) / 2
+            parts.append(
+                _svg_text(x0 - 10, y0 + c * band + band / 2 + 4, labels[c], t, anchor="end")
+            )
+            for k, i in enumerate(bar_idx):
+                vals = series[i][1]
+                if c >= len(vals):
+                    continue
+                v = vals[c]
+                a, b = sx(min(0.0, v) if lo <= 0 else lo), sx(max(0.0, v) if lo <= 0 else v)
+                y = by + k * (thick + 2)
+                w = max(b - a, 0.5)
+                rr = min(4.0, w / 2, thick / 2)
+                if v >= 0:
+                    d = (
+                        f"M {a:g},{y:g} H {a + w - rr:g} Q {a + w:g},{y:g} {a + w:g},{y + rr:g} "
+                        f"V {y + thick - rr:g} Q {a + w:g},{y + thick:g} {a + w - rr:g},{y + thick:g} "
+                        f"H {a:g} Z"
+                    )
+                else:
+                    d = (
+                        f"M {b:g},{y:g} H {a + rr:g} Q {a:g},{y:g} {a:g},{y + rr:g} "
+                        f"V {y + thick - rr:g} Q {a:g},{y + thick:g} {a + rr:g},{y + thick:g} "
+                        f"H {b:g} Z"
+                    )
+                parts.append(f'<path d="{d}" fill="{colors[i]}"/>')
+                if n_cat * n_bars <= 16:
+                    tx = b + 6 if v >= 0 else a - 6
+                    parts.append(
+                        _svg_text(
+                            tx,
+                            y + thick / 2 + 4,
+                            _fmt_num(v),
+                            t,
+                            _FS_SM,
+                            t["ink2"],
+                            anchor="start" if v >= 0 else "end",
+                        )
+                    )
+        width = x0 + plot_w + 40
+        height = y0 + plot_h + 24
+        return _svg_root(width, height, parts, t["font"])
+
+    # Vertical columns
+    band = max(48.0, min(110.0, 560.0 / max(n_cat, 1)))
+    thick = min(24.0, (band * 0.6 - 2 * (n_bars - 1)) / n_bars)
+    plot_h = 200.0
+    x0, y0 = tick_w, top + 10
+    plot_w = band * n_cat
+    if bc.y_title:
+        parts.append(_svg_text(0, top + 2, bc.y_title, t, _FS_SM, t["ink2"]))
+        y0 += 12
+
+    def sy(v: float) -> float:
+        return y0 + plot_h - (v - lo) / (hi - lo) * plot_h
+
+    for v in ticks:
+        gy = sy(v)
         parts.append(
-            f'<text x="{label_x}" y="{top_margin + chart_h + 16}" text-anchor="middle" '
-            f'font-family="{font}" font-size="9" fill="{body_color}">'
-            f"{_escape(label)}</text>"
+            f'<line x1="{x0:g}" y1="{gy:g}" x2="{x0 + plot_w:g}" y2="{gy:g}" '
+            f'stroke="{t["grid"]}" stroke-width="1"/>'
         )
+        parts.append(_svg_text(x0 - 8, gy + 3.5, _fmt_num(v), t, _FS_SM, t["chrome"], anchor="end"))
+    base_y = sy(0.0) if lo <= 0 <= hi else sy(lo)
 
-    # Axis lines
-    parts.append(
-        f'<line x1="{left_margin}" y1="{top_margin}" x2="{left_margin}" y2="{top_margin + chart_h}" '
-        f'stroke="{muted}" stroke-width="1"/>'
-    )
-    parts.append(
-        f'<line x1="{left_margin}" y1="{top_margin + chart_h}" x2="{left_margin + chart_w}" y2="{top_margin + chart_h}" '
-        f'stroke="{muted}" stroke-width="1"/>'
-    )
-
-    # Legend (if multiple datasets)
-    if n_datasets > 1:
-        for di, (ds_name, _) in enumerate(bc.datasets):
-            lx = left_margin + di * 100
-            ly = height - 20
-            color = _PIE_COLORS[di % len(_PIE_COLORS)]
-            parts.append(f'<rect x="{lx}" y="{ly}" width="10" height="10" rx="2" fill="{color}"/>')
+    label_lines = [_wrap_words(lbl, band - 8, 11) for lbl in labels]
+    for c in range(n_cat):
+        cxm = x0 + c * band + band / 2
+        for li, text in enumerate(label_lines[c]):
             parts.append(
-                f'<text x="{lx + 14}" y="{ly + 9}" '
-                f'font-family="{font}" font-size="9" fill="{body_color}">'
-                f"{_escape(ds_name)}</text>"
+                _svg_text(cxm, y0 + plot_h + 18 + li * 13, text, t, 11, t["ink2"], anchor="middle")
+            )
+        group_w = thick * n_bars + 2 * (n_bars - 1)
+        for k, i in enumerate(bar_idx):
+            vals = series[i][1]
+            if c >= len(vals):
+                continue
+            v = vals[c]
+            x = cxm - group_w / 2 + k * (thick + 2)
+            ytop, ybot = sorted((sy(v), base_y))
+            h = max(ybot - ytop, 0.5)
+            rr = min(4.0, thick / 2, h)
+            if v >= 0:  # rounded data end, square at the baseline
+                d = (
+                    f"M {x:g},{ybot:g} V {ytop + rr:g} Q {x:g},{ytop:g} {x + rr:g},{ytop:g} "
+                    f"H {x + thick - rr:g} Q {x + thick:g},{ytop:g} {x + thick:g},{ytop + rr:g} "
+                    f"V {ybot:g} Z"
+                )
+            else:
+                d = (
+                    f"M {x:g},{ytop:g} V {ybot - rr:g} Q {x:g},{ybot:g} {x + rr:g},{ybot:g} "
+                    f"H {x + thick - rr:g} Q {x + thick:g},{ybot:g} {x + thick:g},{ybot - rr:g} "
+                    f"V {ytop:g} Z"
+                )
+            parts.append(f'<path d="{d}" fill="{colors[i]}"/>')
+            if n_cat * n_bars <= 16:
+                ty = ytop - 6 if v >= 0 else ybot + 13
+                parts.append(
+                    _svg_text(x + thick / 2, ty, _fmt_num(v), t, _FS_SM, t["ink2"], anchor="middle")
+                )
+
+    # Baseline over the bars' square ends
+    parts.append(
+        f'<line x1="{x0:g}" y1="{base_y:g}" x2="{x0 + plot_w:g}" y2="{base_y:g}" '
+        f'stroke="{t["baseline"]}" stroke-width="1"/>'
+    )
+
+    for i in line_idx:
+        vals = series[i][1]
+        pts = [(x0 + c * band + band / 2, sy(v)) for c, v in enumerate(vals)]
+        poly = " ".join(f"{px:.1f},{py:.1f}" for px, py in pts)
+        parts.append(
+            f'<polyline points="{poly}" fill="none" stroke="{colors[i]}" stroke-width="2" '
+            f'stroke-linejoin="round" stroke-linecap="round"/>'
+        )
+        for px, py in pts:
+            parts.append(
+                f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="{colors[i]}" '
+                f'stroke="#ffffff" stroke-width="2"/>'
             )
 
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    extra = 13 * (max(len(lines) for lines in label_lines) - 1)
+    if bc.x_title:
+        parts.append(
+            _svg_text(
+                x0 + plot_w / 2,
+                y0 + plot_h + 40 + extra,
+                bc.x_title,
+                t,
+                _FS_SM,
+                t["ink2"],
+                anchor="middle",
+            )
+        )
+        extra += 16
+    width = x0 + plot_w + 6
+    height = y0 + plot_h + 28 + extra
+    return _svg_root(width, height, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -2282,117 +2876,8 @@ def render_bar_svg(bc: BarChart, theme: dict[str, str] | None = None) -> str:
 
 
 def render_donut_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
-    """Render a PieChart as a donut (ring) chart."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-
-    if not pc.slices:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
-
-    total = sum(v for _, v in pc.slices)
-    if total <= 0:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
-
-    cx, cy, r_outer, r_inner = 160, 140, 110, 60
-    legend_x = cx + r_outer + 40
-    width = legend_x + 180
-    height = max(cy + r_outer + 40, len(pc.slices) * 22 + 80)
-
-    parts: list[str] = []
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    if pc.title:
-        parts.append(
-            f'<text x="{width / 2}" y="28" text-anchor="middle" '
-            f'font-family="{font}" font-size="14" font-weight="700" '
-            f'fill="{body_color}">{_escape(pc.title)}</text>'
-        )
-
-    angle = -math.pi / 2
-    for i, (label, value) in enumerate(pc.slices):
-        fraction = value / total
-        sweep = fraction * 2 * math.pi
-        color = _PIE_COLORS[i % len(_PIE_COLORS)]
-
-        # Outer arc
-        ox1 = cx + r_outer * math.cos(angle)
-        oy1 = cy + r_outer * math.sin(angle)
-        ox2 = cx + r_outer * math.cos(angle + sweep)
-        oy2 = cy + r_outer * math.sin(angle + sweep)
-        # Inner arc (reverse direction)
-        ix1 = cx + r_inner * math.cos(angle + sweep)
-        iy1 = cy + r_inner * math.sin(angle + sweep)
-        ix2 = cx + r_inner * math.cos(angle)
-        iy2 = cy + r_inner * math.sin(angle)
-
-        large_arc = 1 if sweep > math.pi else 0
-
-        if sweep >= 2 * math.pi - 1e-9:
-            # A single full-circle slice: draw the ring as an outer disc with a
-            # punched-out white inner disc (a single annular arc draws nothing).
-            parts.append(
-                f'<circle cx="{cx}" cy="{cy}" r="{r_outer}" fill="{color}" '
-                f'stroke="#ffffff" stroke-width="2"/>'
-            )
-            parts.append(f'<circle cx="{cx}" cy="{cy}" r="{r_inner}" fill="#ffffff"/>')
-        else:
-            path = (
-                f"M {ox1:.1f},{oy1:.1f} "
-                f"A {r_outer},{r_outer} 0 {large_arc} 1 {ox2:.1f},{oy2:.1f} "
-                f"L {ix1:.1f},{iy1:.1f} "
-                f"A {r_inner},{r_inner} 0 {large_arc} 0 {ix2:.1f},{iy2:.1f} Z"
-            )
-            parts.append(f'<path d="{path}" fill="{color}" stroke="#ffffff" stroke-width="2"/>')
-
-        # Label on ring
-        if fraction > 0.06:
-            mid_angle = angle + sweep / 2
-            label_r = (r_outer + r_inner) / 2
-            lx = cx + label_r * math.cos(mid_angle)
-            ly = cy + label_r * math.sin(mid_angle)
-            pct = f"{fraction * 100:.0f}%"
-            parts.append(
-                f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" '
-                f'dominant-baseline="central" '
-                f'font-family="{font}" font-size="10" font-weight="700" '
-                f'fill="#ffffff">{pct}</text>'
-            )
-        angle += sweep
-
-    # Center label (total)
-    parts.append(
-        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" '
-        f'font-family="{font}" font-size="10" fill="{t.get("muted", "#5d6d7e")}">'
-        f"Total</text>"
-    )
-    parts.append(
-        f'<text x="{cx}" y="{cy + 14}" text-anchor="middle" '
-        f'font-family="{font}" font-size="16" font-weight="700" '
-        f'fill="{body_color}">{total:.0f}</text>'
-    )
-
-    # Legend
-    ly_start = 60
-    for i, (label, value) in enumerate(pc.slices):
-        color = _PIE_COLORS[i % len(_PIE_COLORS)]
-        ly = ly_start + i * 22
-        parts.append(
-            f'<rect x="{legend_x}" y="{ly}" width="12" height="12" rx="2" fill="{color}"/>'
-        )
-        pct = f"{value / total * 100:.1f}%"
-        parts.append(
-            f'<text x="{legend_x + 18}" y="{ly + 10}" '
-            f'font-family="{font}" font-size="10" fill="{body_color}">'
-            f"{_escape(label)} ({pct})</text>"
-        )
-
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    """Render a PieChart as a donut, with the total in the centre."""
+    return _render_part_to_whole(pc, _tokens(theme), 0.6)
 
 
 # ---------------------------------------------------------------------------
@@ -2401,102 +2886,57 @@ def render_donut_svg(pc: PieChart, theme: dict[str, str] | None = None) -> str:
 
 
 def render_gauge_svg(gc: GaugeChart, theme: dict[str, str] | None = None) -> str:
-    """Render a GaugeChart as a semicircular gauge."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    muted = t.get("muted", "#5d6d7e")
+    """Render a semicircular meter: tinted track, filled arc, hero value."""
+    t = _tokens(theme)
+    fill = t["accent"]
+    track = _lighten(fill, 0.85)
+    parts, top = _chart_title(gc.title, t)
+    r, sw = 86.0, 16.0
+    cx, cy = r + sw / 2 + 4, top + r + sw / 2 + 4
+    span = (gc.max_val - gc.min_val) or 1.0
+    frac = max(0.0, min(1.0, (gc.value - gc.min_val) / span))
 
-    stroke_w = 22
-    half_stroke = stroke_w / 2
-    r = 100  # arc radius
-    pad_top = 15  # breathing room above title
-    title_h = 25 if gc.title else 0
-    arc_gap = 15  # gap between title baseline and arc top
-    pad_x = 30  # horizontal padding beyond arc endpoints
-    pad_bottom = 30  # space below arc for min/max labels
+    def pt(f: float) -> tuple[float, float]:
+        a = math.pi * (1 - f)
+        return cx + r * math.cos(a), cy - r * math.sin(a)
 
-    # Centre of the arc — everything aligns to this
-    cx = r + pad_x + half_stroke
-    cy = pad_top + title_h + arc_gap + r + half_stroke
-    width = cx * 2
-    height = cy + pad_bottom
-
-    # Arc endpoints (horizontal baseline of the semicircle)
-    sx = cx - r
-    ex = cx + r
-
-    parts: list[str] = []
-
-    # Background arc (light grey track) — semicircle from left to right
+    sx, sy = pt(0.0)
+    ex, ey = pt(1.0)
     parts.append(
-        f'<path d="M {sx},{cy} A {r},{r} 0 1 1 {ex},{cy}" '
-        f'stroke="#e9ecef" stroke-width="{stroke_w}" fill="none" '
-        f'stroke-linecap="butt"/>'
+        f'<path d="M {sx:.2f},{sy:.2f} A {r:g},{r:g} 0 0 1 {ex:.2f},{ey:.2f}" fill="none" '
+        f'stroke="{track}" stroke-width="{sw:g}" stroke-linecap="round"/>'
     )
-
-    # Value fraction
-    range_val = gc.max_val - gc.min_val
-    fraction = (gc.value - gc.min_val) / range_val if range_val > 0 else 0
-    fraction = max(0.0, min(1.0, fraction))
-
-    # Value arc — sweep from left to proportional position along upper semicircle
-    color = t.get("accent", t.get("primary", "#2563eb"))
-    if fraction > 0.005:
-        angle = math.pi - fraction * math.pi  # pi (left) → 0 (right)
-        vx = cx + r * math.cos(angle)
-        vy = cy - r * math.sin(angle)  # minus because SVG y-axis is inverted
-        # Value arc is always ≤ 180° (within one semicircle), so always short arc
+    if frac > 0:
+        vx, vy = pt(frac)
         parts.append(
-            f'<path d="M {sx},{cy} A {r},{r} 0 0 1 {vx:.1f},{vy:.1f}" '
-            f'stroke="{color}" stroke-width="{stroke_w}" fill="none" '
-            f'stroke-linecap="butt"/>'
+            f'<path d="M {sx:.2f},{sy:.2f} A {r:g},{r:g} 0 0 1 {vx:.2f},{vy:.2f}" fill="none" '
+            f'stroke="{fill}" stroke-width="{sw:g}" stroke-linecap="round"/>'
         )
-
-    # Title — drawn AFTER arcs so text renders on top (SVG z-order)
-    if gc.title:
-        title_y = pad_top + title_h  # baseline of title text
-        parts.append(
-            f'<text x="{cx}" y="{title_y}" text-anchor="middle" '
-            f'font-family="{font}" font-size="16" font-weight="700" '
-            f'fill="{body_color}">{_escape(gc.title)}</text>'
+    parts.append(_svg_text(cx, cy - 10, _fmt_num(gc.value), t, 30, weight=600, anchor="middle"))
+    parts.append(
+        _svg_text(
+            cx,
+            cy + 8,
+            gc.label or f"of {_fmt_num(gc.max_val)}",
+            t,
+            _FS_SM,
+            t["ink2"],
+            anchor="middle",
         )
-
-    # Value text — centred in the arc bowl
-    parts.append(
-        f'<text x="{cx}" y="{cy - 12}" text-anchor="middle" '
-        f'font-family="{font}" font-size="36" font-weight="700" '
-        f'fill="{body_color}">{gc.value:.0f}</text>'
-    )
-
-    # Subtitle — just below the value
-    label_text = gc.label or f"of {gc.max_val:.0f}"
-    parts.append(
-        f'<text x="{cx}" y="{cy + 12}" text-anchor="middle" '
-        f'font-family="{font}" font-size="12" fill="{muted}">'
-        f"{_escape(label_text)}</text>"
-    )
-
-    # Min / max labels — directly below arc endpoints, tight
-    label_y = cy + 22
-    parts.append(
-        f'<text x="{sx}" y="{label_y}" text-anchor="middle" '
-        f'font-family="{font}" font-size="11" fill="{muted}">'
-        f"{gc.min_val:.0f}</text>"
     )
     parts.append(
-        f'<text x="{ex}" y="{label_y}" text-anchor="middle" '
-        f'font-family="{font}" font-size="11" fill="{muted}">'
-        f"{gc.max_val:.0f}</text>"
+        _svg_text(
+            sx, cy + sw / 2 + 14, _fmt_num(gc.min_val), t, _FS_SM, t["chrome"], anchor="middle"
+        )
     )
-
-    svg_inner = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
+    parts.append(
+        _svg_text(
+            ex, cy + sw / 2 + 14, _fmt_num(gc.max_val), t, _FS_SM, t["chrome"], anchor="middle"
+        )
     )
-    # Constrain gauge to a reasonable size — it's a compact widget, not a full-width chart
-    return f'<div style="max-width:280px;margin:0 auto;">{svg_inner}</div>'
+    width = 2 * cx
+    height = cy + sw / 2 + 20
+    return _svg_root(width, height, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -2505,83 +2945,48 @@ def render_gauge_svg(gc: GaugeChart, theme: dict[str, str] | None = None) -> str
 
 
 def render_timeline_svg(tl: Timeline, theme: dict[str, str] | None = None) -> str:
-    """Render a Timeline to an SVG string."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    accent = t.get("accent", "#2e86c1")
-
+    """Render a vertical timeline: periods on the left, events beside a hairline axis."""
+    t = _tokens(theme)
     if not tl.entries:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+        return _svg_root(120, 40, _svg_text(0, 20, "No entries", t, color=t["ink2"]), t["font"])
+    parts, top = _chart_title(tl.title, t)
 
-    # Layout
-    left_margin = 30
-    top_margin = 50
-    row_height = 60
-    period_w = 100
-    event_w = 180
-
-    n_entries = len(tl.entries)
-    max_events = max(len(e.events) for e in tl.entries)
-
-    width = left_margin + period_w + event_w * max(max_events, 1) + 40
-    height = top_margin + n_entries * row_height + 20
-
-    parts: list[str] = []
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    if tl.title:
+    period_w = max(_text_w(e.period, _FS) for e in tl.entries) + 4
+    axis_x = period_w + 20
+    text_x = axis_x + 20
+    event_w = max([_text_w(ev, _FS) for e in tl.entries for ev in e.events] + [60.0])
+    dot_rows: list[float] = []
+    y = top + 10
+    section = None
+    for entry in tl.entries:
+        if entry.section and entry.section != section:
+            section = entry.section
+            if dot_rows:
+                y += 6
+            parts.append(_svg_text(text_x, y + 10, entry.section, t, _FS_SM, t["ink2"], 600))
+            y += 24
+        lines = entry.events or [""]
+        cy = y + 8
+        dot_rows.append(cy)
         parts.append(
-            f'<text x="{width / 2}" y="28" text-anchor="middle" '
-            f'font-family="{font}" font-size="14" font-weight="700" '
-            f'fill="{body_color}">{_escape(tl.title)}</text>'
+            _svg_text(axis_x - 18, cy + 4.2, entry.period, t, _FS, weight=600, anchor="end")
         )
+        for i, ev in enumerate(lines):
+            parts.append(_svg_text(text_x, cy + 4.2 + i * 18, ev, t, _FS, t["ink"]))
+        y += 18 * len(lines) + 16
 
-    # Vertical timeline line
-    line_x = left_margin + period_w
-    parts.append(
-        f'<line x1="{line_x}" y1="{top_margin}" '
-        f'x2="{line_x}" y2="{top_margin + n_entries * row_height - 20}" '
-        f'stroke="{accent}" stroke-width="2"/>'
+    axis = (
+        f'<line x1="{axis_x:g}" y1="{dot_rows[0]:g}" x2="{axis_x:g}" y2="{dot_rows[-1]:g}" '
+        f'stroke="{t["baseline"]}" stroke-width="1.5" stroke-linecap="round"/>'
     )
-
-    for i, entry in enumerate(tl.entries):
-        y = top_margin + i * row_height + row_height / 2
-
-        # Period label (left of line)
-        parts.append(
-            f'<text x="{line_x - 14}" y="{y + 4}" text-anchor="end" '
-            f'font-family="{font}" font-size="11" font-weight="700" '
-            f'fill="{body_color}">{_escape(entry.period)}</text>'
-        )
-
-        # Dot on timeline
-        parts.append(
-            f'<circle cx="{line_x}" cy="{y}" r="5" '
-            f'fill="{accent}" stroke="#ffffff" stroke-width="2"/>'
-        )
-
-        # Events (right of line)
-        for j, event in enumerate(entry.events):
-            ex = line_x + 18 + j * event_w
-            color = _PIE_COLORS[(i + j) % len(_PIE_COLORS)]
-            ew = max(len(event) * 6.5 + 16, 60)
-            parts.append(
-                f'<rect x="{ex}" y="{y - 14}" width="{ew}" height="28" '
-                f'rx="6" fill="{_lighten(color, 0.85)}" stroke="{color}" stroke-width="1"/>'
-            )
-            parts.append(
-                f'<text x="{ex + ew / 2}" y="{y + 4}" text-anchor="middle" '
-                f'font-family="{font}" font-size="9" fill="{body_color}">'
-                f"{_escape(event)}</text>"
-            )
-
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    dots = [
+        f'<circle cx="{axis_x:g}" cy="{cy:g}" r="5" fill="{t["term_fill"]}" '
+        f'stroke="#ffffff" stroke-width="2"/>'
+        for cy in dot_rows
+    ]
+    parts = [axis, *dots, *parts]
+    width = text_x + event_w + 8
+    return _svg_root(width, y - 6, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -2649,136 +3054,124 @@ def _resolve_gantt(gc: GanttChart) -> tuple[date, list[tuple[float, float]]]:
 
 
 def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str:
-    """Render a GanttChart to an SVG string."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-
+    """Render a GanttChart: date-scaled bars coloured by section on a calendar axis."""
+    t = _tokens(theme)
     if not gc.tasks:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
-
-    # Layout
-    left_margin = 30
-    label_w = 140
-    top_margin = 62
-    row_h = 28
-    bar_h = 18
-    chart_w = 400
-
-    # Group tasks by section
-    sections: list[tuple[str, list[GanttTask]]] = []
-    current_sec = ""
-    current_tasks: list[GanttTask] = []
-    for task in gc.tasks:
-        if task.section != current_sec:
-            if current_tasks:
-                sections.append((current_sec, current_tasks))
-            current_sec = task.section
-            current_tasks = []
-        current_tasks.append(task)
-    if current_tasks:
-        sections.append((current_sec, current_tasks))
-
-    total_rows = sum(len(tasks) + (1 if sec else 0) for sec, tasks in sections)
-    height = top_margin + total_rows * row_h + 30
-    width = left_margin + label_w + chart_w + 40
+        return _svg_root(120, 40, _svg_text(0, 20, "No tasks", t, color=t["ink2"]), t["font"])
 
     origin, timeline = _resolve_gantt(gc)
     min_day = min(a for a, _ in timeline)
     max_day = max(b for _, b in timeline)
+
+    sections: list[str] = []
+    for task in gc.tasks:
+        if task.section not in sections:
+            sections.append(task.section)
+    sec_color = {s: _CATEGORICAL[i % len(_CATEGORICAL)] for i, s in enumerate(sections)}
+
+    parts, top = _chart_title(gc.title, t)
+    label_w = min(
+        max([_text_w(task.name, 11) for task in gc.tasks] + [_text_w(s, 11) for s in sections])
+        + 20,
+        200,
+    )
+    chart_w = max(320.0, 570.0 - label_w)
+    row_h, bar_h = 24.0, 12.0
+    axis_h = 20.0
+    x0 = label_w
     px_per_day = chart_w / max(max_day - min_day, 1.0)
 
-    parts: list[str] = []
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
+    def sx(day: float) -> float:
+        return x0 + (day - min_day) * px_per_day
 
-    if gc.title:
+    rows: list[tuple[str, object]] = []
+    for sec in sections:
+        if sec:
+            rows.append(("section", sec))
+        for idx, task in enumerate(gc.tasks):
+            if task.section == sec:
+                rows.append(("task", idx))
+    body_top = top + axis_h
+    body_h = len(rows) * row_h
+
+    # Calendar axis: hairline gridlines, labels above
+    ticks, style = _gantt_ticks(origin, min_day, max_day)
+    last_year = None
+    for day in ticks:
+        if day < min_day - 0.01 or day > max_day + 0.01:
+            continue
+        gx = sx(day)
+        d = origin + timedelta(days=round(day))
+        if style == "day":
+            text = f"{d.day} {d:%b}"
+        else:
+            text = f"{d:%b}" if d.year == last_year else f"{d:%b} {d.year}"
+            last_year = d.year
         parts.append(
-            f'<text x="{width / 2}" y="28" text-anchor="middle" '
-            f'font-family="{font}" font-size="14" font-weight="700" '
-            f'fill="{body_color}">{_escape(gc.title)}</text>'
+            f'<line x1="{gx:.1f}" y1="{body_top:g}" x2="{gx:.1f}" y2="{body_top + body_h:g}" '
+            f'stroke="{t["grid"]}" stroke-width="1"/>'
         )
+        parts.append(_svg_text(gx, body_top - 7, text, t, 10, t["chrome"], anchor="middle"))
 
-    # Date axis with gridlines
-    span = max_day - min_day
-    ticks = 5
-    label_fmt = "%b %Y" if span > 150 else "%d %b"
-    for i in range(ticks + 1):
-        day = min_day + span * i / ticks
-        gx = left_margin + label_w + (day - min_day) * px_per_day
-        parts.append(
-            f'<line x1="{gx:.1f}" y1="{top_margin - 6}" x2="{gx:.1f}" '
-            f'y2="{top_margin + total_rows * row_h}" stroke="#d5dbe1" stroke-width="0.6"/>'
-        )
-        anchor = "start" if i == 0 else ("end" if i == ticks else "middle")
-        parts.append(
-            f'<text x="{gx:.1f}" y="{top_margin - 10}" text-anchor="{anchor}" '
-            f'font-family="{font}" font-size="8" fill="#5d6d7e">'
-            f"{(origin + timedelta(days=round(day))).strftime(label_fmt)}</text>"
-        )
-
-    # Draw tasks
-    y_cursor = top_margin
-    task_idx = 0
-    for sec_name, tasks in sections:
-        if sec_name:
-            # Section header
-            parts.append(
-                f'<rect x="{left_margin}" y="{y_cursor}" '
-                f'width="{label_w + chart_w}" height="{row_h}" '
-                f'fill="{_lighten(t.get("primary", "#1b4f72"), 0.9)}"/>'
-            )
-            parts.append(
-                f'<text x="{left_margin + 8}" y="{y_cursor + row_h / 2 + 4}" '
-                f'font-family="{font}" font-size="10" font-weight="700" '
-                f'fill="{body_color}">{_escape(sec_name)}</text>'
-            )
-            y_cursor += row_h
-
-        for i, task in enumerate(tasks):
-            y = y_cursor
-            color = _PIE_COLORS[task_idx % len(_PIE_COLORS)]
-
-            # Alternating row background
-            if task_idx % 2 == 0:
+    y = body_top
+    first = True
+    for kind, ref in rows:
+        if kind == "section":
+            if not first:
                 parts.append(
-                    f'<rect x="{left_margin}" y="{y}" width="{label_w + chart_w}" '
-                    f'height="{row_h}" fill="#000000" fill-opacity="0.025"/>'
+                    f'<line x1="0" y1="{y:g}" x2="{x0 + chart_w:g}" y2="{y:g}" '
+                    f'stroke="{t["baseline"]}" stroke-width="1"/>'
                 )
-
-            # Task label
+            parts.append(_svg_text(0, y + row_h / 2 + 4, str(ref), t, 11, t["ink"], 600))
+            y += row_h
+            first = False
+            continue
+        idx = int(ref)  # type: ignore[call-overload]
+        task = gc.tasks[idx]
+        first = False
+        a, b = timeline[idx]
+        color = _CRITICAL if "crit" in task.tags else sec_color[task.section]
+        parts.append(
+            _svg_text(12 if task.section else 0, y + row_h / 2 + 4, task.name, t, 11, t["ink2"])
+        )
+        cy = y + row_h / 2
+        if "milestone" in task.tags or (b - a) <= 0.26:
+            mx, s = sx(a), 6.5
             parts.append(
-                f'<text x="{left_margin + 8}" y="{y + row_h / 2 + 4}" '
-                f'font-family="{font}" font-size="9" fill="{body_color}">'
-                f"{_escape(task.name)}</text>"
+                f'<path d="M {mx:.1f},{cy - s:.1f} L {mx + s:.1f},{cy:.1f} L {mx:.1f},{cy + s:.1f} '
+                f'L {mx - s:.1f},{cy:.1f} Z" fill="{color}"/>'
             )
-
-            t_start, t_end = timeline[task_idx]
-            bar_x = left_margin + label_w + (t_start - min_day) * px_per_day
-            bar_w = max(4.0, (t_end - t_start) * px_per_day)
-            bar_y = y + (row_h - bar_h) / 2
-
             parts.append(
-                f'<rect x="{bar_x:.1f}" y="{bar_y}" width="{bar_w:.1f}" height="{bar_h}" '
-                f'rx="4" fill="{color}"/>'
+                _svg_text(
+                    mx + s + 6,
+                    cy + 4,
+                    f"{(origin + timedelta(days=round(a))).day} "
+                    f"{(origin + timedelta(days=round(a))):%b}",
+                    t,
+                    _FS_SM,
+                    t["ink2"],
+                )
             )
-            bar_label = task.duration if _gantt_days(task.duration) else f"{t_end - t_start:g}d"
-            if bar_w >= len(bar_label) * 5 + 8:
+        else:
+            bx, bw = sx(a), max((b - a) * px_per_day, 3.0)
+            opacity = ' fill-opacity="0.4"' if "done" in task.tags else ""
+            parts.append(
+                f'<rect x="{bx:.1f}" y="{cy - bar_h / 2:g}" width="{bw:.1f}" height="{bar_h:g}" '
+                f'rx="3" fill="{color}"{opacity}/>'
+            )
+            dur = task.duration if _gantt_days(task.duration) else f"{b - a:g}d"
+            if bw >= _text_w(dur, 9.5) + 12 and "done" not in task.tags:
                 parts.append(
-                    f'<text x="{bar_x + bar_w / 2:.1f}" y="{bar_y + bar_h / 2 + 3}" '
-                    f'text-anchor="middle" '
-                    f'font-family="{font}" font-size="8" font-weight="600" '
-                    f'fill="#ffffff">{_escape(bar_label)}</text>'
+                    _svg_text(bx + bw / 2, cy + 3.5, dur, t, 9.5, _text_on(color, t), 600, "middle")
                 )
+            else:
+                parts.append(_svg_text(bx + bw + 5, cy + 3.5, dur, t, 9.5, t["ink2"]))
+        y += row_h
 
-            y_cursor += row_h
-            task_idx += 1
-
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    # Room for labels drawn past the last date (milestones, durations beside short bars)
+    width = x0 + chart_w + 52
+    height = body_top + body_h + 6
+    return _svg_root(width, height, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -2786,123 +3179,165 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
 # ---------------------------------------------------------------------------
 
 
-def _layout_mindmap(
-    node: MindNode, x: float, y: float, level: int = 0, y_offset: list[float] | None = None
-) -> float:
-    """Recursively position mindmap nodes. Returns total height used."""
-    if y_offset is None:
-        y_offset = [y]
-
-    node.x = x
-    node.y = y_offset[0]
-
-    h_spacing = 140
-    v_spacing = 20
-    node_h = 28
-
-    if not node.children:
-        y_offset[0] += node_h + v_spacing
-        return node_h + v_spacing
-
-    total_h: float = 0
-    child_start_y = y_offset[0]
-    y_offset[0] = child_start_y
-
-    for child in node.children:
-        ch = _layout_mindmap(child, x + h_spacing, 0, level + 1, y_offset)
-        total_h += ch
-
-    # Center this node vertically among its children
-    if node.children:
-        first_child_y = node.children[0].y
-        last_child_y = node.children[-1].y
-        node.y = (first_child_y + last_child_y) / 2
-
-    return max(total_h, node_h + v_spacing)
-
-
 def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> str:
-    """Render a mind map from a root MindNode."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    muted = t.get("muted", "#5d6d7e")
+    """Render a mind map balanced left and right of a central topic."""
+    t = _tokens(theme)
 
-    # Layout
-    _layout_mindmap(root, 40, 40)
-
-    # Collect all nodes for bounds
-    all_nodes: list[MindNode] = []
-
-    def _collect(n: MindNode) -> None:
-        all_nodes.append(n)
-        for c in n.children:
-            _collect(c)
-
-    _collect(root)
-
-    if not all_nodes:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
-
-    # Calculate sizes
-    def _node_w(n: MindNode) -> float:
-        return max(len(n.label) * 7 + 24, 60)
-
-    max_x = max(n.x + _node_w(n) for n in all_nodes) + 30
-    max_y = max(n.y + 30 for n in all_nodes) + 30
-    width = max(max_x, 200)
-    height = max(max_y, 100)
-
-    parts: list[str] = []
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    # Draw edges first
-    def _draw_edges(node: MindNode, depth: int = 0) -> None:
-        nw = _node_w(node)
-        for child in node.children:
-            x1 = node.x + nw
-            y1 = node.y + 15
-            x2 = child.x
-            y2 = child.y + 15
-            mid_x = (x1 + x2) / 2
-            parts.append(
-                f'<path d="M {x1},{y1} C {mid_x},{y1} {mid_x},{y2} {x2},{y2}" '
-                f'stroke="{muted}" stroke-width="1.5" fill="none"/>'
-            )
-            _draw_edges(child, depth + 1)
-
-    _draw_edges(root)
-
-    # Draw nodes
-    def _draw_nodes(node: MindNode, depth: int = 0) -> None:
-        nw = _node_w(node)
-        nh = 30
-        color = _PIE_COLORS[depth % len(_PIE_COLORS)] if depth > 0 else t.get("primary", "#1b4f72")
-        fill = _lighten(color, 0.85) if depth > 0 else color
-        text_color = body_color if depth > 0 else "#ffffff"
-        rx = "15" if depth == 0 else "8"
-
-        parts.append(
-            f'<rect x="{node.x}" y="{node.y}" width="{nw}" height="{nh}" '
-            f'rx="{rx}" fill="{fill}" stroke="{color}" stroke-width="1.5"/>'
+    def size(node: MindNode, depth: int) -> tuple[float, float]:
+        fs = 13.0 if depth == 0 else _FS if depth == 1 else 11.5
+        pad_x = 18 if depth == 0 else 12
+        return _text_w(node.label, fs) + 2 * pad_x, (
+            34.0 if depth == 0 else 28.0 if depth == 1 else 24.0
         )
+
+    def leaves(node: MindNode) -> int:
+        return max(1, sum(leaves(c) for c in node.children))
+
+    # Split top-level branches between the two sides, balancing leaf counts
+    right: list[tuple[int, MindNode]] = []
+    left: list[tuple[int, MindNode]] = []
+    rl = ll = 0
+    for i, child in enumerate(root.children):
+        if rl <= ll:
+            right.append((i, child))
+            rl += leaves(child)
+        else:
+            left.append((i, child))
+            ll += leaves(child)
+
+    gap_x, gap_y = 40.0, 8.0
+    boxes: list[tuple[MindNode, int, float, float, float, float, str]] = (
+        []
+    )  # node, depth, x, y, w, h, color
+    links: list[tuple[float, float, float, float, str, int]] = []
+
+    def col_widths(branches: list[tuple[int, MindNode]]) -> list[float]:
+        widths: dict[int, float] = defaultdict(float)
+
+        def walk(node: MindNode, depth: int) -> None:
+            widths[depth] = max(widths[depth], size(node, depth)[0])
+            for c in node.children:
+                walk(c, depth + 1)
+
+        for _, b in branches:
+            walk(b, 1)
+        return [widths[d] for d in range(1, max(widths, default=0) + 1)]
+
+    def place(
+        node: MindNode, depth: int, side: int, offsets: list[float], y: float, color: str
+    ) -> tuple[float, float]:
+        """Lay out a subtree; return (centre y, next free y)."""
+        w, h = size(node, depth)
+        if node.children:
+            cys = []
+            cursor = y
+            for c in node.children:
+                ccy, cursor = place(c, depth + 1, side, offsets, cursor, color)
+                cys.append(ccy)
+            cy = (cys[0] + cys[-1]) / 2
+            nxt = max(cursor, cy + h / 2 + gap_y)
+        else:
+            cy = y + h / 2
+            nxt = y + h + gap_y
+        inner = offsets[depth - 1]
+        x = inner if side > 0 else -inner - w
+        boxes.append((node, depth, x, cy - h / 2, w, h, color))
+        return cy, nxt
+
+    rw, lw = size(root, 0)
+    sides: dict[int, tuple[float, float]] = {}
+    for side, branches in ((1, right), (-1, left)):
+        if not branches:
+            continue
+        widths = col_widths(branches)
+        offsets, acc = [], rw / 2 + gap_x + 12
+        for wcol in widths:
+            offsets.append(acc)
+            acc += wcol + gap_x
+        y = 0.0
+        tops = []
+        for i, branch in branches:
+            color = _CATEGORICAL[i % len(_CATEGORICAL)]
+            cy, y = place(branch, 1, side, offsets, y, color)
+            tops.append(cy)
+            y += 10
+        sides[side] = (0.0, y)
+
+    # Centre each side vertically on the root
+    side_h = {s: h for s, (_, h) in sides.items()}
+    total_h = max(side_h.values(), default=lw)
+    shifted = []
+    for node, depth, x, by, w, h, color in boxes:
+        side = 1 if x >= 0 else -1
+        shift = (total_h - side_h.get(side, total_h)) / 2
+        shifted.append((node, depth, x, by + shift, w, h, color))
+    boxes = shifted
+    root_cy = total_h / 2 - 5
+    pos = {id(b[0]): b for b in boxes}
+
+    # Links from each parent edge to child edge (smooth cubic curves)
+    def edge_point(node: MindNode, side: int, outward: bool) -> tuple[float, float]:
+        if node is root:
+            return (side * rw / 2, root_cy)
+        _, _, x, by, w, h, _ = pos[id(node)]
+        cx = x + w if (side > 0) == outward else x
+        return (cx, by + h / 2)
+
+    def link_walk(node: MindNode, side: int) -> None:
+        for c in node.children:
+            sx, sy = edge_point(node, side, True)
+            ex, ey = edge_point(c, side, False)
+            color = pos[id(c)][6]
+            depth = pos[id(c)][1]
+            links.append((sx, sy, ex, ey, color, depth))
+            link_walk(c, side)
+
+    for side, branches in ((1, right), (-1, left)):
+        for _, b in branches:
+            sx, sy = edge_point(root, side, True)
+            ex, ey = edge_point(b, side, False)
+            links.append((sx, sy, ex, ey, pos[id(b)][6], 1))
+            link_walk(b, side)
+
+    xs = [x for _, _, x, _, _, _, _ in boxes] + [-rw / 2]
+    xe = [x + w for _, _, x, _, w, _, _ in boxes] + [rw / 2]
+    ys = [by for _, _, _, by, _, _, _ in boxes] + [root_cy - lw / 2]
+    ye = [by + h for _, _, _, by, _, h, _ in boxes] + [root_cy + lw / 2]
+    pad = 6.0
+    ox, oy = min(xs) - pad, min(ys) - pad
+    parts = [f'<g transform="translate({-ox:g},{-oy:g})">']
+    for sx, sy, ex, ey, color, depth in links:
+        mx = (sx + ex) / 2
         parts.append(
-            f'<text x="{node.x + nw / 2}" y="{node.y + nh / 2 + 4}" '
-            f'text-anchor="middle" '
-            f'font-family="{font}" font-size="10" font-weight="{700 if depth == 0 else 500}" '
-            f'fill="{text_color}">{_escape(node.label)}</text>'
+            f'<path d="M {sx:.1f},{sy:.1f} C {mx:.1f},{sy:.1f} {mx:.1f},{ey:.1f} {ex:.1f},{ey:.1f}" '
+            f'fill="none" stroke="{_lighten(color, 0.25 if depth == 1 else 0.45)}" '
+            f'stroke-width="{2 if depth == 1 else 1.5}" stroke-linecap="round"/>'
         )
-        for child in node.children:
-            _draw_nodes(child, depth + 1)
-
-    _draw_nodes(root)
-
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
+    parts.append(
+        f'<rect x="{-rw / 2:g}" y="{root_cy - lw / 2:g}" width="{rw:g}" height="{lw:g}" '
+        f'rx="{lw / 2:g}" fill="{t["term_fill"]}"/>'
     )
-    return svg
+    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, "#ffffff", 600, "middle"))
+    for node, depth, x, by, w, h, color in boxes:
+        if depth == 1:
+            fill, stroke, fs, weight = _lighten(color, 0.86), _lighten(color, 0.35), _FS, 500
+        else:
+            fill, stroke, fs, weight = "#ffffff", _lighten(color, 0.6), 11.5, 400
+        parts.append(
+            f'<rect x="{x:g}" y="{by:g}" width="{w:g}" height="{h:g}" rx="{h / 2:g}" '
+            f'fill="{fill}" stroke="{stroke}" stroke-width="1.25"/>'
+        )
+        parts.append(
+            _svg_text(
+                x + w / 2, by + h / 2 + fs * 0.35, node.label, t, fs, weight=weight, anchor="middle"
+            )
+        )
+    parts.append("</g>")
+    return _svg_root(max(xe) - ox + pad, max(ye) - oy + pad, parts, t["font"])
+
+
+_ER_LEFT = {"||": "one", "|o": "zero_one", "o|": "zero_one", "}|": "one_many", "}o": "zero_many"}
+_ER_RIGHT = {"||": "one", "o|": "zero_one", "|o": "zero_one", "|{": "one_many", "o{": "zero_many"}
 
 
 # ---------------------------------------------------------------------------
@@ -2911,132 +3346,122 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
 
 
 def render_er_svg(erd: ERDiagram, theme: dict[str, str] | None = None) -> str:
-    """Render an ER diagram to SVG."""
-    t = {**DEFAULT_THEME, **(theme or {})}
-    font = t.get("font", DEFAULT_THEME["font"])
-    body_color = t.get("body", "#1a1a2e")
-    muted = t.get("muted", "#5d6d7e")
-    primary = t.get("primary", "#1b4f72")
-    accent = t.get("accent", "#2e86c1")
+    """Render an ER diagram: entity cards laid out in ranks, crow's-foot relationships."""
+    t = _tokens(theme)
+    if not erd.entities:
+        return _svg_root(120, 40, _svg_text(0, 20, "No entities", t, color=t["ink2"]), t["font"])
 
-    entities = list(erd.entities.values())
-    if not entities:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+    head_h, row_h = 28.0, 22.0
+    cards: dict[str, tuple[float, float, float, float]] = {}  # name -> (w, h, type_col, key_col)
+    for name, ent in erd.entities.items():
+        types = [a.split(" ", 1)[0] for a in ent.attributes]
+        names = [a.split(" ", 1)[1] if " " in a else "" for a in ent.attributes]
+        type_col = max([_text_w(x, _FS_SM) for x in types] + [0.0])
+        name_col = max([_text_w(x, 11.5) for x in names] + [0.0])
+        key_col = max([_text_w(k, 9.5) for k in ent.keys if k] + [0.0])
+        w = max(
+            _text_w(name, _FS) + 32,
+            12 + type_col + 14 + name_col + (key_col + 16 if key_col else 0) + 12,
+            120,
+        )
+        h = head_h + (len(ent.attributes) * row_h + 4 if ent.attributes else 0)
+        cards[name] = (w, h, type_col, key_col)
 
-    # Layout entities in a grid
-    padding = 30
-    entity_w = 160
-    entity_gap_x = 80
-    entity_gap_y = 60
-    cols = min(len(entities), 3)
-    rows = math.ceil(len(entities) / cols)
-
-    # Calculate entity heights based on attributes. Use a uniform row height
-    # (the tallest entity) so entities in the same row align and the canvas is
-    # tall enough for entities with many attributes.
-    header_h = 28
-    ent_heights: list[float] = [
-        header_h + max(len(ent.attributes) * 18, 18) + 8 for ent in entities
-    ]
-    row_h = max([80.0, *ent_heights])
-
-    entity_positions: dict[str, tuple[float, float, float, float]] = {}
-    for i, ent in enumerate(entities):
-        col = i % cols
-        row = i // cols
-        x: float = padding + col * (entity_w + entity_gap_x)
-        y: float = padding + row * (row_h + entity_gap_y)
-        entity_positions[ent.name] = (x, y, entity_w, ent_heights[i])
-
-    width = padding * 2 + cols * (entity_w + entity_gap_x) - entity_gap_x
-    height = padding * 2 + rows * row_h + max(rows - 1, 0) * entity_gap_y
-
-    parts: list[str] = []
-    parts.append(_make_arrow_defs(t, "er-"))
-    parts.append(f'<rect width="{width}" height="{height}" fill="#ffffff" rx="4"/>')
-
-    # Draw relationships (behind entities)
+    fc = Flowchart(direction="LR", end_marker_space=20.0)
+    for name, (w, h, _, _) in cards.items():
+        fc.nodes[name] = Node(name, "", "fixed", w=w, h=h)
     for rel in erd.relations:
-        pos_a = entity_positions.get(rel.entity_a)
-        pos_b = entity_positions.get(rel.entity_b)
-        if not pos_a or not pos_b:
+        fc.edges.append(Edge(rel.entity_a, rel.entity_b, rel.label))
+    layout(fc, t)
+    ports = _assign_ports(fc)
+
+    color = t["edge"]
+    xs0 = [n.x for n in fc.nodes.values()]
+    ys0 = [n.y for n in fc.nodes.values()]
+    xs1 = [n.x + n.w for n in fc.nodes.values()]
+    ys1 = [n.y + n.h for n in fc.nodes.values()]
+    for pts in fc.waypoints.values():
+        xs0 += [p[0] for p in pts]
+        xs1 += [p[0] for p in pts]
+        ys0 += [p[1] for p in pts]
+        ys1 += [p[1] for p in pts]
+    pad = 10.0
+    ox, oy = min(xs0) - pad, min(ys0) - pad
+    parts = [_er_marker_defs(color), f'<g transform="translate({-ox:g},{-oy:g})">']
+
+    for i, rel in enumerate(erd.relations):
+        src, dst = fc.nodes.get(rel.entity_a), fc.nodes.get(rel.entity_b)
+        if not src or not dst:
             continue
-        ax, ay, aw, ah = pos_a
-        bx, by, bw, bh = pos_b
-        # Connect from right side of A to left side of B
-        x1 = ax + aw
-        y1 = ay + ah / 2
-        x2 = bx
-        y2 = by + bh / 2
-
-        stroke_style = 'stroke-dasharray="5 3"' if rel.style == "dotted" else ""
-        mid_x = (x1 + x2) / 2
-        parts.append(
-            f'<path d="M {x1},{y1} L {mid_x},{y1} L {mid_x},{y2} L {x2},{y2}" '
-            f'stroke="{muted}" stroke-width="1.5" fill="none" {stroke_style}/>'
+        d, label_xy = _routed_path(
+            src,
+            dst,
+            fc.waypoints.get(i, []),
+            True,
+            rel.label,
+            ports.get((i, "out")),
+            ports.get((i, "in")),
         )
-
-        # Cardinality markers
-        if rel.card_a:
-            parts.append(
-                f'<text x="{x1 + 6}" y="{y1 - 6}" '
-                f'font-family="{font}" font-size="9" fill="{accent}">'
-                f"{_escape(rel.card_a)}</text>"
-            )
-        if rel.card_b:
-            parts.append(
-                f'<text x="{x2 - 6}" y="{y2 - 6}" text-anchor="end" '
-                f'font-family="{font}" font-size="9" fill="{accent}">'
-                f"{_escape(rel.card_b)}</text>"
-            )
-
-        # Relationship label
+        dash = ' stroke-dasharray="5 3"' if rel.style == "dotted" else ""
+        parts.append(
+            f'<path d="{d}" fill="none" stroke="{color}" stroke-width="1.25"{dash} '
+            f'marker-start="url(#er-{rel.card_a}-s)" marker-end="url(#er-{rel.card_b})"/>'
+        )
         if rel.label:
-            lx = (x1 + x2) / 2
-            ly = (y1 + y2) / 2 - 8
-            parts.append(
-                f'<text x="{lx}" y="{ly}" text-anchor="middle" '
-                f'font-family="{font}" font-size="9" font-style="italic" '
-                f'fill="{muted}">{_escape(rel.label)}</text>'
+            lx, ly = label_xy or (
+                (src.x + src.w / 2 + dst.x + dst.w / 2) / 2,
+                (src.y + src.h / 2 + dst.y + dst.h / 2) / 2 + _FS_SM * 0.35,
             )
-
-    # Draw entities
-    for ent in entities:
-        pos = entity_positions[ent.name]
-        x, y, w, h = pos
-
-        # Entity box
-        parts.append(
-            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" '
-            f'rx="4" fill="#ffffff" stroke="{primary}" stroke-width="1.5"/>'
-        )
-
-        # Header bar
-        parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="28" ' f'rx="4" fill="{primary}"/>')
-        # Fix bottom corners of header
-        parts.append(f'<rect x="{x}" y="{y + 14}" width="{w}" height="14" fill="{primary}"/>')
-
-        parts.append(
-            f'<text x="{x + w / 2}" y="{y + 18}" text-anchor="middle" '
-            f'font-family="{font}" font-size="11" font-weight="700" '
-            f'fill="#ffffff">{_escape(ent.name)}</text>'
-        )
-
-        # Attributes
-        for j, attr in enumerate(ent.attributes):
-            ay = y + 28 + j * 18 + 14
+            lw = _text_w(rel.label, _FS_SM) + 10
             parts.append(
-                f'<text x="{x + 10}" y="{ay}" '
-                f'font-family="{font}" font-size="9" fill="{body_color}">'
-                f"{_escape(attr)}</text>"
+                f'<rect x="{lx - lw / 2:g}" y="{ly - 11:g}" width="{lw:g}" height="15" rx="3" fill="#ffffff"/>'
             )
+            parts.append(_svg_text(lx, ly, rel.label, t, _FS_SM, t["ink2"], anchor="middle"))
 
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" '
-        f'viewBox="0 0 {width} {height}" '
-        f'preserveAspectRatio="xMidYMid meet">\n' + "\n".join(parts) + "\n</svg>"
-    )
-    return svg
+    for name, ent in erd.entities.items():
+        node = fc.nodes[name]
+        x, y, w, h = node.x, node.y, node.w, node.h
+        _, _, type_col, _key_col = cards[name]
+        r = 6.0
+        parts.append(
+            f'<rect x="{x:g}" y="{y + 1.5:g}" width="{w:g}" height="{h:g}" rx="{r:g}" '
+            f'fill="#0b1f33" fill-opacity="0.07"/>'
+        )
+        parts.append(
+            f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{r:g}" fill="#ffffff" '
+            f'stroke="{t["node_stroke"]}" stroke-width="1.25"/>'
+        )
+        hb = head_h if ent.attributes else h
+        rb = 0.0 if ent.attributes else r
+        parts.append(
+            f'<path d="M {x:g},{y + hb - rb:g} V {y + r:g} Q {x:g},{y:g} {x + r:g},{y:g} H {x + w - r:g} '
+            f"Q {x + w:g},{y:g} {x + w:g},{y + r:g} V {y + hb - rb:g} "
+            + (
+                f"Q {x + w:g},{y + hb:g} {x + w - r:g},{y + hb:g} H {x + r:g} Q {x:g},{y + hb:g} {x:g},{y + hb - r:g} "
+                if rb
+                else f"H {x:g} "
+            )
+            + f'Z" fill="{t["term_fill"]}"/>'
+        )
+        parts.append(_svg_text(x + w / 2, y + hb / 2 + 4.3, name, t, _FS, "#ffffff", 600, "middle"))
+        for k, (attr, key) in enumerate(
+            zip(ent.attributes, ent.keys or [""] * len(ent.attributes))
+        ):
+            ry = y + head_h + 2 + k * row_h
+            typ, _, aname = attr.partition(" ")
+            if k:
+                parts.append(
+                    f'<line x1="{x + 1:g}" y1="{ry:g}" x2="{x + w - 1:g}" y2="{ry:g}" '
+                    f'stroke="#eef0f2" stroke-width="1"/>'
+                )
+            parts.append(_svg_text(x + 12, ry + row_h / 2 + 3.8, typ, t, _FS_SM, t["chrome"]))
+            parts.append(_svg_text(x + 12 + type_col + 14, ry + row_h / 2 + 4, aname, t, 11.5))
+            if key:
+                parts.append(
+                    _svg_text(x + w - 12, ry + row_h / 2 + 3.5, key, t, 9.5, t["ink2"], 700, "end")
+                )
+    parts.append("</g>")
+    return _svg_root(max(xs1) - ox + pad, max(ys1) - oy + pad, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -3194,6 +3619,13 @@ def _unescape_mermaid_source(source: str) -> str:
     )
 
 
+def _wrap_diagram(svg: str) -> str:
+    """Block wrapper that keeps a diagram at its natural size, shrinking to fit."""
+    width = svg_natural_width(svg)
+    size = f"width:{width:.0f}px;max-width:100%;" if width else ""
+    return f'<div class="mermaid-diagram" style="{size}margin:10pt auto 14pt auto;">{svg}</div>'
+
+
 def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     """Replace all Mermaid code blocks in HTML with rendered SVGs.
 
@@ -3207,6 +3639,6 @@ def process_html(html: str, theme: dict[str, str] | None = None) -> str:
         except UnsupportedDiagramError as exc:
             logger.warning("Mermaid: %s; leaving the source as a code block", exc)
             return m.group(0)
-        return f'<div class="mermaid-diagram" style="text-align:center;margin:8pt 0 12pt 0;">{svg}</div>'
+        return _wrap_diagram(svg)
 
     return _MERMAID_BLOCK_RE.sub(_replace, html)

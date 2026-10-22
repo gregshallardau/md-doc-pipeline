@@ -945,9 +945,38 @@ drawing is supported:
 | `subgraph id [Title]`, `subgraph "Title"`, nested `subgraph` | framed groups |
 
 Nodes are laid out in ranks with crossings minimised, long and looping edges run in their own
-lanes, and edges leaving one node fan out instead of sharing a line. Nodes use the theme's
-primary colour (decisions use the accent); override individual nodes with `classDef` or `style`.
-A leading YAML front-matter block or `%%{init: ...}%%` line is accepted and ignored.
+lanes, and edges leaving one node fan out instead of sharing a line. Override individual nodes
+with `classDef` or `style`. A leading YAML front-matter block or `%%{init: ...}%%` line is
+accepted and ignored.
+
+**How diagrams look.** Every diagram type shares one design system, so a document's diagrams
+read as a set:
+
+- *Size.* A diagram renders at its natural size, with 12px labels that sit beside body text, and
+  only shrinks when it is wider than the text column. Word and PowerPoint use the same size.
+- *Structural diagrams* (flowchart, state, sequence, ER, timeline, mind map) take their colours
+  from the theme: light brand-tinted cards with a hairline border, the primary colour for start
+  and end shapes and ER headers, and the accent for decisions.
+- *Data charts* (pie, donut, bar, Gantt) use a fixed eight-colour categorical palette, in an
+  order chosen so neighbouring colours stay distinguishable with colour-vision deficiency. Past
+  eight slices the smallest fold into "Other". Labels and values are always in text colours,
+  never the series colour.
+- Bars are thin with rounded ends, gridlines are solid hairlines, axis ticks are round numbers
+  (0, 50, 100), large numbers are compacted (1.3K, 2.5M), and values are labelled only where
+  they fit.
+
+**Other diagram syntax.**
+
+| Diagram | Supported beyond the basics |
+|---------|------------------------------|
+| Sequence | `participant A as Alice`, `actor`, `autonumber`, `Note left of / right of / over A,B`, `loop` / `alt` / `else` / `opt` / `par` / `and` / `critical` / `break` / `rect` blocks, `activate` / `deactivate` and `->>+` / `-->>-`, arrows `->>` `-->>` `->` `-->` `-x` `--x` `-)` `--)` `<<->>` |
+| Pie / donut | `pie showData title …` on the first line; legend with percentages (and values with `showData`) |
+| Bar | `xychart-beta`, `title`, `x-axis "Title" [..]`, `y-axis "Title" 0 --> 200`, several `bar [..]` and `line [..]` series, `horizontal` |
+| Gauge | `title`, `value`, `min`, `max`, `label`, written as `value 72` or `value: 72` |
+| Gantt | `done`, `active`, `crit` and `milestone` tags, `after id`, durations or end dates; bars coloured by section on a calendar-aligned axis |
+| ER | attribute keys (`int id PK`, `string ref FK`, `PK,FK`), identifying `--` and non-identifying `..` links, crow's-foot ends for every cardinality |
+| Timeline | `title`, `section`, several events per period (`2022 : A : B`, or a line starting with `:`) |
+| Mind map | node shapes `((x))`, `(x)`, `[x]`, `{{x}}`, `))x((`; branches balanced either side of the root, one colour per branch |
 
 Diagram types that have no renderer here (`classDiagram`, `journey`, `gitGraph`,
 `quadrantChart`, `sankey`, `block`, `C4*` and similar) are left as an ordinary code block, with a
@@ -1876,7 +1905,9 @@ asset cascade and becomes `url("file://…")`.
 
 - **Mermaid diagrams** take their colours from the theme as hex literals: primary from
   `.cover-title { color }`, else `h1 { color }`, else `th { background }`; accent from `h2`,
-  `a` or `.cover-label`; muted from `h3` or `em`; text from `body`.
+  `a` or `.cover-label`; text colour and font from `body`. Card fills, borders and frames are
+  tints derived from these. Data charts keep a fixed accessible palette (see
+  [Diagrams](#markdown-diagrams-mermaid)).
 - **PDF form grids** use the same primary colour (see [Forms](#themes-forms)).
 
 `var(--x)`, `rgb()` and named colours are not read for these. Use hex literals.
