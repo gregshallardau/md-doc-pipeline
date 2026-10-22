@@ -200,6 +200,8 @@
       throw error;
     }
     if (data.artifact) data.artifact.url = workspaceUrl(data.artifact.url);
+    // The quick "visible page" previews are artifacts too and need the workspace.
+    for (const page of data.preview_pages ?? []) page.url = workspaceUrl(page.url);
     return data;
   }
   function toast(message, error = false, action = null) {
