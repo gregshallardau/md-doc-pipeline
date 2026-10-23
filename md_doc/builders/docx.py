@@ -2189,9 +2189,9 @@ class _DocxBuilder(HTMLParser):
             path = self._layout_css
             if path is not None and path.is_file():
                 try:
-                    primary = extract_theme_from_css(path.read_text(encoding="utf-8")).get(
-                        "primary"
-                    )
+                    from ..docx_theme import _load_css_with_imports
+
+                    primary = extract_theme_from_css(_load_css_with_imports(path)).get("primary")
                 except Exception:  # noqa: BLE001 - colours fall back to the neutral slate
                     primary = None
             cached = self.__dict__["_form_colors_cache"] = form_rule_colors(primary)
@@ -4748,7 +4748,9 @@ def build(
 
         css_path = _resolve_css(config, repo_root, doc_path=doc_path)
         if css_path and css_path.exists():
-            css_text = css_path.read_text(encoding="utf-8")
+            from ..docx_theme import _load_css_with_imports
+
+            css_text = _load_css_with_imports(css_path)
             layout_css_path = css_path
         mermaid_theme = diagram_theme(
             css_text, config, lambda value: _resolve_logo(value, repo_root, doc_path)

@@ -157,7 +157,7 @@ cover_page: false  # default — applies to pdf and dotx; set true to add a cove
    - `mindmap` — hierarchical mind maps with root, branch, and leaf nodes
    - `erDiagram` — entity-relationship diagrams with entities, attributes, and relationship lines
    - `stateDiagram` / `stateDiagram-v2` — state diagrams with states, transitions, start/end markers
-   - Diagram colours are auto-extracted from the document's `_pdf-theme.css` (primary, accent, text, muted)
+   - Diagram colours come from the document's merged theme CSS (`@import`s followed; the later declaration wins), via `mermaid.extract_theme_from_css`: primary/accent/text/muted/font from `h1`/`h2`/`body`/`h3`, or explicit `--mddoc-diagram-primary|accent|text|muted|font|surface|mode` custom properties; colours may be hex, `rgb()`, `hsl()`, names or `var()`. Chart series start from the brand colours (`--mddoc-diagram-palette` sets them; `default` keeps the validated palette). PDF, DOCX and PPTX all read the merged CSS (`docx_theme._load_css_with_imports`). Full guide: `docs/handbook.md#themes-diagram-colours`
 
 5. **Syncing** (`sync/`) — discovers `*.pdf`, `*.docx` (optionally `*.md`) outputs and uploads via the configured backend: `azure_files.py` (Azure File Share), `s3.py` (AWS S3), or `local.py`. Directory structure is preserved relative to the search root.
 
