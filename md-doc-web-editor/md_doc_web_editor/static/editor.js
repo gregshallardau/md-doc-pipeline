@@ -527,6 +527,30 @@
     }
     renderTree();
   }
+  // Templates live in any folder called "templates"; they get their own collapsible area.
+  const inTemplates = (path) => /(^|\/)templates(\/|$)/.test(path);
+  const countDocs = (nodes) =>
+    nodes.reduce((n, node) => n + (node.type === "dir" ? countDocs(node.children) : node.type === "md" ? 1 : 0), 0);
+  // The tree restricted to templates (templates = true) or to everything else.
+  function pruneTree(nodes, templates) {
+    const out = [];
+    for (const node of nodes) {
+      if (node.type !== "dir") {
+        if (inTemplates(node.path) === templates) out.push(node);
+        continue;
+      }
+      const children = pruneTree(node.children, templates);
+      const emptyOriginal = !node.children.length && inTemplates(node.path) === templates;
+      if (children.length || emptyOriginal)
+        out.push({ ...node, children, documentCount: countDocs(children) });
+    }
+    return out;
+  }
+  const treeSections = () => readStorage("treeSections", {});
+  function setTreeSections(value) {
+    store("treeSections", value);
+    renderTree();
+  }
   function renderTree() {
     const collapsed = readStorage("rootCollapsed", false);
     $("md-doc-tree").hidden = state.nav !== "files" || collapsed;
@@ -554,6 +578,7 @@
           if (filter && !children.childElementCount) continue;
           const item = el("li");
           const details = el("details", "tree-folder");
+          details.dataset.path = node.path;
           details.open =
             !!filter || readStorage("folders", []).includes(node.path);
           const summary = el("summary");
@@ -595,6 +620,10 @@
                 "d",
                 icons[details.open ? "folder-open" : "folder"],
               );
+            // The same folder can appear in both the Documents and Templates areas.
+            for (const twin of document.querySelectorAll("details.tree-folder"))
+              if (twin !== details && twin.dataset.path === node.path && twin.open !== details.open)
+                twin.open = details.open;
             if (filter) return;
             const folders = new Set(readStorage("folders", []));
             details.open ? folders.add(node.path) : folders.delete(node.path);
@@ -643,14 +672,51 @@
       }
       return list;
     };
-    const list = build(state.tree);
-    $("md-doc-tree").append(list);
+    const hasTemplates = state.files.some((file) => inTemplates(file.path)) ||
+      (function anyDir(nodes) {
+        return nodes.some((node) => node.type === "dir" && (inTemplates(node.path) || anyDir(node.children)));
+      })(state.tree);
+    const areas = hasTemplates
+      ? [
+          ["documents", "Documents", false],
+          ["templates", "Templates", true],
+        ]
+      : [["all", null, false]];
+    const collapsedAreas = treeSections();
+    let shown = 0;
+    for (const [key, label, templates] of areas) {
+      const nodes = key === "all" ? state.tree : pruneTree(state.tree, templates);
+      const list = build(nodes);
+      if (!list.childElementCount) continue;
+      shown++;
+      if (!label) {
+        $("md-doc-tree").append(list);
+        continue;
+      }
+      const collapsed = !filter && !!collapsedAreas[key];
+      const other = key === "documents" ? "templates" : "documents";
+      const onlyThis = !collapsedAreas[key] && !!collapsedAreas[other];
+      const head = el("div", "tree-section-head");
+      const toggle = el("button", "tree-section-toggle");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      toggle.title = (collapsed ? "Expand " : "Collapse ") + label.toLowerCase();
+      toggle.append(icon("chevron-down"), el("span", null, label), el("span", "document-count", String(countDocs(nodes))));
+      toggle.onclick = () => setTreeSections({ ...collapsedAreas, [key]: !collapsedAreas[key] });
+      const focus = el("button", "tree-section-focus", onlyThis ? "Show all" : "Only");
+      focus.type = "button";
+      focus.title = onlyThis ? "Show both areas" : `Show only ${label.toLowerCase()}`;
+      focus.onclick = () => setTreeSections(onlyThis ? {} : { [key]: false, [other]: true });
+      head.append(toggle, focus);
+      list.hidden = collapsed;
+      $("md-doc-tree").append(head, list);
+    }
     markTargetFolder();
     $("tree-root-toggle").oncontextmenu = (event) => {
       event.preventDefault();
       folderMenu("", event);
     };
-    if (!list.childElementCount)
+    if (!shown)
       $("md-doc-tree").append(
         el(
           "p",
@@ -3488,6 +3554,7 @@
     },
     "expand-folders": () => {
       store("rootCollapsed", false);
+      store("treeSections", {});
       const paths = [];
       const walk = (nodes) =>
         nodes.forEach((node) => {

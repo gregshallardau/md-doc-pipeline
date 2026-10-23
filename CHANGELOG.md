@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Editor: separate Documents and Templates areas in the file tree.** Workspaces with `templates/`
+  folders show two collapsible areas with sticky headings and counts; *Only* focuses one area and
+  *Show all* restores both. Templates keep their folder path so you can see where each level's
+  templates live.
 - **Shared macros inherit the folder they are used in.** Imported macros now see the config
   variables of the document that uses them (previously `{{ client }}` was blank inside a macro
   imported from another file), and macro libraries (`macros.md`, `*-macros.md`, `*_macros.md`)

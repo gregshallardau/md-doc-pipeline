@@ -2357,3 +2357,56 @@ kbd {
   color: var(--text);
   font-weight: 500;
 }
+
+.tree-section-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--border);
+}
+.tree-section-head:first-child {
+  margin-top: 0;
+  border-top: 0;
+}
+.tree-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tree-section-toggle:hover {
+  color: var(--text);
+}
+.tree-section-toggle > .icon {
+  width: 12px;
+  flex-shrink: 0;
+  transition: transform 0.12s;
+}
+.tree-section-toggle[aria-expanded="false"] > .icon {
+  transform: rotate(-90deg);
+}
+.tree-section-focus {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0;
+}
+.tree-section-head:hover .tree-section-focus,
+.tree-section-focus:focus-visible {
+  opacity: 1;
+}
+.tree-section-focus:hover {
+  color: var(--accent);
+}
