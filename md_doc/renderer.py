@@ -73,6 +73,14 @@ def mark_blank_lines(text: str) -> str:
     return "\n".join(out)
 
 
+_MACRO_LIBRARY_RE = re.compile(r"(?:^|[-_])macros\.md$")
+
+
+def _is_macro_library(template: str) -> bool:
+    """True for ``macros.md`` and names ending ``-macros.md`` / ``_macros.md``."""
+    return bool(_MACRO_LIBRARY_RE.search(Path(template).name))
+
+
 class _MarkdownLoader(BaseLoader):
     """
     Jinja2 loader that resolves template paths relative to a list of search
@@ -102,19 +110,45 @@ class _MarkdownLoader(BaseLoader):
             if any(Path(d).resolve().is_relative_to(r) for r in roots)
         ]
 
-    def get_source(self, environment: Environment, template: str) -> tuple[str, str, Any]:
+    def _read(self, candidate: Path) -> str:
+        source = candidate.read_text(encoding="utf-8")
+        if self._source_transform:
+            source = self._source_transform(source, candidate)
+        if self._mark_blanks:
+            source = mark_blank_lines(source)
+        return source.rstrip() + "\n"
+
+    def _candidates(self, template: str) -> list[Path]:
+        """Existing files for *template*, most specific search directory first."""
+        found: list[Path] = []
         for directory in self._dirs:
             candidate = (directory / template).resolve()
-            if any(candidate.is_relative_to(root) for root in self._roots) and candidate.is_file():
-                source = candidate.read_text(encoding="utf-8")
-                if self._source_transform:
-                    source = self._source_transform(source, candidate)
-                if self._mark_blanks:
-                    source = mark_blank_lines(source)
-                source = source.rstrip() + "\n"
-                mtime = candidate.stat().st_mtime
-                return source, str(candidate), lambda: candidate.stat().st_mtime == mtime
-        raise TemplateNotFound(template)
+            if (
+                any(candidate.is_relative_to(root) for root in self._roots)
+                and candidate.is_file()
+                and candidate not in found
+            ):
+                found.append(candidate)
+        return found
+
+    def get_source(self, environment: Environment, template: str) -> tuple[str, str, Any]:
+        found = self._candidates(template)
+        if not found:
+            raise TemplateNotFound(template)
+        if _is_macro_library(template) and len(found) > 1:
+            # Macro libraries layer instead of replacing: shared definitions first,
+            # then each deeper folder's, so a macro redefined deeper wins and every
+            # other shared macro is still inherited.
+            source = "\n".join(self._read(path) for path in reversed(found))
+            mtimes = {path: path.stat().st_mtime for path in found}
+            return (
+                source,
+                str(found[0]),
+                lambda: all(p.is_file() and p.stat().st_mtime == m for p, m in mtimes.items()),
+            )
+        candidate = found[0]
+        mtime = candidate.stat().st_mtime
+        return self._read(candidate), str(candidate), lambda: candidate.stat().st_mtime == mtime
 
     def list_templates(self) -> list[str]:  # pragma: no cover
         templates: list[str] = []
@@ -262,6 +296,11 @@ def render(
     if extra_context:
         context.update(extra_context)
 
+    # Imported macros ({% from "macros.md" import badge %}) do not see the document's
+    # context by default.  Exposing the config cascade as globals lets a shared macro use
+    # the variables of whichever folder the document lives in.
+    env.globals.update(context)
+
     if mark_blanks:
         body = mark_blank_lines(body)
     tmpl = env.from_string(body)
@@ -344,5 +383,6 @@ def render_string(
         lstrip_blocks=True,
         autoescape=False,
     )
+    env.globals.update(context)  # imported macros see the same variables
     tmpl = env.from_string(source)
     return tmpl.render(**context)

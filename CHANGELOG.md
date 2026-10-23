@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Shared macros inherit the folder they are used in.** Imported macros now see the config
+  variables of the document that uses them (previously `{{ client }}` was blank inside a macro
+  imported from another file), and macro libraries (`macros.md`, `*-macros.md`, `*_macros.md`)
+  layer along the `templates/` cascade instead of the deepest file hiding the shared one, so a
+  folder can add or replace single macros and inherit the rest.
 - **Handbook: logic in templates.** A full guide to Jinja2 in documents: conditions, loops, tables
   from data, `set` and totals, filters, macros, includes with logic, whitespace, escaping literal
   braces (code blocks are rendered too), strict mode and errors, and what build-time logic cannot do

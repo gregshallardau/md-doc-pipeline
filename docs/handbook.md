@@ -2578,7 +2578,8 @@ tf 09 evt Cart.InventoryChanged
 
 `{{ }}` supports Jinja2 filters (`{{ status | upper }}`, `{{ x | default("n/a") }}`). Fragment
 lookup order: the document's folder, a local `templates/`, ancestor `templates/` folders
-(deepest first), then the repo-root `templates/`.
+(deepest first), then the repo-root `templates/`. The first match wins, except for macro
+libraries, which are layered (see [Macros](#markdown-logic-macros)).
 
 <a id="markdown-logic-in-templates"></a>
 
@@ -2635,6 +2636,9 @@ Things to know about the data:
   builders use it, and an unknown name is left as `{{ name }}` rather than becoming empty. The
   frontmatter block is copied into the document untouched; only the body is rendered as a
   template, so put logic in the body.
+- **Includes and macros see them too.** A fragment, an included file and an imported macro all
+  read the variables of the document that uses them, so shared templates automatically pick up
+  the values of the folder the document lives in (see [Macros](#markdown-logic-macros)).
 - **Fillable fields are not variables.** `[[field]]` (Word merge and form fields) and `?[...]`
   (PDF form fields) are left alone by Jinja; they are filled in later, by whoever opens the file.
 
@@ -2744,24 +2748,57 @@ The other built-in Jinja2 filters work too. There is no way to add your own filt
 
 <a id="markdown-logic-macros"></a>
 
-#### Macros: reusable blocks with arguments
+#### Macros: shared building blocks that follow the folder they are used in
 
-A macro is a small template you call like a function. Define macros in a fragment under a
-`templates/` folder and import them:
+A macro is a small template you call like a function. Define your common macros once, in a
+`macros.md` under a `templates/` folder, and import them wherever you need them:
 
 ```markdown
 <!-- templates/macros.md -->
 {% macro badge(text, level="info") %}**[{{ level | upper }}]** {{ text }}{% endmacro %}
+{% macro sign_off(name) %}Regards, {{ name }}, {{ client }}{% endmacro %}
 ```
 
 ```markdown
-{% from "macros.md" import badge %}
+{% from "macros.md" import badge, sign_off %}
 {{ badge("Check the totals", "warn") }}
+{{ sign_off("Greg") }}
 ```
 
-That prints `**[WARN]** Check the totals`. A macro imported from another file sees only its own
-arguments, not the document's variables (`{{ client }}` inside it is blank), so pass in what it
-needs as arguments.
+That prints `**[WARN]** Check the totals` and `Regards, Greg, Acme Pty Ltd`.
+
+**Variables come from where the document is.** Inside a macro, `{{ client }}` and every other
+config value is the one resolved for the *document that uses it*: its frontmatter, its folder's
+`_meta.yml`, then each parent folder's. The same `sign_off` macro prints "Acme" in
+`workspace/acme/` and "Blueshift" in `workspace/blueshift/`, with no copy of the macro and no
+arguments to pass. Two limits:
+
+- A macro argument with the same name as a variable wins inside the macro
+  (`{% macro m(client) %}` uses the argument).
+- Variables the *document itself* creates, with `{% set %}` or a loop, are not visible inside an
+  imported macro. Pass them as arguments, or import with
+  `{% from "macros.md" import badge with context %}`.
+
+**Macro files layer down the folders.** Put the common macros at the top and let any folder add
+to them or replace single ones. For a file named `macros.md`, or ending `-macros.md` or
+`_macros.md` (for example `legal-macros.md`), *every* copy found along the usual lookup path is
+combined, shallowest first, so a macro defined in a deeper file replaces the shared macro of the
+same name and every other shared macro is still available:
+
+```
+templates/macros.md                      sign_off, badge          (shared by everyone)
+workspace/acme/templates/macros.md       badge                    (Acme's own version)
+workspace/acme/proposals/templates/macros.md   extra              (only for proposals)
+```
+
+A document in `workspace/acme/proposals/` can import `sign_off` (from the top), `badge` (Acme's
+version) and `extra` with a single `{% from "macros.md" import sign_off, badge, extra %}`. A
+document in another client's folder gets the shared `sign_off` and `badge`. Ordinary fragments
+(anything not named like a macro library) are not layered: the deepest file replaces the shared
+one, as described in [Values and placeholders](#markdown-values-and-placeholders).
+
+Because the layers are joined into one file before it is read, a line number in an error from a
+macro file counts across all the layers. Keep each layer small and the message names the macro.
 
 <a id="markdown-logic-includes"></a>
 

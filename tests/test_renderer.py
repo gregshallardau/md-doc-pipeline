@@ -189,3 +189,177 @@ class TestSeparateMergedTables:
 
         t = "| A |\n|---|\n| 1 |\n\n| B |\n|---|\n| 2 |\n"
         assert _separate_merged_tables(t) == t
+
+
+# ── Macros see the variables of the folder the document lives in ──────────────
+
+
+class TestSharedMacros:
+    @pytest.fixture()
+    def library(self, tmp_repo):
+        (tmp_repo / "templates").mkdir()
+        write_md(
+            tmp_repo / "templates" / "macros.md",
+            """\
+            {% macro sign_off(name) %}Regards, {{ name }} ({{ client }}, {{ tier }}){% endmacro %}
+            {% macro shadow(client) %}{{ client }}{% endmacro %}
+            """,
+        )
+        write_meta(tmp_repo, "tier: standard\n")
+        for folder, client, extra in (
+            ("acme", "Acme", ""),
+            ("blueshift", "Blueshift", "tier: gold\n"),
+        ):
+            (tmp_repo / folder).mkdir()
+            write_meta(tmp_repo / folder, f"client: {client}\n{extra}")
+            write_md(
+                tmp_repo / folder / "doc.md",
+                """\
+                ---
+                title: T
+                ---
+                {% from "macros.md" import sign_off %}{{ sign_off("Greg") }}
+                """,
+            )
+        return tmp_repo
+
+    def test_shared_macro_uses_each_folders_variables(self, library):
+        acme = render(library / "acme" / "doc.md", repo_root=library)
+        blue = render(library / "blueshift" / "doc.md", repo_root=library)
+        assert "Regards, Greg (Acme, standard)" in acme
+        assert "Regards, Greg (Blueshift, gold)" in blue
+
+    def test_document_frontmatter_overrides_folder_value_inside_macro(self, library):
+        doc = library / "acme" / "doc.md"
+        doc.write_text(doc.read_text().replace("title: T", "title: T\nclient: Override"))
+        assert "(Override, standard)" in render(doc, repo_root=library)
+
+    def test_macro_arguments_win_over_variables(self, library):
+        doc = library / "acme" / "doc.md"
+        write_md(
+            doc,
+            """\
+            ---
+            title: T
+            ---
+            {% from "macros.md" import shadow %}{{ shadow("arg") }}
+            """,
+        )
+        assert render(doc, repo_root=library).strip().endswith("arg")
+
+    def test_strict_flags_a_variable_missing_inside_a_macro(self, library):
+        from jinja2 import UndefinedError
+
+        (library / "templates" / "macros.md").write_text(
+            "{% macro m() %}{{ not_defined }}{% endmacro %}"
+        )
+        doc = library / "acme" / "doc.md"
+        write_md(
+            doc,
+            """\
+            ---
+            title: T
+            ---
+            {% from "macros.md" import m %}{{ m() }}
+            """,
+        )
+        with pytest.raises(UndefinedError):
+            render(doc, repo_root=library, strict=True)
+
+    def test_variables_set_in_the_document_need_with_context(self, library):
+        (library / "templates" / "ctx.md").write_text(
+            "{% macro note() %}[{{ local_note }}]{% endmacro %}"
+        )
+        doc = library / "acme" / "doc.md"
+        write_md(
+            doc,
+            """\
+            ---
+            title: T
+            ---
+            {% set local_note = "hi" %}
+            {% from "ctx.md" import note %}A{{ note() }}
+            {% from "ctx.md" import note as note2 with context %}B{{ note2() }}
+            """,
+        )
+        out = render(doc, repo_root=library)
+        assert "A[]" in out and "B[hi]" in out
+
+    def test_render_string_macros_see_the_context(self, tmp_path):
+        (tmp_path / "m.md").write_text("{% macro hi() %}Hi {{ who }}{% endmacro %}")
+        out = render_string(
+            '{% from "m.md" import hi %}{{ hi() }}', {"who": "Ann"}, search_dirs=[tmp_path]
+        )
+        assert out == "Hi Ann"
+
+
+class TestLayeredMacroLibraries:
+    @pytest.fixture()
+    def tree(self, tmp_repo):
+        for path in ("templates", "acme/templates", "acme/proj/templates"):
+            (tmp_repo / path).mkdir(parents=True)
+        write_meta(tmp_repo, "client: Root\n")
+        write_meta(tmp_repo / "acme", "client: Acme\n")
+        write_md(
+            tmp_repo / "templates" / "macros.md",
+            """\
+            {% macro sign_off(n) %}root-sign({{ n }},{{ client }}){% endmacro %}
+            {% macro badge(t) %}root-badge({{ t }}){% endmacro %}
+            """,
+        )
+        write_md(
+            tmp_repo / "acme" / "templates" / "macros.md",
+            "{% macro badge(t) %}acme-badge({{ t }}){% endmacro %}\n",
+        )
+        write_md(
+            tmp_repo / "acme" / "proj" / "templates" / "macros.md",
+            "{% macro extra() %}proj-extra{% endmacro %}\n",
+        )
+        return tmp_repo
+
+    def _doc(self, directory: Path, body: str) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        doc = directory / "doc.md"
+        write_md(doc, "---\ntitle: T\n---\n" + body + "\n")
+        return doc
+
+    IMPORT = '{% from "macros.md" import sign_off, badge %}{{ sign_off("G") }} {{ badge("x") }}'
+
+    def test_root_library_applies_where_there_is_no_override(self, tree):
+        out = render(self._doc(tree / "blue", self.IMPORT), repo_root=tree)
+        assert "root-sign(G,Root) root-badge(x)" in out
+
+    def test_deeper_file_overrides_one_macro_and_inherits_the_rest(self, tree):
+        out = render(self._doc(tree / "acme" / "docs", self.IMPORT), repo_root=tree)
+        assert "root-sign(G,Acme) acme-badge(x)" in out
+
+    def test_three_levels_combine(self, tree):
+        body = self.IMPORT + '{% from "macros.md" import extra %}{{ extra() }}'
+        out = render(self._doc(tree / "acme" / "proj", body), repo_root=tree)
+        assert "root-sign(G,Acme) acme-badge(x)proj-extra" in out
+
+    def test_macro_file_beside_the_document_is_the_deepest_layer(self, tree):
+        folder = tree / "acme" / "docs"
+        folder.mkdir(parents=True)
+        write_md(folder / "macros.md", "{% macro badge(t) %}local({{ t }}){% endmacro %}\n")
+        out = render(self._doc(folder, self.IMPORT), repo_root=tree)
+        assert "root-sign(G,Acme) local(x)" in out
+
+    def test_other_fragments_still_use_the_deepest_file_only(self, tree):
+        write_md(tree / "templates" / "footer.md", "root footer\n")
+        write_md(tree / "acme" / "templates" / "footer.md", "acme footer\n")
+        out = render(self._doc(tree / "acme" / "docs", '{% include "footer.md" %}'), repo_root=tree)
+        assert "acme footer" in out and "root footer" not in out
+
+    def test_macro_libraries_with_a_prefix_also_layer(self, tree):
+        write_md(
+            tree / "templates" / "legal-macros.md",
+            "{% macro a() %}A-root{% endmacro %}{% macro b() %}B-root{% endmacro %}\n",
+        )
+        write_md(
+            tree / "acme" / "templates" / "legal-macros.md", "{% macro b() %}B-acme{% endmacro %}\n"
+        )
+        doc = self._doc(
+            tree / "acme" / "docs", '{% from "legal-macros.md" import a, b %}{{ a() }}{{ b() }}'
+        )
+        assert "A-rootB-acme" in render(doc, repo_root=tree)
