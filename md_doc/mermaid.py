@@ -724,7 +724,38 @@ def _tint(color: str, factor: float, t: dict[str, str]) -> str:
 
 
 def _palette(t: dict[str, str]) -> list[str]:
+    series = t.get("series")
+    if series:
+        return series.split(",")
     return _CATEGORICAL_DARK if t.get("mode") == "dark" else _CATEGORICAL
+
+
+def _distance(a: str, b: str) -> float:
+    ra, rb = _rgb(a), _rgb(b)
+    return sum((x - y) ** 2 for x, y in zip(ra, rb)) ** 0.5
+
+
+def _series_palette(
+    lead: list[str], fallback: list[str], size: int = 8, keep_lead: bool = False
+) -> list[str]:
+    """Eight series colours: the ``lead`` colours first (all of them when ``keep_lead``,
+    else only those clearly different from each other), then the validated categorical
+    colours that stay clearly different from every colour chosen so far."""
+    chosen: list[str] = list(lead[:size]) if keep_lead else []
+    for colour in [] if keep_lead else lead:
+        if len(chosen) < size and all(_distance(colour, c) >= 90 for c in chosen):
+            chosen.append(colour)
+    for colour in fallback:
+        if len(chosen) == size:
+            break
+        if all(_distance(colour, c) >= 90 for c in chosen):
+            chosen.append(colour)
+    for colour in fallback:  # never run short, even if every candidate was close
+        if len(chosen) == size:
+            break
+        if colour not in chosen:
+            chosen.append(colour)
+    return chosen
 
 
 def _tokens(theme: dict[str, str] | None = None) -> dict[str, str]:
@@ -802,6 +833,14 @@ def _tokens(theme: dict[str, str] | None = None) -> dict[str, str]:
             "other": _OTHER,
         }
     t["primary"], t["accent"] = primary, accent
+    fallback = _CATEGORICAL_DARK if dark else _CATEGORICAL
+    if "series" not in given:
+        if given.get("palette"):
+            t["series"] = ",".join(
+                _series_palette(given["palette"].split(","), fallback, keep_lead=True)
+            )
+        elif given.get("brand") == "1":
+            t["series"] = ",".join(_series_palette([primary, accent], fallback))
     for key, value in derived.items():
         if key not in given:
             t[key] = value
@@ -845,61 +884,146 @@ def svg_natural_width(svg: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def extract_theme_from_css(css_text: str) -> dict[str, str]:
-    """Extract diagram theme colours from a _pdf-theme.css file.
+_VAR_RE = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\)[^()]*)*))?\)")
+_DECL_VAR_RE = re.compile(r"(--[\w-]+)\s*:\s*([^;{}]+)")
 
-    Looks for known CSS colour patterns in selectors like h1, h2, th, a,
-    .cover-bar, etc. and maps them to theme keys.
+
+def _css_variables(css_text: str) -> dict[str, str]:
+    """Custom properties declared anywhere in the CSS; a later declaration wins."""
+    clean = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+    return {name: value.strip() for name, value in _DECL_VAR_RE.findall(clean)}
+
+
+def _resolve_vars(value: str, variables: dict[str, str], depth: int = 0) -> str:
+    """Replace ``var(--name, fallback)`` with its value (nested, depth-limited)."""
+    if depth > 8 or "var(" not in value:
+        return value
+
+    def sub(m: re.Match[str]) -> str:
+        found = variables.get(m.group(1))
+        return found if found is not None else (m.group(2) or "")
+
+    return _resolve_vars(_VAR_RE.sub(sub, value), variables, depth + 1)
+
+
+def css_color_to_hex(value: str, variables: dict[str, str] | None = None) -> str | None:
+    """A CSS colour (hex, ``rgb()``, ``hsl()``, a name, ``var(--x)``) as ``#rrggbb``."""
+    value = _resolve_vars(value.strip().rstrip(";"), variables or {}).strip()
+    value = re.sub(r"\s*!important$", "", value, flags=re.IGNORECASE)
+    if not value or value.lower() in ("transparent", "inherit", "initial", "currentcolor", "none"):
+        return None
+    # Modern space-separated syntax: rgb(10 20 30 / 50%) -> rgb(10,20,30)
+    m = re.fullmatch(r"(rgba?|hsla?)\(([^)]*)\)", value, flags=re.IGNORECASE)
+    if m:
+        parts = re.split(r"\s*[,/\s]\s*", m.group(2).strip())
+        value = f"{m.group(1).lower()[:3]}({','.join(parts[:3])})"
+        value = value.replace("deg", "")
+    try:
+        from PIL import ImageColor
+
+        r, g, b = ImageColor.getrgb(value)[:3]
+    except Exception:
+        return None
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def extract_theme_from_css(css_text: str) -> dict[str, str]:
+    """Extract diagram theme colours from a theme CSS file (after ``@import``s are merged).
+
+    Explicit ``--mddoc-diagram-*`` custom properties win; otherwise colours are
+    read from the headings, links, body and cover rules. Colours may be hex,
+    ``rgb()``, ``hsl()``, names or ``var(--x)``. Where a theme is layered
+    (a client theme importing the brand theme), the declaration that comes last
+    in the merged CSS wins, as in the cascade.
     """
     theme: dict[str, str] = {}
+    variables = _css_variables(css_text)
+    clean = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+    value = r"([^;{}]+)"
 
-    def _find(pattern: str) -> str | None:
-        m = re.search(pattern, css_text, re.IGNORECASE)
-        return m.group(1).strip() if m else None
+    def _latest(patterns: list[str], colour: bool = True) -> str | None:
+        """The match that appears last in the CSS across all alternatives."""
+        best: tuple[int, str] | None = None
+        for pattern in patterns:
+            for m in re.finditer(pattern + value, clean, re.IGNORECASE):
+                got = (
+                    css_color_to_hex(m.group(1), variables)
+                    if colour
+                    else _resolve_vars(m.group(1), variables).strip()
+                )
+                if got and (best is None or m.start() >= best[0]):
+                    best = (m.start(), got)
+        return best[1] if best else None
 
-    # Primary colour — from h1 color or .cover-title color or th background
-    primary = (
-        _find(r"\.cover-title\s*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
-        or _find(r"\bh1\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
-        or _find(r"\bth\b[^{]*\{[^}]*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})")
+    def _prop(rule: str, prop: str) -> str:
+        return rf"{rule}[^{{}}]*\{{[^}}]*{prop}\s*:\s*"
+
+    primary = _latest(
+        [
+            _prop(r"\.cover-title\b", "color"),
+            _prop(r"\bh1\b", "color"),
+            _prop(r"\bth\b", r"background(?:-color)?"),
+        ]
     )
+    accent = _latest(
+        [
+            _prop(r"\bh2\b", "color"),
+            _prop(r"\ba\b", "color"),
+            _prop(r"\.cover-label\b", "color"),
+        ]
+    )
+    body = _latest([_prop(r"\bbody\b", "color")])
+    muted = _latest([_prop(r"\bh3\b", "color"), _prop(r"\bem\b", "color")])
+    font = _latest([_prop(r"\bbody\b", "font-family")], colour=False)
+    background = _latest(
+        [_prop(r"\bbody\b", r"background(?:-color)?"), _prop(r"@page", r"background(?:-color)?")]
+    )
+
+    # Explicit diagram properties always win over what is inferred.
+    def _explicit(name: str) -> str | None:
+        raw = variables.get(f"--mddoc-diagram-{name}")
+        return css_color_to_hex(raw, variables) if raw else None
+
+    primary = _explicit("primary") or primary
+    accent = _explicit("accent") or accent
+    body = _explicit("text") or body
+    muted = _explicit("muted") or muted
+    background = _explicit("surface") or background
+    raw_font = variables.get("--mddoc-diagram-font")
+    if raw_font:
+        font = _resolve_vars(raw_font, variables).strip()
+
     if primary:
         theme["primary"] = primary
-
-    # Accent colour — from h2 color or a color or .cover-label color
-    accent = (
-        _find(r"\bh2\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
-        or _find(r"\ba\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
-        or _find(r"\.cover-label[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
-    )
+        theme["brand"] = "1"  # chart series start from the brand colours
     if accent:
         theme["accent"] = accent
-
-    # Body text colour
-    body = _find(r"\bbody\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})")
     if body:
         theme["body"] = body
-
-    # Muted colour — from h3 color or em color
-    muted = _find(r"\bh3\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})") or _find(
-        r"\bem\b[^{]*\{[^}]*color\s*:\s*(#[0-9a-fA-F]{3,8})"
-    )
     if muted:
         theme["muted"] = muted
-
-    # Font family
-    font = _find(r"\bbody\b[^{]*\{[^}]*font-family\s*:\s*([^;]+)")
     if font:
-        theme["font"] = font.strip("'\"")
+        theme["font"] = font
 
-    # A dark page or body background puts diagrams in dark mode
-    background = _find(
-        r"\bbody\b[^{]*\{[^}]*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})"
-    ) or _find(r"@page[^{]*\{[^}]*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})")
-    if background and len(background) in (4, 7) and _luminance(background) < 0.2:
+    palette = variables.get("--mddoc-diagram-palette", "").strip()
+    if palette.lower() in ("default", "validated", "none"):
+        theme["brand"] = "0"  # keep the built-in validated palette
+    elif palette:
+        colours = [
+            hexed
+            for part in re.split(r",(?![^()]*\))", _resolve_vars(palette, variables))
+            if (hexed := css_color_to_hex(part, variables))
+        ]
+        if colours:
+            theme["palette"] = ",".join(colours)
+
+    mode = variables.get("--mddoc-diagram-mode", "").strip().lower()
+    if mode == "dark" or (mode != "light" and background and _luminance(background) < 0.2):
         theme["mode"] = "dark"
-        theme["surface"] = background
-
+        if background:
+            theme["surface"] = background
+    elif _explicit("surface"):
+        theme["surface"] = background or ""  # a tinted light surface, e.g. cream paper
     return theme
 
 

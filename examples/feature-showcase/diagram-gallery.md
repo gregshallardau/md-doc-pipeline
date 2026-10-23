@@ -6,7 +6,7 @@ title: All supported diagram families
 
 Every Mermaid diagram family md-doc draws, each with the syntax people use in practice. The
 diagrams share one design system: structural diagrams take their colours from the theme, data
-charts use a fixed accessible palette, and everything renders at body-text size.
+charts start from the brand colours then continue with an accessible palette, and everything renders at body-text size.
 
 ## Flowchart
 

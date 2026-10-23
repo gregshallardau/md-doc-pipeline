@@ -969,11 +969,12 @@ def build(
     mermaid_theme = None
     try:
         from .pdf import _resolve_css, _resolve_logo
+        from ..docx_theme import _load_css_with_imports
         from ..mermaid import diagram_theme
 
         css = _resolve_css(config, repo_root, doc_path=doc_path)
         mermaid_theme = diagram_theme(
-            css.read_text(encoding="utf-8") if css and css.exists() else None,
+            _load_css_with_imports(css) if css and css.exists() else None,
             config,
             lambda value: _resolve_logo(value, repo_root, doc_path),
             column_px=880,
