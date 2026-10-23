@@ -2571,6 +2571,7 @@ tf 09 evt Cart.InventoryChanged
 |--------|---------|-------|
 | `{{ variable }}` | Filled in at build time from `_meta.yml` or frontmatter | all formats |
 | `{% include "name.md" %}` | Insert a shared fragment from a `templates/` folder | all formats |
+| `{% if %}`, `{% for %}`, `{% set %}`, `{% macro %}` | Conditions, loops, variables and reusable blocks, resolved at build time | all formats; see [Logic in templates](#markdown-logic-in-templates) |
 | `[[field]]` | Word merge or form field, declared in `_merge_fields.yml` | `.dotx` |
 | `?[type: name]` | Fillable PDF field | `pdf_forms: true` PDF; Word forms in `.dotx` |
 | `<!-- notes: … -->`, `<!-- slide … -->` | Speaker notes and slide layouts | `pptx` |
@@ -2578,6 +2579,352 @@ tf 09 evt Cart.InventoryChanged
 `{{ }}` supports Jinja2 filters (`{{ status | upper }}`, `{{ x | default("n/a") }}`). Fragment
 lookup order: the document's folder, a local `templates/`, ancestor `templates/` folders
 (deepest first), then the repo-root `templates/`.
+
+<a id="markdown-logic-in-templates"></a>
+
+### Logic in templates (Jinja2)
+
+The body of every document is a [Jinja2](https://jinja.palletsprojects.com/) template. It is
+rendered once, at build time, with every key of the [config cascade](#configuration) as a
+variable, and the result is what the PDF, Word and slide builders see. So a document can show
+or hide sections, repeat rows, compute totals and share building blocks without any scripting.
+
+```markdown
+{% if tier == "gold" %}Gold terms apply for {{ client }}.{% endif %}
+
+{% for item in items %}
+- {{ loop.index }}. {{ item | upper }}
+{% endfor %}
+```
+
+This page covers what works, how to write it, and the few places that surprise people. For plain
+`{{ variable }}` and `{% include %}` see [Values and placeholders](#markdown-values-and-placeholders).
+
+<a id="markdown-logic-variables"></a>
+
+#### Where variables come from
+
+Every key in the merged config is available by name: your own keys (`client`, `tier`, `rates`),
+and the built-in ones (`title`, `status`, `author`, `version`, `outputs`, ...). The cascade is the
+usual one: repo root `_meta.yml`, then each folder's `_meta.yml` down to the document, then the
+document's frontmatter, with the deepest value winning.
+
+```yaml
+# workspace/acme/_meta.yml
+client: Acme Pty Ltd
+tier: gold
+rates:
+  gold:   {setup: 500, monthly: 90}
+  silver: {setup: 250, monthly: 60}
+team:
+  - {name: Ann, role: Lead,      days: 10, active: true}
+  - {name: Bob, role: Developer, days: 20, active: true}
+  - {name: Cy,  role: Analyst,   days: 5,  active: false}
+```
+
+Things to know about the data:
+
+- **Merging is shallow.** A key in a deeper file *replaces* the shallower value completely. A
+  folder that sets `team: [...]` does not add to the parent's `team`, it overrides it. Likewise
+  a document that sets `rates:` loses the parent's other rates.
+- **YAML types apply.** Numbers and booleans arrive as numbers and booleans, so `days * rate`
+  works. Be careful with words YAML reads as booleans: `extra: yes` or `on` becomes `True`.
+  Quote a string you mean literally (`extra: "yes"`).
+- **Frontmatter values are templated too**, but separately: any string value containing `{{`
+  (for example `title: "Proposal for {{ client }}"`) is rendered against the config before the
+  builders use it, and an unknown name is left as `{{ name }}` rather than becoming empty. The
+  frontmatter block is copied into the document untouched; only the body is rendered as a
+  template, so put logic in the body.
+- **Fillable fields are not variables.** `[[field]]` (Word merge and form fields) and `?[...]`
+  (PDF form fields) are left alone by Jinja; they are filled in later, by whoever opens the file.
+
+<a id="markdown-logic-conditions"></a>
+
+#### Conditions
+
+```markdown
+{% if status == "final" %}
+This version is approved.
+{% elif status in ["draft", "review"] %}
+**Not final** ({{ status }}).
+{% else %}
+Status unknown.
+{% endif %}
+```
+
+- Comparisons: `==`, `!=`, `<`, `>`, `<=`, `>=`. Combine with `and`, `or`, `not`, and group with
+  parentheses.
+- Membership: `"pdf" in outputs`, `tier in ["gold", "silver"]`.
+- Presence: `{% if contact is defined %}`, `{% if contact is none %}`, `{% if team %}` (a list is
+  true when it has items). Other tests include `is string`, `is number`, `is even`, `is odd`.
+- One-liners: `{{ "Gold" if tier == "gold" else "Standard" }}` and
+  `{% set discount = 20 if tier == "gold" else 5 %}`.
+
+Branches can wrap anything, including whole tables, headings, `{% include %}` lines and
+`<!-- pagebreak -->`:
+
+```markdown
+{% if tier == "gold" %}
+{% include "gold-perks.md" %}
+{% endif %}
+```
+
+<a id="markdown-logic-loops"></a>
+
+#### Loops
+
+```markdown
+{% for p in team if p.active %}
+- {{ p.name }}, {{ p.role }}
+{% endfor %}
+```
+
+- Filter inside the loop header with `if` (above), or sort first: `{% for p in team | sort(attribute="days") %}`.
+- Inside a loop: `loop.index` (from 1), `loop.index0`, `loop.first`, `loop.last`, `loop.length`.
+- Dictionaries: `{% for name, rate in rates.items() %}`.
+- `{% else %}` after the body runs when there was nothing to loop over.
+- `range` makes counters: `{% for n in range(1, 4) %}`.
+
+**Building a table.** Put the header and separator rows outside the loop and one row inside it,
+all on lines of their own so each row is its own line:
+
+```markdown
+| Name | Role | Days |
+| --- | --- | ---: |
+{% for p in team %}
+| {{ p.name }} | {{ p.role }} | {{ p.days }} |
+{% endfor %}
+```
+
+<a id="markdown-logic-variables-set"></a>
+
+#### Setting variables and totals
+
+`{% set %}` creates a variable for the rest of the template:
+
+```markdown
+{% set rate = rates[tier] %}
+Setup is ${{ rate.setup }} and the monthly fee is ${{ rate.monthly }}.
+```
+
+A `set` *inside* a loop is local to that pass, so it cannot add up a total. Use a `namespace`:
+
+```markdown
+{% set total = namespace(value=0) %}
+{% for p in team if p.active %}
+{% set total.value = total.value + p.days * day_rate %}
+{% endfor %}
+Total: ${{ "{:,}".format(total.value) }}
+```
+
+For simple sums a filter is shorter: `{{ team | sum(attribute="days") }}`.
+
+<a id="markdown-logic-filters"></a>
+
+#### Filters
+
+A filter transforms a value: `{{ value | filter(arguments) }}`, and they chain left to right.
+
+- `default`: `{{ phone | default("n/a") }}` prints the value, or `n/a` when it is missing.
+- `upper`, `lower`, `title`: change case, `{{ client | lower }}`.
+- `replace`: `{{ client | replace("Pty", "Proprietary") }}` substitutes text.
+- `join`: `{{ items | join(", ") }}` gives `Alpha, Beta, Gamma`.
+- `length`: `{{ team | length }}` is the number of items.
+- `sum`: `{{ team | sum(attribute="days") }}` adds up one field (`35`).
+- `sort`, `first`, `last`: `{{ team | sort(attribute="days") | map(attribute="name") | first }}`
+  is the name with the fewest days.
+- `map`, `selectattr`: `{{ team | selectattr("active") | map(attribute="name") | join(", ") }}`
+  gives `Ann, Bob`.
+- `round`: `{{ 3.14159 | round(2) }}` gives `3.14`.
+- `format`: `{{ "%.2f" | format(price) }}` gives `1234.50`, and `{{ "{:,}".format(1234567) }}` gives
+  `1,234,567`.
+- `trim`, `truncate`: `{{ summary | truncate(80) }}` shortens long text.
+
+The other built-in Jinja2 filters work too. There is no way to add your own filters or functions.
+
+<a id="markdown-logic-macros"></a>
+
+#### Macros: reusable blocks with arguments
+
+A macro is a small template you call like a function. Define macros in a fragment under a
+`templates/` folder and import them:
+
+```markdown
+<!-- templates/macros.md -->
+{% macro badge(text, level="info") %}**[{{ level | upper }}]** {{ text }}{% endmacro %}
+```
+
+```markdown
+{% from "macros.md" import badge %}
+{{ badge("Check the totals", "warn") }}
+```
+
+That prints `**[WARN]** Check the totals`. A macro imported from another file sees only its own
+arguments, not the document's variables (`{{ client }}` inside it is blank), so pass in what it
+needs as arguments.
+
+<a id="markdown-logic-includes"></a>
+
+#### Includes with logic
+
+A fragment pulled in with `{% include %}` shares the current variables, including loop
+variables, so it can be used inside loops and conditions. The lookup order is the one described
+in [Values and placeholders](#markdown-values-and-placeholders).
+
+```markdown
+{% include "terms-" ~ region ~ ".md" %}              {# terms-au.md or terms-nz.md #}
+{% include "optional-appendix.md" ignore missing %}  {# no error if the file is absent #}
+```
+
+`~` joins strings. Choosing a fragment from a variable is the usual way to vary clauses by
+region, product or customer tier without copying the document.
+
+<a id="markdown-logic-whitespace"></a>
+
+#### Comments, whitespace and blank lines
+
+- `{# like this #}` is a comment and produces nothing.
+- The renderer already removes the line a `{% ... %}` tag sits on, so tags on their own lines do
+  not leave blank lines behind. Add a minus sign to strip more: `{%- if x %}` removes the space
+  before the tag and `{% endif -%}` the space after it.
+- Markdown still needs its blank lines. Keep a blank line between a paragraph and a table, and
+  between list items you want separated, whether or not they come from a loop.
+
+<a id="markdown-logic-literal-braces"></a>
+
+#### Showing Jinja syntax and literal braces
+
+Jinja runs **everywhere in the body, including fenced code blocks and inline code.** Text such as
+`{{ client }}` in a code sample is replaced by the client name unless you escape it. Print the
+delimiters from a string expression:
+
+| To print | Write |
+|----------|-------|
+| `{{` and `}}` | `{{ '{{' }}` and `{{ '}}' }}` |
+| `{%` and `%}` | `{{ '{%' }}` and `{{ '%}' }}` |
+| `{#` | `{{ '{#' }}` |
+
+so a code sample showing a variable is written:
+
+````markdown
+```jinja
+{{ '{{' }} client {{ '}}' }}
+```
+````
+
+and renders as `{{ client }}`. For a longer passage, a **raw block** is easier: open it with the
+`raw` tag and close it with the matching `endraw` tag, and everything between is copied through
+untouched. (This handbook is wrapped in one, which is why its examples appear as written.) Raw
+blocks cannot be nested, and the closing tag cannot appear inside one, so use the string form
+above to show the raw tags themselves.
+
+Two other places bite:
+
+- **Heading anchors.** `## Scope {#scope}` fails with *Missing end of comment tag*, because
+  `{#` starts a Jinja comment. Write `## Scope {{ '{#scope}' }}`, or leave the explicit id off
+  (headings get automatic anchors).
+- **LaTeX and other brace-heavy text.** A `{%` or `{{` inside maths or code will be read as
+  Jinja. Escape it as above, or wrap the passage in a raw block.
+
+<a id="markdown-logic-errors"></a>
+
+#### Missing values and errors
+
+| Situation | Normal build | `--strict` build, `lint --render` |
+|-----------|--------------|-----------------------------------|
+| `{{ missing }}` | blank | error: `'missing' is undefined` |
+| `{% if missing %}` | false | error |
+| `{% if missing is defined %}` | false | false (no error) |
+| `{{ team[5].name }}` where item 5 does not exist | error | error |
+| Unclosed `{% if %}` or a stray `{#` | error | error |
+
+A `default` filter avoids the error in both modes: `{{ missing | default("x") }}` prints `x`.
+
+Reading a *property of something missing* is an error even in a normal build, so guard it with
+`is defined`, or loop instead of indexing.
+
+`md-doc lint` reports Jinja syntax errors, unresolved `{{ variables }}` (a warning), and
+unresolvable `{% include %}` targets; add `--render` to also run a strict render of every
+document, which turns every blank-where-a-value-should-be into a visible error:
+
+```bash
+uv run md-doc lint workspace/acme/ --render
+uv run md-doc build workspace/acme/ --strict
+```
+
+<a id="markdown-logic-limits"></a>
+
+#### What logic cannot do
+
+- **It runs at build time, once.** The output is fixed text. A `.dotx` cannot branch on a
+  `[[field]]` when someone fills it in, because Word has no knowledge of the template. Choose
+  the branch from `_meta.yml` or frontmatter, and build one template per variant if the variants
+  differ (for example one folder per customer type, each with its own `_meta.yml`).
+- **The template does not know which format it is being built for.** The same rendered text
+  goes to every builder; `outputs` lists the formats the document declares, not the one running.
+  Use [`<!-- pagebreak -->`, section breaks and the format differences](#markdown-differences-between-formats)
+  for layout, or keep separate documents for content that must differ per format.
+- **It is sandboxed.** Templates cannot read files, run commands or reach Python internals
+  (names starting with an underscore are blocked), so a document from someone else cannot run
+  code on your machine. Plain data, filters, macros and includes are unaffected.
+- **Loops produce text, not structure.** To change layout per row (page breaks, landscape
+  sections), emit the marker comments from inside the loop:
+  `{% if loop.index % 10 == 0 %}<!-- pagebreak -->{% endif %}`.
+
+<a id="markdown-logic-example"></a>
+
+#### Worked example: a tiered proposal
+
+`workspace/acme/_meta.yml` as above, plus `day_rate: 800` and `region: au`, with fragments
+`templates/gold-perks.md`, `templates/terms-au.md` and `templates/terms-nz.md`:
+
+```markdown
+---
+title: "Proposal for {{ client }}"
+status: draft
+---
+# Proposal for {{ client }}
+
+{% if tier == "gold" %}
+{% include "gold-perks.md" %}
+{% endif %}
+{% set rate = rates[tier] %}
+Setup is ${{ "{:,}".format(rate.setup) }} and the monthly fee is ${{ rate.monthly }}.
+
+| Name | Role | Days | Cost |
+| --- | --- | ---: | ---: |
+{% set total = namespace(value=0) %}
+{% for p in team if p.active %}
+| {{ p.name }} | {{ p.role }} | {{ p.days }} | ${{ "{:,}".format(p.days * day_rate) }} |
+{% set total.value = total.value + p.days * day_rate %}
+{% endfor %}
+| **Total** | | | **${{ "{:,}".format(total.value) }}** |
+
+{% if contact is none %}Contact to be confirmed.{% else %}Contact: {{ contact }}.{% endif %}
+
+{% include "terms-" ~ region ~ ".md" %}
+```
+
+With `tier: gold` and `region: au` this builds to:
+
+```markdown
+# Proposal for Acme Pty Ltd
+
+Gold perks: priority support, quarterly review.
+Setup is $500 and the monthly fee is $90.
+
+| Name | Role | Days | Cost |
+| --- | --- | ---: | ---: |
+| Ann | Lead | 10 | $8,000 |
+| Bob | Developer | 20 | $16,000 |
+| **Total** | | | **$24,000** |
+
+Contact to be confirmed.
+Governed by Australian law.
+```
+
+Change `tier` to `silver` in a customer folder's `_meta.yml` and the perks vanish and the prices
+change; set `region: nz` and the terms switch. Cy is skipped because `active` is false.
 
 <a id="markdown-differences-between-formats"></a>
 

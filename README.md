@@ -16,7 +16,7 @@ Built for document-heavy workflows — proposals, project reports, compliance do
 ## Features
 
 - **Cascading `_meta.yml` config** — inherit settings from parent directories, override at any folder or document level
-- **Jinja2 renderer** — compose documents from reusable fragments with `{% include %}` and `{{ variable }}` substitution
+- **Jinja2 renderer** — compose documents from reusable fragments with `{% include %}` and `{{ variable }}` substitution, plus conditions, loops, macros and totals (`{% if %}`, `{% for %}`; [logic in templates](docs/handbook.md#markdown-logic-in-templates))
 - **Merge field support** — `[[field_name]]` in Markdown becomes a Word `«MERGEFIELD»` in `.dotx` output for downstream mail merge
 - **PDF output** — WeasyPrint builder with branded cover page, headers, footers, and pagination
 - **Print-grade PDF** — bookmarks, PDF/A, PDF/UA and PDF/X variants, embedded fonts, files and source, hyphenation, numbered headings, page-bottom footnotes, running chapter titles, columns and grids, facing pages with recto chapter starts, crop marks and bleed, and layout checks ([PDF features](docs/handbook.md#pdf-features))

@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Handbook: logic in templates.** A full guide to Jinja2 in documents: conditions, loops, tables
+  from data, `set` and totals, filters, macros, includes with logic, whitespace, escaping literal
+  braces (code blocks are rendered too), strict mode and errors, and what build-time logic cannot do
+  (`docs/handbook.md#markdown-logic-in-templates`).
 - **Popup menus instead of dialogs in the editor.** The **+** button opens a scaffold menu and
   creates the document straight away; right-clicking a folder (or the root) offers import and
   new-document/folder actions, and right-clicking a file offers rename, move, duplicate and
