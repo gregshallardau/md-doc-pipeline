@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Backslash line breaks.** A backslash at the end of a line is now a hard line break in PDF,
+  Word, `.dotx` and slides, as in CommonMark, GitHub and Pandoc (it printed a literal `\`
+  before). Code, display maths, table rows, an escaped `\\` and a paragraph-ending backslash are
+  left alone. Two trailing spaces and `preserve_line_breaks: true` work as before.
 - **Editor: separate Documents and Templates areas in the file tree.** Workspaces with `templates/`
   folders show two collapsible areas with sticky headings and counts; *Only* focuses one area and
   *Show all* restores both. Templates keep their folder path so you can see where each level's

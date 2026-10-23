@@ -9,6 +9,8 @@ from typing import Any
 
 import markdown
 
+from .linebreaks import backslash_line_breaks
+
 # Arithmatex runs inside Markdown, so code and escaped delimiters stay literal.
 _EXTENSION = "pymdownx.arithmatex"
 _MATH_RE = re.compile(r'<(?P<tag>span|div) class="arithmatex">(?P<body>.*?)</(?P=tag)>', re.DOTALL)
@@ -20,7 +22,11 @@ def markdown_html(
     line_breaks: bool = False,
     toc_options: dict[str, Any] | None = None,
 ) -> str:
-    """Convert Markdown to HTML; ``line_breaks`` keeps single newlines (``<br>``)."""
+    """Convert Markdown to HTML; ``line_breaks`` keeps single newlines (``<br>``).
+
+    A backslash at the end of a line is a hard line break, as in CommonMark.
+    """
+    body = backslash_line_breaks(body)
     configs: dict[str, Any] = {_EXTENSION: {"generic": True}}
     if toc_options:
         configs["toc"] = toc_options

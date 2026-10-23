@@ -992,9 +992,18 @@ This text starts on the next page.
 - Extra blank lines add vertical space: each blank line beyond the first becomes one empty line in PDF
   and Word (code blocks are untouched). Set `preserve_blank_lines: false` to collapse them like
   plain Markdown.
-- Single line breaks inside a paragraph are joined with a space, as in plain Markdown. Set
-  `preserve_line_breaks: true` to keep each one as a line break (or end a line with two spaces for a
-  one-off break).
+- Single line breaks inside a paragraph are joined with a space, as in plain Markdown, so an
+  address block written on consecutive lines prints on one line. Three ways to get real line
+  breaks:
+  - **End the line with a backslash** (`[[Address1]]\`). This is the CommonMark, GitHub and
+    Pandoc way, it is visible, and it survives editors that strip trailing spaces. It works in
+    PDF, Word, `.dotx` and slides. It is left alone inside code blocks and inline code, in
+    display maths and table rows, when doubled (`\\` is a literal backslash), and when it ends a
+    paragraph (it prints as a backslash).
+  - **End the line with two spaces.** Same result, but invisible.
+  - **Set `preserve_line_breaks: true`** (in `_meta.yml` or frontmatter) to keep *every* line
+    break in the source, as Obsidian and chat tools do. Use it in a folder of short-line
+    documents such as letters; avoid it where you hand-wrap long paragraphs.
 - `body_text_align: justify` (config) justifies Word body text.
 - Wrap a section in `<div style="text-align: left">…</div>` to override alignment for it; every
   paragraph and heading inside inherits it. PDF uses the CSS directly.
@@ -5244,7 +5253,7 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `dotx_field_type` | enum | `form` | `form` (fillable Word fields) or `merge` (MERGEFIELDs). |
 | `body_text_align` | enum | theme | Word body alignment: `justify`, `left`, `center`, `right`. |
 | `preserve_blank_lines` | boolean | `true` | Each blank line beyond the first adds one line of vertical space (PDF/Word); `false` collapses them like plain Markdown. Code blocks are untouched. |
-| `preserve_line_breaks` | boolean | `false` | Keep single line breaks inside a paragraph or list item as line breaks (PDF/Word); off, Markdown joins them with a space (end a line with two spaces for one break). |
+| `preserve_line_breaks` | boolean | `false` | Keep single line breaks inside a paragraph or list item as line breaks (PDF/Word); off, Markdown joins them with a space (end a line with a backslash or two spaces for one break). |
 | `table_col_widths` | list | auto | Relative column widths for every table, e.g. `[30, 70]`; per table use `<!-- col-widths: 30, 70 -->`. |
 | `css_vars` | mapping | — | PDF only: per-document CSS custom properties; image paths resolved by the asset cascade. |
 | `pptx_template` | string | built-in | `.pptx`/`.potx` base for slide output. |
