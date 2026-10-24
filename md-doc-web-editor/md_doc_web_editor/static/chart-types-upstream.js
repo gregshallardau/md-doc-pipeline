@@ -246,6 +246,27 @@
 		templates: [{ key: 'vega-lite/bar_gantt', fields: { task: 'task', start: 'start', end: 'end' } }],
 	});
 
+	C.sample('u_negpos', 'Category,Change\nNorth,-28\nSouth,55\nEast,-33\nWest,91\nCentral,81\nOnline,-53\nExport,-19\nPartners,87\nOther,52');
+	C.upstream({
+		id: 'bar-posneg', group: 'compare', label: 'Bar with negatives', desc: 'Bars above and below a zero line', sample: 'u_negpos',
+		roles: [role('x', 'Category', 'any'), role('y', 'Value', 'num')], options: [],
+		templates: [{ key: 'vega-lite/bar_negative', fields: { x: 'a', y: 'b' } }],
+	});
+	C.sample('u_likert', () => {
+		const levels = ['Strongly disagree', 'Disagree', 'Neither agree nor disagree', 'Agree', 'Strongly agree'];
+		const next = rng(83);
+		const rows = ['Question,Response,Percentage'];
+		for (const q of ['Easy to use', 'Fast enough', 'Good value', 'Would recommend']) { const w = levels.map(() => 4 + next() * 30); const total = w.reduce((a, b) => a + b, 0); levels.forEach((l, i) => rows.push(`${q},${l},${((w[i] / total) * 100).toFixed(1)}`)); }
+		return rows.join('\n');
+	});
+	C.upstream({
+		id: 'bar-diverging', group: 'compare', label: 'Diverging stacked bar', desc: 'Survey answers centred on the neutral middle (the five Likert responses)', sample: 'u_likert', sampleMap: { x: 'Question', group: 'Response', y: 'Percentage' },
+		roles: [role('x', 'Question', 'any'), role('group', 'Response (Strongly disagree … Strongly agree)', 'any'), role('y', 'Percentage', 'num')], options: [],
+		templates: [{ key: 'vega-lite/bar_diverging_stack_transform', fields: { x: 'question', group: 'type', y: 'percentage' }, edits: [
+			dropTitles('its axis and legend titles (“Question”, “Response”, “Percentage”) are the example’s own wording', 'y', 'color'),
+		] }],
+	});
+
 	/* ── Change over time (second batch) ────────────────────────────────── */
 
 	C.upstream({
@@ -436,6 +457,29 @@
 	treeDef('circle-pack', 'Circle packing', 'Nested circles sized by value', 'vega/circle-packing');
 	treeDef('tree', 'Tree', 'The hierarchy as a node-link tree', 'vega/tree-layout');
 	treeDef('radial-tree', 'Radial tree', 'The hierarchy as a tree around a circle', 'vega/radial-tree-layout');
+	// An icicle is the sunburst's partition laid flat; a dendrogram is the tree layout with its own `cluster` option chosen.
+	C.upstream({
+		check: checkTree, id: 'icicle', group: 'hierarchy', label: 'Icicle', desc: 'Nested rows of rectangles sized by value', sample: 'u_tree', sampleMap: { id: 'Id', name: 'Name', parent: 'Parent', size: 'Size' },
+		roles: treeRoles, options: [],
+		templates: [{ key: 'vega/sunburst', fields: treeFields, fallback: { name: 'id' }, edits: [
+			{ why: 'the partition is laid out in width × height instead of angle × radius, and the arcs become rectangles', apply(spec) {
+				const part = spec.data[0].transform.find((t) => t.type === 'partition');
+				part.size = [{ signal: 'width' }, { signal: 'height' }];
+				part.as = ['x0', 'y0', 'x1', 'y1', 'depth', 'children'];
+				const mark = spec.marks[0];
+				mark.type = 'rect';
+				delete mark.encode.enter.x; delete mark.encode.enter.y;
+				mark.encode.update = { x: { field: 'x0' }, x2: { field: 'x1' }, y: { field: 'y0' }, y2: { field: 'y1' }, stroke: { value: 'white' }, strokeWidth: { value: 0.5 }, zindex: { value: 0 } };
+			} },
+		] }],
+	});
+	C.upstream({
+		check: checkTree, id: 'dendrogram', group: 'hierarchy', label: 'Dendrogram', desc: 'Every leaf at the same depth, in a cluster layout', sample: 'u_tree', sampleMap: { id: 'Id', name: 'Name', parent: 'Parent', size: 'Size' },
+		roles: treeRoles, options: [],
+		templates: [{ key: 'vega/tree-layout', fields: treeFields, fallback: { name: 'id' }, edits: [
+			{ why: 'its layout option starts on “cluster” (a choice the upstream spec itself offers) instead of “tidy”', apply(spec) { spec.signals.find((x) => x.name === 'layout').value = 'cluster'; } },
+		] }],
+	});
 	C.upstream({
 		id: 'radar', group: 'compare', label: 'Radar', desc: 'Several measures per item on spokes', sample: 'u_radar', sampleMap: { key: 'Skill', value: 'Score', category: 'Person' },
 		roles: [role('key', 'Spoke', 'any'), role('value', 'Value', 'num'), role('category', 'Series', 'any')], options: [],
@@ -460,5 +504,65 @@
 		browserOnly: 'its density grid needs a canvas', id: 'contour', group: 'matrix', label: 'Contour plot', desc: 'Density contours of a scatter, by group', sample: 'u_cars', sampleMap: { x: 'Horsepower', y: 'Miles per gallon', group: 'Origin' },
 		roles: [role('x', 'X (number)', 'num'), role('y', 'Y (number)', 'num'), role('group', 'Group', 'any')], options: [],
 		templates: [{ key: 'vega/contour-plot', fields: { x: 'Horsepower', y: 'Miles_per_Gallon', group: 'Origin' } }],
+	});
+
+	/* ── Maps ───────────────────────────────────────────────────────────── */
+
+	C.sample('u_counties', () => {
+		const next = rng(53);
+		const rows = ['County FIPS,Rate'];
+		for (const [state, last] of [[6, 115], [41, 71], [53, 77], [32, 33], [4, 27]]) for (let c = 1; c <= last; c += 2) rows.push(`${state * 1000 + c},${(3 + next() * 9).toFixed(1)}`);
+		return rows.join('\n');
+	});
+	C.sample('u_airports', 'Name,Latitude,Longitude\nSeattle,47.45,-122.31\nSan Francisco,37.62,-122.38\nLos Angeles,33.94,-118.41\nDenver,39.86,-104.67\nDallas,32.9,-97.04\nChicago,41.98,-87.9\nAtlanta,33.64,-84.43\nMiami,25.79,-80.29\nNew York,40.64,-73.78\nBoston,42.36,-71.01');
+	C.upstream({
+		id: 'map-us', group: 'geo', label: 'US county map', desc: 'A value for each county, by FIPS id', sample: 'u_counties', sampleMap: { id: 'County FIPS', value: 'Rate' },
+		roles: [role('id', 'County FIPS id', 'any'), role('value', 'Value (number)', 'num')], options: ['legend'],
+		templates: [{
+			key: 'vega-lite/geo_choropleth', fields: { id: 'id', value: 'rate' }, dataPath: ['transform', 0, 'from', 'data'],
+			// the shapes carry numeric ids (1001 for Autauga, AL); a leading zero (01001) would not match
+			prepare: (rows, s) => rows.map((r) => ({ ...r, [s.f('id')]: /^\d+$/.test(String(r[s.f('id')])) ? Number(r[s.f('id')]) : r[s.f('id')] })),
+		}],
+	});
+	C.upstream({
+		id: 'bubble-map-us', group: 'geo', label: 'US point map', desc: 'Points at latitude and longitude over the states', sample: 'u_airports', sampleMap: { lat: 'Latitude', lon: 'Longitude' },
+		roles: [role('lat', 'Latitude', 'num'), role('lon', 'Longitude', 'num')], options: [],
+		templates: [{ key: 'vega-lite/geo_layer', fields: { lat: 'latitude', lon: 'longitude' }, dataPath: ['layer', 1, 'data'] }],
+	});
+
+	// The world maps are the US examples pointed at the world file: same layers, same lookup, an equal-area world projection.
+	C.sample('u_countries', 'Country,Value\nUnited States,88\nCanada,64\nBrazil,52\nUnited Kingdom,71\nFrance,69\nGermany,77\nIndia,45\nChina,58\nJapan,80\nAustralia,73\nSouth Africa,41\nNigeria,36\nEgypt,39\nRussia,50\nMexico,55');
+	C.sample('u_cities', 'City,Latitude,Longitude\nLondon,51.47,-0.45\nNew York,40.64,-73.78\nSão Paulo,-23.43,-46.47\nCape Town,-33.96,18.6\nMumbai,19.09,72.87\nTokyo,35.55,139.78\nSydney,-33.95,151.18\nDubai,25.25,55.36\nLagos,6.58,3.32\nMexico City,19.44,-99.07');
+	const toWorld = () => ({
+		why: 'it points at the world countries file with an equal-area world projection, in place of the US states/counties file and the albersUsa projection',
+		apply(spec) {
+			const fix = (n) => {
+				if (!n || typeof n !== 'object') return;
+				if (n.url === 'data/us-10m.json') { n.url = 'data/world-110m.json'; if (n.format) n.format.feature = 'countries'; }
+				if (n.projection && n.projection.type === 'albersUsa') n.projection = { type: 'equalEarth' };
+				for (const v of Object.values(n)) if (v && typeof v === 'object') fix(v);
+			};
+			fix(spec);
+		},
+	});
+	C.upstream({
+		id: 'map-world', group: 'geo', label: 'World map', desc: 'A value for each country', sample: 'u_countries', sampleMap: { id: 'Country', value: 'Value' },
+		roles: [role('id', 'Country (name, ISO code or numeric id)', 'any'), role('value', 'Value (number)', 'num')], options: [],
+		templates: [{
+			key: 'vega-lite/geo_choropleth', fields: { id: 'id', value: 'rate' }, dataPath: ['transform', 0, 'from', 'data'], edits: [toWorld()],
+			// the shapes carry ISO 3166-1 numeric ids; names and codes are matched to them here, and unknown ones are reported
+			prepare: (rows, s) => {
+				const hits = rows.map((r) => C.geoMatch.country(r[s.f('id')]));
+				if (!hits.some(Boolean)) throw new Error(`None of the values in “${s.f('id')}” match a country. Use names, ISO codes or numeric ids.`);
+				const unknown = rows.filter((r, i) => !hits[i]).map((r) => String(r[s.f('id')]));
+				if (unknown.length) s.warn(`Not drawn, because the map does not know them: ${unknown.join(', ')}.`);
+				return rows.map((r, i) => ({ ...r, [s.f('id')]: hits[i] ? hits[i][0] : r[s.f('id')] }));
+			},
+		}],
+	});
+	C.upstream({
+		id: 'bubble-map-world', group: 'geo', label: 'World point map', desc: 'Points at latitude and longitude over the countries', sample: 'u_cities', sampleMap: { lat: 'Latitude', lon: 'Longitude' },
+		roles: [role('lat', 'Latitude', 'num'), role('lon', 'Longitude', 'num')], options: [],
+		templates: [{ key: 'vega-lite/geo_layer', fields: { lat: 'latitude', lon: 'longitude' }, dataPath: ['layer', 1, 'data'], edits: [toWorld()] }],
 	});
 })(typeof window !== 'undefined' ? window : globalThis);

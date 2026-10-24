@@ -159,6 +159,19 @@ def _builtin_dataset(name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _bundled_name(url: str, base_dir: Path | None) -> str | None:
+    """The bundled basemap a url names: ``vega-datasets:us-10m``, or upstream's own ``data/us-10m.json``
+    (unless the document has a file of that name, which wins)."""
+    if url.startswith(DATASET_SCHEME):
+        return url[len(DATASET_SCHEME) :]
+    match = re.fullmatch(r"data/([\w.-]+)\.json", url)
+    if match and (_DATA_DIR / f"{match.group(1)}.json").is_file():
+        if base_dir is not None and (base_dir / url).is_file():
+            return None
+        return match.group(1)
+    return None
+
+
 def _inline_data(spec: Any, base_dir: Path | None) -> None:
     """Replace local ``data: {url: file.csv|json}`` with inline ``values``.
 
@@ -174,8 +187,9 @@ def _inline_data(spec: Any, base_dir: Path | None) -> None:
     data = spec.get("data")
     if isinstance(data, dict) and isinstance(data.get("url"), str):
         url = data["url"]
-        if url.startswith(DATASET_SCHEME):
-            data["values"] = _builtin_dataset(url[len(DATASET_SCHEME) :])
+        bundled = _bundled_name(url, base_dir)
+        if bundled:
+            data["values"] = _builtin_dataset(bundled)
             del data["url"]
         elif not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE):
             path = Path(url)

@@ -214,12 +214,20 @@
 
 	/** Specs name a basemap as `url: vega-datasets:world-110m`; every renderer swaps it for the data. */
 	C.DATASET_SCHEME = 'vega-datasets:';
+	const BUNDLED = ['world-110m', 'us-10m'];
+	/** The bundled basemap a url names: `vega-datasets:us-10m`, or upstream's own `data/us-10m.json`. */
+	const bundledName = (url) => {
+		if (typeof url !== 'string') return null;
+		if (url.startsWith(C.DATASET_SCHEME)) return url.slice(C.DATASET_SCHEME.length);
+		const m = /^data\/([\w.-]+)\.json$/.exec(url);
+		return m && BUNDLED.includes(m[1]) ? m[1] : null;
+	};
 	C.datasetNames = (spec) => {
 		const found = new Set();
 		(function walk(n) {
 			if (Array.isArray(n)) return n.forEach(walk);
 			if (!n || typeof n !== 'object') return;
-			if (typeof n.url === 'string' && n.url.startsWith(C.DATASET_SCHEME)) found.add(n.url.slice(C.DATASET_SCHEME.length));
+			if (bundledName(n.url)) found.add(bundledName(n.url));
 			Object.values(n).forEach(walk);
 		})(spec);
 		return [...found];
@@ -234,7 +242,7 @@
 			if (!n || typeof n !== 'object') return n;
 			const out = {};
 			for (const [k, v] of Object.entries(n)) out[k] = swap(v);
-			if (typeof out.url === 'string' && out.url.startsWith(C.DATASET_SCHEME)) { out.values = data[out.url.slice(C.DATASET_SCHEME.length)]; delete out.url; }
+			if (bundledName(out.url)) { out.values = data[bundledName(out.url)]; delete out.url; }
 			return out;
 		};
 		return swap(spec);
@@ -361,7 +369,7 @@
 	 * else changes except the `edits` a type declares, each with its reason (C.EDITS lists them all).
 	 */
 	C.EDITS = [];
-	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by', 'density', 'regression', 'loess', 'on', 'quantile', 'pivot', 'parentKey']);
+	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by', 'density', 'regression', 'loess', 'on', 'quantile', 'pivot', 'parentKey', 'stack']);
 	const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 	/** Deep copy of `node` with every field-name reference in `map` ({ example name: user column }) renamed. */
@@ -435,7 +443,12 @@
 				// The spec reuses its field names for values it computes, so it stays byte-for-byte upstream and the data takes the example's column names.
 				rows = s.records.map((rec) => { const out = { ...rec }; for (const [from, to] of Object.entries(map)) delete out[to]; for (const [from, to] of Object.entries(map)) out[from] = rec[to]; return out; });
 			} else spec = renameFields(spec, map);
-			fillData(spec, rows);
+			if (t.prepare) rows = t.prepare(rows, s);
+			if (t.dataPath) { // the user's rows go inside the spec (e.g. a lookup table or a point layer), not in place of its geometry
+				let at = spec;
+				for (const k of t.dataPath.slice(0, -1)) at = at[k];
+				at[t.dataPath[t.dataPath.length - 1]] = { values: rows };
+			} else fillData(spec, rows);
 			if (s.opts.xTitle) setChannel(spec, 'x', 'title', s.opts.xTitle);
 			if (s.opts.yTitle) setChannel(spec, 'y', 'title', s.opts.yTitle);
 			if (s.opts.legend === false) { for (const ch of ['color', 'size']) setChannel(spec, ch, 'legend', null); }

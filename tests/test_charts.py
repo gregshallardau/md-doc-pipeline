@@ -143,3 +143,18 @@ def test_a_full_vega_spec_renders():
         'marks: [{type: rect, encode: {enter: {x: {value: 0}, y: {value: 0}, width: {value: 40}, height: {value: 20}, fill: {value: "#2563eb"}}}}]'
     )
     assert "<svg" in svg and "#2563eb" in svg.lower()
+
+
+def test_upstream_basemap_urls_resolve_to_the_bundled_files(tmp_path):
+    """Upstream examples say `data/us-10m.json`; a pasted block loads the bundled basemap without edits."""
+    src = "data: {url: data/us-10m.json, format: {type: topojson, feature: states}}\nmark: geoshape"
+    spec = charts.prepare_spec(src, base_dir=tmp_path)
+    assert "url" not in spec["data"] and spec["data"]["values"]["type"] == "Topology"
+    assert spec["data"]["format"]["feature"] == "states"
+    # a file of that name beside the document wins
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "us-10m.json").write_text('[{"id": 1}]')
+    assert charts.prepare_spec(src, base_dir=tmp_path)["data"]["values"] == [{"id": 1}]
+    # other upstream file names are not guessed at
+    with pytest.raises(charts.ChartError):
+        charts.prepare_spec("data: {url: data/cars.json}\nmark: bar", base_dir=tmp_path)

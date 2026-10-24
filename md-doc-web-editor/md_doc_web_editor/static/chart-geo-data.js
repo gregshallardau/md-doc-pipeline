@@ -11,4 +11,12 @@
 	// [FIPS, postal abbreviation, name]
 	const STATES = [[1,"AL","Alabama"],[2,"AK","Alaska"],[4,"AZ","Arizona"],[5,"AR","Arkansas"],[6,"CA","California"],[8,"CO","Colorado"],[9,"CT","Connecticut"],[10,"DE","Delaware"],[11,"DC","District of Columbia"],[12,"FL","Florida"],[13,"GA","Georgia"],[15,"HI","Hawaii"],[16,"ID","Idaho"],[17,"IL","Illinois"],[18,"IN","Indiana"],[19,"IA","Iowa"],[20,"KS","Kansas"],[21,"KY","Kentucky"],[22,"LA","Louisiana"],[23,"ME","Maine"],[24,"MD","Maryland"],[25,"MA","Massachusetts"],[26,"MI","Michigan"],[27,"MN","Minnesota"],[28,"MS","Mississippi"],[29,"MO","Missouri"],[30,"MT","Montana"],[31,"NE","Nebraska"],[32,"NV","Nevada"],[33,"NH","New Hampshire"],[34,"NJ","New Jersey"],[35,"NM","New Mexico"],[36,"NY","New York"],[37,"NC","North Carolina"],[38,"ND","North Dakota"],[39,"OH","Ohio"],[40,"OK","Oklahoma"],[41,"OR","Oregon"],[42,"PA","Pennsylvania"],[44,"RI","Rhode Island"],[45,"SC","South Carolina"],[46,"SD","South Dakota"],[47,"TN","Tennessee"],[48,"TX","Texas"],[49,"UT","Utah"],[50,"VT","Vermont"],[51,"VA","Virginia"],[53,"WA","Washington"],[54,"WV","West Virginia"],[55,"WI","Wisconsin"],[56,"WY","Wyoming"],[72,"PR","Puerto Rico"],[78,"VI","U.S. Virgin Islands"]];
 	C.geo = { COUNTRIES, STATES };
+
+	/* Name / code matching for the map charts: "UK", "gbr" and "United Kingdom" all find Great Britain's numeric id. */
+	const norm = (x) => String(x ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').replace(/\bthe\b/g, '').trim();
+	const index = (rows, keysOf) => { const m = new Map(); for (const row of rows) for (const k of keysOf(row)) if (k && !m.has(norm(k))) m.set(norm(k), row); return m; };
+	let countryIndex, stateIndex;
+	const findCountry = (v) => (countryIndex ??= index(C.geo.COUNTRIES, (c) => [String(c[0]), c[1], c[2], ...c[3]])).get(norm(v));
+	const findState = (v) => (stateIndex ??= index(C.geo.STATES, (s) => [String(s[0]), String(s[0]).padStart(2, '0'), s[1], s[2]])).get(norm(v));
+	C.geoMatch = { country: (v) => findCountry(v), state: (v) => findState(v) };
 })(typeof window !== 'undefined' ? window : globalThis);

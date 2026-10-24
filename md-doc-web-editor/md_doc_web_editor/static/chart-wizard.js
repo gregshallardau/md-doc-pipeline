@@ -24,12 +24,12 @@
 
 	/** Catalogue files, in load order (core first; the rest only register themselves). */
 	const FILES = [
-		'chart-core.js', 'chart-templates.js', 'chart-geo-data.js', 'chart-types-bars.js', 'chart-types-trends.js', 'chart-types-distribution.js',
-		'chart-types-relationship.js', 'chart-types-matrix.js', 'chart-types-composition.js', 'chart-types-hierarchy.js',
-		'chart-types-flow.js', 'chart-types-text.js', 'chart-types-geo.js',
+		'chart-core.js', 'chart-templates.js', 'chart-geo-data.js',
+		
+		'chart-types-flow.js',
 	];
 	// Upstream-backed types replace the hand-built ones with the same id, so they load last.
-	const LATE = ['chart-types-upstream.js'];
+	const LATE = ['chart-types-upstream.js', 'chart-types-custom.js'];
 	const STEPS = ['Type', 'Data', 'Customize', 'Insert'];
 	const THUMB = { w: 132, h: 84 };
 
