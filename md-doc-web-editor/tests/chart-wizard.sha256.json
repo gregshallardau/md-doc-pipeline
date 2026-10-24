@@ -1,15 +1,15 @@
 {
-  "chart-core.js": "79aab0c6bcbc8a0c34a80937e7ea58e6a8c09e94ed873f6f5bc7ac63752d93dd",
+  "chart-core.js": "582caba45ef5dd7511315221d6c458a89f334d82338d38878a9cbac5b68ee4e8",
   "chart-geo-data.js": "dea97c5ae5e3d5150d82a503ea07ed5f13a8dfb722ecbbb86ff4199f12baebcc",
   "chart-types-bars.js": "fbfcfdedae7d55a92a0fae078d3a96060ae876b2a0f4483409f26b5f991aa46a",
-  "chart-types-composition.js": "4f1f6ca7f90fb5f227a4bb21f76b1fb58fbbd1a3032a515e77d0fb0cf3567b95",
+  "chart-types-composition.js": "2aefa9d8b8e1008cf965eb52c120e060c387add82b46a56fa11f26a4d24d7e03",
   "chart-types-distribution.js": "18780de7530b8b20c3542f111d7cfa4e9a3cea34b05b0ca5e0acc8226492712c",
   "chart-types-flow.js": "adccde8271673553f63aa13fac5b53df387eb4de62b637fcf591ffd38beba829",
   "chart-types-geo.js": "a5920f2275912ed0af842a0423c21e0a6e2c2a193ad39440ae2f30cd09b4d5f7",
   "chart-types-hierarchy.js": "d154e634a41d35b4acf6aa4a9b04a19e144ca8539e628e7dee4ff825764efecd",
-  "chart-types-matrix.js": "fb2e3b4de6cf0a609f350502896cad3c58a651a91c61559286004ff134821302",
-  "chart-types-relationship.js": "05a50fb37731f53b50ccac7b41b3ef40fee6621a62aba8dbb6b33893f8f44b82",
+  "chart-types-matrix.js": "896da56244c1eafd867f4dbbfcef9bb072254096fab64e08f6a9e414d85f4155",
+  "chart-types-relationship.js": "97ef5526ed1e1d8e4b273524bb35826ea3b6df07fce93208197e14244fff3fbf",
   "chart-types-text.js": "9398a66355cdcb8c0a79478f88b71612f838c221a38c985877b27e4ae212797f",
   "chart-types-trends.js": "183d9231b0db30df14af69d342c77be17b7d1d71c31935e1676e09b14e35c52e",
-  "chart-wizard.js": "fcad1872dbb7c07b2cf6c13d831d4ba02ed116cf7ce74f20f1f031bfcbea4602"
+  "chart-wizard.js": "9535a87e477582554fa240d3bee9a42648aed4ede09a64353933af03c27f4bb2"
 }

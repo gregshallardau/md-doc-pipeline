@@ -155,4 +155,40 @@
 			return { data: { values: cells }, layer: parts };
 		},
 	});
+
+	/* ── Density contours ───────────────────────────────────────────────── */
+
+	C.option('levels', { label: 'Contour levels', kind: 'number', default: 8, min: 2, max: 20 });
+	C.option('pointsToo', { label: 'Show the points', kind: 'check', default: true });
+
+	C.type({
+		id: 'contour', group: 'matrix', label: 'Contour plot', desc: 'Density contours of a scatter', sample: 'scatterBins',
+		roles: [role('x', 'X (number)', 'num'), role('y', 'Y (number)', 'num')], options: ['levels', 'bandwidth', 'pointsToo'], sampleMap: { x: 'Height', y: 'Weight' }, opts: { levels: 8, pointsToo: true },
+		build(s) {
+			const xs = s.records.map((rec) => rec[s.f('x')]).filter((v) => typeof v === 'number');
+			const ys = s.records.map((rec) => rec[s.f('y')]).filter((v) => typeof v === 'number');
+			if (xs.length < 5) throw new Error('A contour plot needs at least 5 points.');
+			const pts = s.records.filter((rec) => typeof rec[s.f('x')] === 'number' && typeof rec[s.f('y')] === 'number').map((rec) => ({ x: rec[s.f('x')], y: rec[s.f('y')] }));
+			const bw = Number(s.opts.bandwidth) > 0 ? { bandwidth: Number(s.opts.bandwidth) } : {};
+			return C.h.vega(s, 440, 320, {
+				data: [
+					{ name: 'points', values: pts },
+					{ name: 'contours', source: 'points', transform: [{ type: 'contour', x: { expr: "scale('x', datum.x)" }, y: { expr: "scale('y', datum.y)" }, size: [{ signal: 'width' }, { signal: 'height' }], count: Math.max(2, Math.min(20, Math.round(Number(s.opts.levels) || 8))), ...bw }] },
+				],
+				scales: [
+					{ name: 'x', type: 'linear', round: true, nice: true, zero: false, domain: { data: 'points', field: 'x' }, range: 'width' },
+					{ name: 'y', type: 'linear', round: true, nice: true, zero: false, domain: { data: 'points', field: 'y' }, range: 'height' },
+					{ name: 'fill', type: 'linear', domain: { data: 'contours', field: 'value' }, range: { scheme: 'blues' } },
+				],
+				axes: [
+					{ orient: 'bottom', scale: 'x', title: s.opts.xTitle || s.f('x'), grid: false, tickCount: 6 },
+					{ orient: 'left', scale: 'y', title: s.opts.yTitle || s.f('y'), grid: false, tickCount: 6 },
+				],
+				marks: [
+					{ type: 'path', from: { data: 'contours' }, interactive: false, encode: { update: { fill: { scale: 'fill', field: 'value' }, fillOpacity: { value: 0.55 }, stroke: { value: '#ffffff' }, strokeWidth: { value: 0.8 } } }, transform: [{ type: 'geopath', field: 'datum' }] },
+					...(s.opts.pointsToo !== false ? [{ type: 'symbol', from: { data: 'points' }, interactive: false, encode: { update: { x: { scale: 'x', field: 'x' }, y: { scale: 'y', field: 'y' }, size: { value: 10 }, fill: { value: '#1f2328' }, fillOpacity: { value: 0.35 } } } }] : []),
+				],
+			});
+		},
+	});
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -5,7 +5,7 @@
 (function (root) {
 	'use strict';
 	const C = root.ChartCatalog;
-	const { at, q, axis, noLegend, wrap, layers, r, distinct, rng } = C.h;
+	const { at, q, axis, noLegend, wrap, layers, r, distinct, rng, vega } = C.h;
 
 	const role = (key, label, kind = 'any', required = true, extra) => ({ key, label, kind, required, ...extra });
 	const X_NUM = role('x', 'X (number)', 'num');
@@ -172,6 +172,101 @@
 			];
 			if (s.opts.labels && s.has('label')) parts.push({ mark: { type: 'text', dy: -13, fontSize: 10 }, encoding: { x, y, text: { field: s.f('label'), type: 'nominal' } } });
 			return { data: { values: s.records }, layer: parts };
+		},
+	});
+
+	/* ── Venn diagram ───────────────────────────────────────────────────── */
+
+	C.option('proportional', { label: 'Size circles by their totals', kind: 'check', default: true });
+	C.sample('overlaps', 'Sets,Size\nPython,72\nSQL,47\nR,29\nPython & SQL,32\nPython & R,12\nSQL & R,7\nPython & SQL & R,8');
+
+	/** Area of the lens where circles of radius r1 and r2, d apart, overlap. */
+	function lens(r1, r2, d) {
+		if (d >= r1 + r2) return 0;
+		if (d <= Math.abs(r1 - r2)) return Math.PI * Math.min(r1, r2) ** 2;
+		const a = r1 * r1 * Math.acos((d * d + r1 * r1 - r2 * r2) / (2 * d * r1));
+		const b = r2 * r2 * Math.acos((d * d + r2 * r2 - r1 * r1) / (2 * d * r2));
+		return a + b - 0.5 * Math.sqrt((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2));
+	}
+	/** The distance at which two circles overlap by `area` (the lens area falls as d grows). */
+	function distanceFor(r1, r2, area) {
+		let lo = Math.abs(r1 - r2), hi = r1 + r2;
+		if (area <= 0) return hi * 1.04;
+		if (area >= lens(r1, r2, lo)) return lo;
+		for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (lens(r1, r2, mid) > area) lo = mid; else hi = mid; }
+		return (lo + hi) / 2;
+	}
+
+	C.type({
+		id: 'venn', group: 'relationship', label: 'Venn diagram', desc: 'Overlaps between two or three sets', sample: 'overlaps',
+		roles: [role('x', 'Sets in the region (A & B)', 'any'), role('y', 'Items in exactly that region', 'num')], options: ['proportional', 'labels'], sampleMap: { x: 'Sets', y: 'Size' }, opts: { labels: true },
+		build(s) {
+			const split = (txt) => String(txt).split(/\s*(?:&|,|;|\||\u2229|\band\b)\s*/i).map((x) => x.trim()).filter(Boolean);
+			const regions = new Map();
+			for (const rec of s.records) {
+				const names = [...new Set(split(rec[s.f('x')]))];
+				const v = Number(rec[s.f('y')]);
+				if (!names.length || !Number.isFinite(v) || v < 0) continue;
+				const key = [...names].sort().join('\u0000');
+				regions.set(key, { names, value: (regions.get(key)?.value || 0) + v });
+			}
+			const sets = [];
+			for (const { names } of regions.values()) if (names.length === 1 && !sets.includes(names[0])) sets.push(names[0]);
+			for (const { names } of regions.values()) for (const nm of names) if (!sets.includes(nm)) sets.push(nm);
+			if (sets.length < 2 || sets.length > 3) throw new Error(`A Venn diagram needs 2 or 3 sets; found ${sets.length}${sets.length ? ` (${sets.join(', ')})` : ''}.`);
+			const n = sets.length;
+			const within = (...idx) => [...regions.values()].filter((g) => idx.every((i) => g.names.includes(sets[i]))).reduce((a, g) => a + g.value, 0);
+			const total = sets.map((_, i) => within(i));
+			if (total.some((t) => t <= 0)) throw new Error('Every set needs at least one item.');
+			const proportional = s.opts.proportional !== false;
+			const R = total.map((t) => (proportional ? Math.sqrt(t / Math.PI) : 1));
+			const D = (i, j) => (proportional ? distanceFor(R[i], R[j], within(i, j)) : 1);
+			const pos = [[0, 0], [D(0, 1), 0]];
+			if (n === 3) {
+				const dAB = D(0, 1), dAC = D(0, 2), dBC = D(1, 2);
+				const x = (dAB * dAB + dAC * dAC - dBC * dBC) / (2 * dAB);
+				pos.push([x, -Math.sqrt(Math.max(0, dAC * dAC - x * x))]);
+			}
+			if (!proportional && n === 3) pos[2] = [0.5, -0.866];
+			// Fit the drawing to a 420 x 300 box.
+			const minX = Math.min(...pos.map((p, i) => p[0] - R[i])), maxX = Math.max(...pos.map((p, i) => p[0] + R[i]));
+			const minY = Math.min(...pos.map((p, i) => p[1] - R[i])), maxY = Math.max(...pos.map((p, i) => p[1] + R[i]));
+			const W = 420, H = 320, margin = 56;
+			const k = Math.min((W - 2 * margin) / (maxX - minX), (H - 2 * margin) / (maxY - minY));
+			const place = ([px, py]) => [r((px - (minX + maxX) / 2) * k + W / 2, 1), r((py - (minY + maxY) / 2) * k + H / 2, 1)];
+			const centre = pos.map(place), rad = R.map((x) => r(x * k, 1));
+			const mean = [0, 1].map((a) => centre.reduce((acc, p) => acc + p[a], 0) / n);
+			const away = (p, from) => { const dx = p[0] - from[0], dy = p[1] - from[1], len = Math.hypot(dx, dy) || 1; return [dx / len, dy / len]; };
+			const labels = [], names = [];
+			// Each count sits at the most interior point of its own region (furthest from every circle edge).
+			const anchor = (idx) => {
+				let best = null, bestM = 0;
+				for (let gx = 0; gx <= W; gx += 3) for (let gy = 0; gy <= H; gy += 3) {
+					let m = Infinity, ok = true;
+					for (let i = 0; i < n; i++) {
+						const d = Math.hypot(gx - centre[i][0], gy - centre[i][1]) - rad[i];
+						if ((d < 0) !== idx.includes(i)) { ok = false; break; }
+						m = Math.min(m, Math.abs(d));
+					}
+					if (ok && m > bestM) { bestM = m; best = [gx, gy]; }
+				}
+				return best || [idx.reduce((a, i) => a + centre[i][0], 0) / idx.length, idx.reduce((a, i) => a + centre[i][1], 0) / idx.length];
+			};
+			for (const { names: ns, value } of regions.values()) {
+				const idx = ns.map((nm) => sets.indexOf(nm)).sort();
+				const at = anchor(idx);
+				labels.push({ x: r(at[0], 1), y: r(at[1], 1), text: C.h.fmt(value), tip: ns.join(' ∩ ') });
+			}
+			sets.forEach((nm, i) => { const [ux, uy] = away(centre[i], mean); const d = rad[i] + 12; names.push({ x: r(centre[i][0] + ux * d, 1), y: r(centre[i][1] + uy * d, 1), text: `${nm} (${C.h.fmt(total[i])})`, align: ux > 0.3 ? 'left' : ux < -0.3 ? 'right' : 'center', base: uy > 0.5 ? 'top' : uy < -0.5 ? 'bottom' : 'middle' }); });
+			return vega(s, W, H, {
+				data: [{ name: 'circles', values: sets.map((nm, i) => ({ set: nm, x: centre[i][0], y: centre[i][1], area: r(Math.PI * rad[i] ** 2, 1) })) }, { name: 'counts', values: s.opts.labels === false ? [] : labels }, { name: 'names', values: names }],
+				scales: [{ name: 'color', type: 'ordinal', domain: sets, range: 'category' }],
+				marks: [
+					{ type: 'symbol', from: { data: 'circles' }, encode: { update: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'area' }, shape: { value: 'circle' }, fill: { scale: 'color', field: 'set' }, fillOpacity: { value: 0.42 }, stroke: { scale: 'color', field: 'set' }, strokeWidth: { value: 2 } } } },
+					{ type: 'text', from: { data: 'counts' }, interactive: false, encode: { update: { x: { field: 'x' }, y: { field: 'y' }, text: { field: 'text' }, align: { value: 'center' }, baseline: { value: 'middle' }, fontSize: { value: 13 }, fontWeight: { value: 600 }, fill: { value: '#1f2328' } } } },
+					{ type: 'text', from: { data: 'names' }, interactive: false, encode: { update: { x: { field: 'x' }, y: { field: 'y' }, text: { field: 'text' }, align: { field: 'align' }, baseline: { field: 'base' }, fontSize: { value: 12 }, fill: { value: '#1f2328' } } } },
+				],
+			});
 		},
 	});
 })(typeof window !== 'undefined' ? window : globalThis);

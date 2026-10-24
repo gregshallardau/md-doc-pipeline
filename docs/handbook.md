@@ -1050,6 +1050,14 @@ encoding:
   chart's own sample data, lets you paste a table or edit the sample, and inserts the block at the
   cursor. The presentation framework's studio has the same wizard, and its Markdown slides take the
   same block, so a chart is the same in a document and on a slide.
+- **Editing a chart again.** Put the cursor inside a chart block the wizard wrote and choose
+  **Insert → Edit chart at cursor**. The wizard reopens on that chart's own type (the type cannot be
+  changed while editing; insert a new chart for that), with its data, columns and options restored,
+  and **Update chart** replaces the block in place. The wizard keeps these settings in a
+  `# chart-wizard: {…}` comment on the block's first line, which the build ignores. If you changed
+  the block by hand since the wizard wrote it, the wizard says so before it rebuilds the chart from
+  its settings, which replaces those changes. A chart written by hand has no saved settings, so it
+  cannot be reopened.
 - **Data.** Inline with `data: {values: [...]}`, or `data: {url: file.csv}` (`.csv`, `.tsv` or `.json`)
   read relative to the document. Remote URLs are not fetched at build time.
 - **Built-in maps.** `data: {url: "vega-datasets:world-110m"}` (countries; ISO 3166-1 numeric ids) and
@@ -1153,6 +1161,7 @@ make sense for the chart you pick.
 | Scatter matrix | `scatter-matrix` | Numeric columns, Colour by (optional) |
 | Parallel coordinates | `parallel` | Numeric columns, Colour by (optional) |
 | Quadrant chart | `quadrant` | X, Y, Label (optional), Size by (optional) |
+| Venn diagram | `venn` | Sets in the region, Items in exactly that region |
 
 **Parts of a whole** — shares and proportions
 
@@ -1164,6 +1173,7 @@ make sense for the chart you pick.
 | Nightingale rose | `rose` | Category, Value |
 | Radial bar | `radial-bar` | Ring label, Value |
 | Waffle | `waffle` | Category, Amount |
+| Pictogram | `pictogram` | Category, Amount |
 
 **Heatmaps and matrices** — intensity across two dimensions
 
@@ -1174,6 +1184,7 @@ make sense for the chart you pick.
 | 2D histogram | `hist2d` | X, Y |
 | Calendar heatmap | `calendar` | Date, Value |
 | Correlation matrix | `correlation` | Numeric columns |
+| Contour plot | `contour` | X, Y |
 
 **Progress and KPIs** — single numbers and targets
 
@@ -1223,7 +1234,7 @@ make sense for the chart you pick.
 A few of these are laid out when the chart is inserted, and the result is drawn with Vega marks, because
 Vega has no transform for them: **Sankey**, **Chord**, **Arc diagram**, **Edge bundling**,
 **Marimekko**, **Waffle**, **Radial bar**, **Nightingale rose**, **Gauge**, **Funnel**, **Waterfall**,
-**Word cloud**, **Radar** and **Correlation matrix**. Their layout is computed from your data at that
+**Word cloud**, **Radar**, **Correlation matrix**, **Venn diagram** and **Pictogram**. Their layout is computed from your data at that
 moment, so editing the numbers in the inserted block does not re-flow them; run the wizard again to
 rebuild. The rest are driven by the data in the block: change a value and the chart follows.
 

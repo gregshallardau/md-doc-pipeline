@@ -236,12 +236,17 @@ help reconstruct content when no source copy remains.
 ## Chart wizard
 
 **Insert → Chart…** opens a four-step builder (type, data, customize, insert) for Vega-Lite and Vega
-charts: 84 chart types in 11 groups, with a searchable picker whose thumbnails are drawn from each
+charts: 87 chart types in 11 groups, with a searchable picker whose thumbnails are drawn from each
 chart's own sample data. Paste a table or edit the sample, pick columns and options, and it inserts a
 `chart` block at the cursor; the preview uses this document's own theme
 (`GET /api/charts/config?path=…`). The block is rendered by `md-doc build` (needs the `charts` extra) and
 is the same one the presentation framework's Markdown slides take. The full catalogue is in the
 [handbook](../docs/handbook.md#markdown-charts-catalogue).
+
+**Insert → Edit chart at cursor** reopens the wizard on the chart block the cursor is in, restricted to
+that chart's own type, with its data, columns and options restored; **Update chart** replaces the block
+in place. The settings live in a `# chart-wizard: {…}` comment on the block's first line, so only blocks
+the wizard wrote can be reopened, and a hand edit is flagged before it is replaced.
 
 The wizard is the shared files `static/chart-*.js` (core, one module per chart family, map lookup tables
 and the dialog), byte-identical copies of the canonical ones in the presentation framework's studio.

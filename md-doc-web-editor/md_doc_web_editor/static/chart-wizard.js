@@ -226,6 +226,8 @@
 		const chart = () => C.chartType(state.type);
 		const optValue = (id) => (state.opts[id] !== undefined ? state.opts[id] : C.optionDefaults(chart())[id]);
 		const currentOpts = () => ({ ...C.optionDefaults(chart()), ...state.opts });
+		const snapshot = () => ({ type: state.type, table: state.table, types: state.types, map: state.map, opts: state.opts, userTyped: state.userTyped });
+		const codeNow = () => C.codeFor(host.format, current(), currentOpts().title, snapshot());
 		const current = (warnings) => C.buildSpec({ type: state.type, table: state.table, types: state.types, map: state.map, opts: currentOpts() }, warnings);
 
 		function setTable(table) {
@@ -243,7 +245,9 @@
 			state.map = st.map;
 			state.opts = {};
 		}
-		loadSample();
+		const editing = host.editing || null;
+		if (editing) Object.assign(state, editing.state, { step: 1, touched: true });
+		else loadSample();
 
 		/* preview */
 		async function preview(box, note) {
@@ -451,12 +455,13 @@
 		function insertStep() {
 			const warnings = [];
 			let code = '', problem = '';
-			try { code = C.codeFor(host.format, current(warnings), currentOpts().title); } catch (e) { problem = e.message; }
+			try { code = C.codeFor(host.format, current(warnings), currentOpts().title, snapshot()); } catch (e) { problem = e.message; }
 			const copy = h('button', { type: 'button', class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(code); copy.textContent = 'Copied'; } catch { copy.textContent = 'Copy failed'; } } }, 'Copy');
 			const rows = state.table.rows.length;
 			return [
-				h('h3', null, 'Ready to insert'),
-				h('p', { class: 'hint' }, host.format === 'deck-element'
+				h('h3', null, editing ? 'Ready to update' : 'Ready to insert'),
+				handEdited(),
+				h('p', { class: 'hint' }, editing ? 'This replaces the chart you opened, in place.' : host.format === 'deck-element'
 					? 'This <deck-chart-vega> goes in at the cursor. It is interactive on the slide.'
 					: 'This chart block goes in at the cursor. The same block works in md-doc documents and in Markdown slides.'),
 				problem ? h('p', { class: 'cw-note error' }, problem) : h('pre', { class: 'cw-code', tabindex: '0' }, code),
@@ -467,7 +472,11 @@
 		}
 
 		/* shell */
-		function go(to) { state.step = Math.max(0, Math.min(STEPS.length - 1, to)); render(); }
+		const handEdited = () => (editing && editing.edited
+			? h('p', { class: 'cw-note warn' }, 'This block was changed by hand after the wizard wrote it. Updating it rebuilds the chart from the settings below and replaces those changes.')
+			: null);
+		const lowest = editing ? 1 : 0; // the chart type is fixed while editing a chart
+		function go(to) { state.step = Math.max(lowest, Math.min(STEPS.length - 1, to)); render(); }
 
 		function render() {
 			const main = h('div', { class: 'cw-main' });
@@ -476,18 +485,18 @@
 			const refresh = (quiet) => { clearTimeout(timer); timer = setTimeout(() => preview(box, note), quiet ? 250 : 80); };
 			const showPreview = state.step > 0;
 			const body = h('div', { class: 'cw-body' }, main, showPreview ? h('aside', { class: 'cw-preview', 'aria-label': 'Preview' }, box, note) : null);
-			const steps = h('ol', { class: 'cw-steps' }, STEPS.map((s, i) => h('li', { class: i < state.step ? 'done' : '', 'aria-current': i === state.step ? 'step' : null }, `${i + 1}. ${s}`)));
-			const head = h('div', { class: 'cw-head' }, h('h2', null, 'Insert a chart'), steps, h('button', { type: 'button', class: 'btn', onclick: () => dialog.close(), 'aria-label': 'Close' }, '✕'));
+			const steps = h('ol', { class: 'cw-steps' }, STEPS.map((s, i) => h('li', { class: i < state.step ? 'done' : '', 'aria-current': i === state.step ? 'step' : null }, editing && i === 0 ? `${i + 1}. ${chart().label}` : `${i + 1}. ${s}`)));
+			const head = h('div', { class: 'cw-head' }, h('h2', null, editing ? `Edit ${chart().label.toLowerCase()}` : 'Insert a chart'), steps, h('button', { type: 'button', class: 'btn', onclick: () => dialog.close(), 'aria-label': 'Close' }, '✕'));
 			const last = state.step === STEPS.length - 1;
 			const foot = h('div', { class: 'cw-foot' },
-				h('button', { type: 'button', class: 'btn', disabled: state.step === 0, onclick: () => go(state.step - 1) }, 'Back'),
+				h('button', { type: 'button', class: 'btn', disabled: state.step <= lowest, onclick: () => go(state.step - 1) }, 'Back'),
 				h('span', { class: 'grow' }),
 				h('button', { type: 'button', class: 'btn', onclick: () => dialog.close() }, 'Cancel'),
 				last
-					? h('button', { type: 'button', class: 'btn primary', onclick: () => { try { host.onInsert(C.codeFor(host.format, current(), currentOpts().title)); dialog.close(); } catch (e) { note.textContent = e.message; } } }, 'Insert at cursor')
+					? h('button', { type: 'button', class: 'btn primary', onclick: () => { try { host.onInsert(codeNow()); dialog.close(); } catch (e) { note.textContent = e.message; } } }, editing ? 'Update chart' : 'Insert at cursor')
 					: state.step === 0 ? null : h('button', { type: 'button', class: 'btn primary', onclick: () => go(state.step + 1) }, 'Next'));
 			dialog.replaceChildren(head, body, foot);
-			main.append(...[typeStep, dataStep, designStep, insertStep][state.step](refresh).filter(Boolean));
+			main.append(...[state.step === 1 ? handEdited() : null, ...[typeStep, dataStep, designStep, insertStep][state.step](refresh)].filter(Boolean));
 			if (showPreview) refresh();
 		}
 
@@ -497,5 +506,22 @@
 		return dialog;
 	}
 
-	root.ChartWizard = { open, FILES, ensureCatalog };
+	/**
+	 * Edit the chart block under the cursor. The host also supplies
+	 *   getSource():              { text, offset }  the whole document and the cursor position in it
+	 *   replaceRange(start, end, code)              swap that part of the document for the new block
+	 *   notify(message)                             say why there is nothing to edit
+	 * Only a block the wizard wrote can be reopened, and only as its own chart type.
+	 */
+	async function edit(host) {
+		const C = await ensureCatalog(host.scriptBase || '.');
+		const { text, offset } = host.getSource();
+		const block = C.findBlock(text, offset, host.format);
+		if (!block) return host.notify('Put the cursor inside a chart block to edit it.');
+		const read = C.readBlock(block.text, host.format);
+		if (read.error) return host.notify(read.error);
+		return open({ ...host, editing: read, onInsert: (code) => host.replaceRange(block.start, block.end, code) });
+	}
+
+	root.ChartWizard = { open, edit, FILES, ensureCatalog };
 })(typeof window !== 'undefined' ? window : globalThis);

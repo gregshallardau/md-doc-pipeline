@@ -286,7 +286,7 @@
 		return out;
 	};
 	/** Compact number text for labels: 1,234 / 1.2k stays out of it - labels show what the data says. */
-	h.fmt = (v) => (Number.isInteger(v) ? String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : String(r(v, 2)));
+	h.fmt = (v) => (Number.isInteger(v) ? String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : String(h.r(v, 2)));
 	/** Deterministic pseudo-random numbers, so sample data is the same everywhere. */
 	h.rng = (seed) => { let x = seed >>> 0 || 1; return () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 4294967296); };
 	/** ISO date string `n` days after 2025-01-01. */
@@ -403,14 +403,69 @@
 	 *   yaml-fence    a ```chart block (md-doc documents and deck .md slides)
 	 *   deck-element  <deck-chart-vega> with a JSON script (deck .html slides)
 	 */
-	function codeFor(format, spec, label) {
+	function codeFor(format, spec, label, state) {
+		const token = state ? stateToken(state, format === 'deck-element' ? deckBody(spec) : yamlBody(spec)) : '';
 		if (format === 'deck-element') {
-			const json = JSON.stringify(spec, null, '\t').replace(/<\//g, '<\\/').replace(/\n/g, '\n\t\t');
-			const attr = label ? ` label="${String(label).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"` : '';
-			return `<deck-chart-vega${attr}>\n\t<script type="application/json">\n\t\t${json}\n\t</script>\n</deck-chart-vega>\n`;
+			const attr = (label ? ` label="${escAttr(label)}"` : '') + (token ? ` data-wizard="${escAttr(token)}"` : '');
+			return `<deck-chart-vega${attr}>\n\t<script type="application/json">\n\t\t${deckBody(spec).replace(/\n/g, '\n\t\t')}\n\t</script>\n</deck-chart-vega>\n`;
 		}
-		return '```chart\n' + toYaml(spec) + '\n```\n';
+		return '```chart\n' + (token ? `# ${MARK} ${token}\n` : '') + yamlBody(spec) + '\n```\n';
 	}
+	const escAttr = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+	const unescAttr = (v) => String(v).replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+	const yamlBody = (spec) => toYaml(spec);
+	const deckBody = (spec) => JSON.stringify(spec, null, '\t').replace(/<\//g, '<\\/');
+
+	/* ── Editing a block again ──────────────────────────────────────────────
+	 * The wizard writes what it needs to reopen a chart into the block itself: a `# chart-wizard:`
+	 * comment line in a ```chart fence (YAML ignores it) or a data-wizard attribute on
+	 * <deck-chart-vega> (the component ignores it). It holds the type, data, column mapping and
+	 * options, plus a hash of the generated body so a hand edit can be noticed. */
+	const MARK = 'chart-wizard:';
+	const hashBody = (text) => { let x = 0x811c9dc5; for (const ch of String(text).replace(/\s+/g, '')) { x ^= ch.codePointAt(0); x = Math.imul(x, 0x01000193) >>> 0; } return x.toString(36); };
+	function stateToken(state, body) {
+		const opts = {};
+		for (const [k, v] of Object.entries(state.opts || {})) if (v !== undefined) opts[k] = v;
+		const userTyped = Object.keys(state.userTyped || {}).filter((c) => state.userTyped[c]);
+		return JSON.stringify({ v: 1, t: state.type, c: state.table.columns, r: state.table.rows, y: state.types, m: state.map, o: opts, u: userTyped, h: hashBody(body) });
+	}
+
+	/** The block around `offset` in `text` ({ start, end, text }), or null. */
+	function findBlock(text, offset, format) {
+		const re = format === 'deck-element' ? /<deck-chart-vega\b[\s\S]*?<\/deck-chart-vega>[ \t]*\n?/g : /^```chart[^\n]*\n[\s\S]*?^```[ \t]*(?:\n|$)/gm;
+		for (let m; (m = re.exec(text)); ) if (m.index <= offset && offset <= m.index + m[0].length) return { start: m.index, end: m.index + m[0].length, text: m[0] };
+		return null;
+	}
+
+	/**
+	 * Wizard state saved in a block, plus whether its body has been changed by hand since.
+	 * Returns { state, edited } or { error } (a block the wizard did not write, or one it can no longer open).
+	 */
+	function readBlock(blockText, format) {
+		let token, body;
+		if (format === 'deck-element') {
+			const attr = /\sdata-wizard="([^"]*)"/.exec(blockText.slice(0, blockText.indexOf('>') + 1));
+			token = attr && unescAttr(attr[1]);
+			body = (/<script[^>]*>([\s\S]*?)<\/script>/.exec(blockText) || [])[1] || '';
+		} else {
+			const lines = blockText.replace(/\n```[ \t]*\n?$/, '').split('\n').slice(1);
+			const first = lines[0] || '';
+			token = first.startsWith(`# ${MARK} `) ? first.slice(MARK.length + 3) : null;
+			body = lines.slice(token ? 1 : 0).join('\n');
+		}
+		if (!token) return { error: 'This chart was not made by the wizard, so its settings were not saved with it. Insert a new chart instead.' };
+		let t;
+		try { t = JSON.parse(token); } catch { return { error: 'The wizard settings saved in this chart are damaged.' }; }
+		const chart = t && t.v === 1 && C.TYPES.find((c) => c.id === t.t);
+		if (!chart) return { error: 'This chart was made with a chart type this wizard does not have.' };
+		const columns = Array.isArray(t.c) ? t.c : [];
+		const state = { type: chart.id, table: { columns, rows: Array.isArray(t.r) ? t.r : [] }, types: t.y || {}, map: t.m || {}, opts: t.o || {}, userTyped: Object.fromEntries((t.u || []).map((c) => [c, true])) };
+		const used = Object.values(state.map).flat();
+		if (used.some((c) => !columns.includes(c))) return { error: 'The wizard settings saved in this chart refer to columns that are no longer there.' };
+		return { state, edited: hashBody(body) !== t.h };
+	}
+	C.findBlock = findBlock;
+	C.readBlock = readBlock;
 	C.toYaml = toYaml;
 	C.codeFor = codeFor;
 

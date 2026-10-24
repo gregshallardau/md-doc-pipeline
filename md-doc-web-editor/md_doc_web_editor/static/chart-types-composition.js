@@ -164,4 +164,53 @@
 			};
 		},
 	});
+
+	/* ── Pictogram ──────────────────────────────────────────────────────── */
+
+	// Icons are SVG paths in a [-1, 1] box (Vega scales a custom path shape from its symbol size).
+	const ICONS = {
+		person: 'M0,-1 a0.28,0.28 0 1,1 0,0.56 a0.28,0.28 0 1,1 0,-0.56 M-0.5,-0.3 h1 v0.8 h-0.28 v0.7 h-0.44 v-0.7 h-0.28 Z',
+		circle: 'circle',
+		square: 'square',
+		diamond: 'diamond',
+		triangle: 'triangle-up',
+		cross: 'cross',
+		heart: 'M0,0.95 C-1.1,0.1 -1,-0.7 -0.5,-0.8 C-0.2,-0.85 0,-0.6 0,-0.45 C0,-0.6 0.2,-0.85 0.5,-0.8 C1,-0.7 1.1,0.1 0,0.95 Z',
+		drop: 'M0,-1 C0.5,-0.3 0.85,0.1 0.85,0.45 C0.85,0.85 0.45,1 0,1 C-0.45,1 -0.85,0.85 -0.85,0.45 C-0.85,0.1 -0.5,-0.3 0,-1 Z',
+		star: 'M0,-1 L0.29,-0.4 L0.95,-0.31 L0.47,0.15 L0.59,0.81 L0,0.5 L-0.59,0.81 L-0.47,0.15 L-0.95,-0.31 L-0.29,-0.4 Z',
+	};
+	C.option('icon', { label: 'Icon', kind: 'select', default: 'person', choices: [['person', 'Person'], ['circle', 'Circle'], ['square', 'Square'], ['diamond', 'Diamond'], ['triangle', 'Triangle'], ['heart', 'Heart'], ['drop', 'Drop'], ['star', 'Star']] });
+	C.option('pictoUnit', { label: 'Each icon stands for (0 = automatic)', kind: 'number', default: 0, min: 0 });
+	C.sample('people', 'Group,People\nStudents,420\nEmployed,310\nRetired,180\nSeeking work,60');
+
+	C.type({
+		id: 'pictogram', group: 'composition', label: 'Pictogram', desc: 'Rows of icons, each standing for a quantity', sample: 'people',
+		roles: [role('x', 'Category', 'any'), role('y', 'Amount', 'num')], options: ['agg', 'icon', 'pictoUnit', 'legend'], sampleMap: { x: 'Group', y: 'People' },
+		build(s) {
+			const rows = totals(s, 'x', 'y');
+			const top = Math.max(...rows.map((d) => d.value), 1e-9);
+			let unit = Number(s.opts.pictoUnit) > 0 ? Number(s.opts.pictoUnit) : 0;
+			if (!unit) { // the smallest round number that keeps the longest row to 12 icons or fewer
+				const raw = top / 12, mag = 10 ** Math.floor(Math.log10(raw || 1));
+				unit = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((u) => u >= raw) || mag * 10;
+			}
+			const icons = [], ends = [];
+			rows.forEach((d) => {
+				const count = Math.round(d.value / unit);
+				for (let i = 0; i < count; i++) icons.push({ cat: d.name, i });
+				ends.push({ cat: d.name, i: count, label: C.h.fmt(d.value) });
+			});
+			const shape = ICONS[s.opts.icon] || ICONS.person;
+			const y = { field: 'cat', type: 'nominal', sort: rows.map((d) => d.name), axis: { title: null, domain: false, ticks: false, labelPadding: 8 } };
+			const x = { field: 'i', type: 'quantitative', axis: null, scale: { domain: [-0.5, Math.max(...ends.map((e) => e.i)) + 3] } };
+			return {
+				data: { values: icons },
+				layer: [
+					{ mark: { type: 'point', filled: true, shape, size: 340, opacity: 1, strokeWidth: 0 }, encoding: { x, y, color: { field: 'cat', type: 'nominal', sort: null, scale: { domain: rows.map((d) => d.name) }, legend: s.opts.legend === false ? null : { title: `1 icon = ${C.h.fmt(unit)}` } } } },
+					{ data: { values: ends }, mark: { type: 'text', align: 'left', dx: 12, fontSize: 12, fontWeight: 600 }, encoding: { x, y, text: { field: 'label' } } },
+				],
+				config: { view: { stroke: null } },
+			};
+		},
+	});
 })(typeof window !== 'undefined' ? window : globalThis);
