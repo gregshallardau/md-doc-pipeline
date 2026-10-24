@@ -191,6 +191,7 @@
 			warn: (m) => { if (warnings) warnings.push(m); },
 		};
 		const spec = chart.build(s);
+		if (chart.browserOnly) s.warn(`This chart ${chart.browserOnly}, which md-doc’s PDF and Word renderer does not have yet. It draws in the browser and on slides.`);
 		if (opts.title && spec.title === undefined) spec.title = opts.title;
 		return spec;
 	}
@@ -360,7 +361,7 @@
 	 * else changes except the `edits` a type declares, each with its reason (C.EDITS lists them all).
 	 */
 	C.EDITS = [];
-	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by', 'density', 'regression', 'loess', 'on', 'quantile', 'pivot']);
+	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by', 'density', 'regression', 'loess', 'on', 'quantile', 'pivot', 'parentKey']);
 	const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 	/** Deep copy of `node` with every field-name reference in `map` ({ example name: user column }) renamed. */
@@ -371,10 +372,10 @@
 			.replace(new RegExp(`datum\\[(["'])${escapeRe(from)}\\1\\]`, 'g'), () => `datum[${JSON.stringify(to)}]`), text);
 		const walk = (v, key) => {
 			if (Array.isArray(v)) return v.map((x) => walk(x, key === 'groupby' || key === 'fields' || key === 'fold' || key === 'flatten' ? key : undefined));
-			if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+			if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [key === 'parse' ? rename(k) : k, walk(x, k)]));
 			if (typeof v !== 'string') return v;
 			if (FIELD_KEYS.has(key) || key === 'groupby' || key === 'fields' || key === 'fold' || key === 'flatten' || key === 'sort') return rename(v);
-			if (key === 'calculate' || key === 'filter' || key === 'expr') return expr(v);
+			if (key === 'calculate' || key === 'filter' || key === 'expr' || key === 'signal' || key === 'test' || key === 'update') return expr(v);
 			return v;
 		};
 		return walk(node);
@@ -399,7 +400,10 @@
 		if (spec.data && typeof spec.data === 'object' && !Array.isArray(spec.data)) spec.data = { values: rows };
 		else if (Array.isArray(spec.data)) {
 			const source = spec.data.find((d) => d.url || d.values);
-			if (source) { delete source.url; delete source.format; source.values = rows; }
+			if (source) { // the example's parse hints (dates, numbers) still apply to inline values; its file format does not
+				const parse = source.format && source.format.parse;
+				delete source.url; delete source.format; if (parse) source.format = { parse }; source.values = rows;
+			}
 		}
 	}
 
@@ -415,15 +419,23 @@
 	const upstreamType = (def) => C.type({
 		...def,
 		build(s) {
+			if (def.check) def.check(s); // readable problems with the user's data, before the example's own error
 			const t = def.templates.find((x) => !x.when || x.when(s.opts)) || def.templates[0];
 			const up = C.TEMPLATES[t.key];
 			if (!up) throw new Error(`Missing upstream template ${t.key}`);
 			const map = {};
-			for (const [role, example] of Object.entries(t.fields)) if (s.has(role)) map[example] = s.f(role);
+			for (const [role, example] of Object.entries(t.fields)) {
+				if (s.has(role)) map[example] = s.f(role);
+				else if (t.fallback && t.fallback[role] && s.has(t.fallback[role])) map[example] = s.f(t.fallback[role]); // e.g. labels default to the id column
+			}
 			let spec = JSON.parse(JSON.stringify(up.spec));
 			for (const e of t.edits || []) e.apply(spec, s);
-			spec = renameFields(spec, map);
-			fillData(spec, s.records);
+			let rows = s.records;
+			if (t.rename === 'data') {
+				// The spec reuses its field names for values it computes, so it stays byte-for-byte upstream and the data takes the example's column names.
+				rows = s.records.map((rec) => { const out = { ...rec }; for (const [from, to] of Object.entries(map)) delete out[to]; for (const [from, to] of Object.entries(map)) out[from] = rec[to]; return out; });
+			} else spec = renameFields(spec, map);
+			fillData(spec, rows);
 			if (s.opts.xTitle) setChannel(spec, 'x', 'title', s.opts.xTitle);
 			if (s.opts.yTitle) setChannel(spec, 'y', 'title', s.opts.yTitle);
 			if (s.opts.legend === false) { for (const ch of ['color', 'size']) setChannel(spec, ch, 'legend', null); }

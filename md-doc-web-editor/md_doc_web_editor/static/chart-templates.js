@@ -3152,6 +3152,3139 @@
 					}
 				]
 			}
+		},
+		"vega/treemap": {
+			"src": "vega/docs/examples/treemap.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "An example of treemap layout for hierarchical data.",
+				"width": 960,
+				"height": 500,
+				"padding": 2.5,
+				"autosize": "none",
+				"signals": [
+					{
+						"name": "layout",
+						"value": "squarify",
+						"bind": {
+							"input": "select",
+							"options": [
+								"squarify",
+								"binary",
+								"slicedice"
+							]
+						}
+					},
+					{
+						"name": "aspectRatio",
+						"value": 1.6,
+						"bind": {
+							"input": "range",
+							"min": 1,
+							"max": 5,
+							"step": 0.1
+						}
+					}
+				],
+				"data": [
+					{
+						"name": "tree",
+						"url": "data/flare.json",
+						"transform": [
+							{
+								"type": "stratify",
+								"key": "id",
+								"parentKey": "parent"
+							},
+							{
+								"type": "treemap",
+								"field": "size",
+								"sort": {
+									"field": "value"
+								},
+								"round": true,
+								"method": {
+									"signal": "layout"
+								},
+								"ratio": {
+									"signal": "aspectRatio"
+								},
+								"size": [
+									{
+										"signal": "width"
+									},
+									{
+										"signal": "height"
+									}
+								]
+							}
+						]
+					},
+					{
+						"name": "nodes",
+						"source": "tree",
+						"transform": [
+							{
+								"type": "filter",
+								"expr": "datum.children"
+							}
+						]
+					},
+					{
+						"name": "leaves",
+						"source": "tree",
+						"transform": [
+							{
+								"type": "filter",
+								"expr": "!datum.children"
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "nodes",
+							"field": "name"
+						},
+						"range": [
+							"#3182bd",
+							"#6baed6",
+							"#9ecae1",
+							"#c6dbef",
+							"#e6550d",
+							"#fd8d3c",
+							"#fdae6b",
+							"#fdd0a2",
+							"#31a354",
+							"#74c476",
+							"#a1d99b",
+							"#c7e9c0",
+							"#756bb1",
+							"#9e9ac8",
+							"#bcbddc",
+							"#dadaeb",
+							"#636363",
+							"#969696",
+							"#bdbdbd",
+							"#d9d9d9"
+						]
+					},
+					{
+						"name": "size",
+						"type": "ordinal",
+						"domain": [
+							0,
+							1,
+							2,
+							3
+						],
+						"range": [
+							256,
+							28,
+							20,
+							14
+						]
+					},
+					{
+						"name": "opacity",
+						"type": "ordinal",
+						"domain": [
+							0,
+							1,
+							2,
+							3
+						],
+						"range": [
+							0.15,
+							0.5,
+							0.8,
+							1
+						]
+					}
+				],
+				"marks": [
+					{
+						"type": "rect",
+						"from": {
+							"data": "nodes"
+						},
+						"interactive": false,
+						"encode": {
+							"enter": {
+								"fill": {
+									"scale": "color",
+									"field": "name"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x0"
+								},
+								"y": {
+									"field": "y0"
+								},
+								"x2": {
+									"field": "x1"
+								},
+								"y2": {
+									"field": "y1"
+								}
+							}
+						}
+					},
+					{
+						"type": "rect",
+						"from": {
+							"data": "leaves"
+						},
+						"encode": {
+							"enter": {
+								"stroke": {
+									"value": "#fff"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x0"
+								},
+								"y": {
+									"field": "y0"
+								},
+								"x2": {
+									"field": "x1"
+								},
+								"y2": {
+									"field": "y1"
+								},
+								"fill": {
+									"value": "transparent"
+								}
+							},
+							"hover": {
+								"fill": {
+									"value": "red"
+								}
+							}
+						}
+					},
+					{
+						"type": "text",
+						"from": {
+							"data": "nodes"
+						},
+						"interactive": false,
+						"encode": {
+							"enter": {
+								"font": {
+									"value": "Helvetica Neue, Arial"
+								},
+								"align": {
+									"value": "center"
+								},
+								"baseline": {
+									"value": "middle"
+								},
+								"fill": {
+									"value": "#000"
+								},
+								"text": {
+									"field": "name"
+								},
+								"fontSize": {
+									"scale": "size",
+									"field": "depth"
+								},
+								"fillOpacity": {
+									"scale": "opacity",
+									"field": "depth"
+								}
+							},
+							"update": {
+								"x": {
+									"signal": "0.5 * (datum.x0 + datum.x1)"
+								},
+								"y": {
+									"signal": "0.5 * (datum.y0 + datum.y1)"
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega/sunburst": {
+			"src": "vega/docs/examples/sunburst.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "An example of a space-fulling radial layout for hierarchical data.",
+				"width": 600,
+				"height": 600,
+				"padding": 5,
+				"autosize": "none",
+				"data": [
+					{
+						"name": "tree",
+						"url": "data/flare.json",
+						"transform": [
+							{
+								"type": "stratify",
+								"key": "id",
+								"parentKey": "parent"
+							},
+							{
+								"type": "partition",
+								"field": "size",
+								"sort": {
+									"field": "value"
+								},
+								"size": [
+									{
+										"signal": "2 * PI"
+									},
+									{
+										"signal": "width / 2"
+									}
+								],
+								"as": [
+									"a0",
+									"r0",
+									"a1",
+									"r1",
+									"depth",
+									"children"
+								]
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "tree",
+							"field": "depth"
+						},
+						"range": {
+							"scheme": "tableau20"
+						}
+					}
+				],
+				"marks": [
+					{
+						"type": "arc",
+						"from": {
+							"data": "tree"
+						},
+						"encode": {
+							"enter": {
+								"x": {
+									"signal": "width / 2"
+								},
+								"y": {
+									"signal": "height / 2"
+								},
+								"fill": {
+									"scale": "color",
+									"field": "depth"
+								},
+								"tooltip": {
+									"signal": "datum.name + (datum.size ? ', ' + datum.size + ' bytes' : '')"
+								}
+							},
+							"update": {
+								"startAngle": {
+									"field": "a0"
+								},
+								"endAngle": {
+									"field": "a1"
+								},
+								"innerRadius": {
+									"field": "r0"
+								},
+								"outerRadius": {
+									"field": "r1"
+								},
+								"stroke": {
+									"value": "white"
+								},
+								"strokeWidth": {
+									"value": 0.5
+								},
+								"zindex": {
+									"value": 0
+								}
+							},
+							"hover": {
+								"stroke": {
+									"value": "red"
+								},
+								"strokeWidth": {
+									"value": 2
+								},
+								"zindex": {
+									"value": 1
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega/circle-packing": {
+			"src": "vega/docs/examples/circle-packing.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "An example of a circle packing layout for hierarchical data.",
+				"width": 600,
+				"height": 600,
+				"padding": 5,
+				"autosize": "none",
+				"data": [
+					{
+						"name": "tree",
+						"url": "data/flare.json",
+						"transform": [
+							{
+								"type": "stratify",
+								"key": "id",
+								"parentKey": "parent"
+							},
+							{
+								"type": "pack",
+								"field": "size",
+								"sort": {
+									"field": "value"
+								},
+								"size": [
+									{
+										"signal": "width"
+									},
+									{
+										"signal": "height"
+									}
+								]
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "tree",
+							"field": "depth"
+						},
+						"range": {
+							"scheme": "category20"
+						}
+					}
+				],
+				"marks": [
+					{
+						"type": "symbol",
+						"from": {
+							"data": "tree"
+						},
+						"encode": {
+							"enter": {
+								"shape": {
+									"value": "circle"
+								},
+								"fill": {
+									"scale": "color",
+									"field": "depth"
+								},
+								"tooltip": {
+									"signal": "datum.name + (datum.size ? ', ' + datum.size + ' bytes' : '')"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"size": {
+									"signal": "4 * datum.r * datum.r"
+								},
+								"stroke": {
+									"value": "white"
+								},
+								"strokeWidth": {
+									"value": 0.5
+								}
+							},
+							"hover": {
+								"stroke": {
+									"value": "red"
+								},
+								"strokeWidth": {
+									"value": 2
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega/tree-layout": {
+			"src": "vega/docs/examples/tree-layout.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "An example of Cartesian layouts for a node-link diagram of hierarchical data.",
+				"width": 600,
+				"height": 1600,
+				"padding": 5,
+				"signals": [
+					{
+						"name": "labels",
+						"value": true,
+						"bind": {
+							"input": "checkbox"
+						}
+					},
+					{
+						"name": "layout",
+						"value": "tidy",
+						"bind": {
+							"input": "radio",
+							"options": [
+								"tidy",
+								"cluster"
+							]
+						}
+					},
+					{
+						"name": "links",
+						"value": "diagonal",
+						"bind": {
+							"input": "select",
+							"options": [
+								"line",
+								"curve",
+								"diagonal",
+								"orthogonal"
+							]
+						}
+					},
+					{
+						"name": "separation",
+						"value": false,
+						"bind": {
+							"input": "checkbox"
+						}
+					}
+				],
+				"data": [
+					{
+						"name": "tree",
+						"url": "data/flare.json",
+						"transform": [
+							{
+								"type": "stratify",
+								"key": "id",
+								"parentKey": "parent"
+							},
+							{
+								"type": "tree",
+								"method": {
+									"signal": "layout"
+								},
+								"size": [
+									{
+										"signal": "height"
+									},
+									{
+										"signal": "width - 100"
+									}
+								],
+								"separation": {
+									"signal": "separation"
+								},
+								"as": [
+									"y",
+									"x",
+									"depth",
+									"children"
+								]
+							}
+						]
+					},
+					{
+						"name": "links",
+						"source": "tree",
+						"transform": [
+							{
+								"type": "treelinks"
+							},
+							{
+								"type": "linkpath",
+								"orient": "horizontal",
+								"shape": {
+									"signal": "links"
+								}
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "linear",
+						"range": {
+							"scheme": "magma"
+						},
+						"domain": {
+							"data": "tree",
+							"field": "depth"
+						},
+						"zero": true
+					}
+				],
+				"marks": [
+					{
+						"type": "path",
+						"from": {
+							"data": "links"
+						},
+						"encode": {
+							"update": {
+								"path": {
+									"field": "path"
+								},
+								"stroke": {
+									"value": "#ccc"
+								}
+							}
+						}
+					},
+					{
+						"type": "symbol",
+						"from": {
+							"data": "tree"
+						},
+						"encode": {
+							"enter": {
+								"size": {
+									"value": 100
+								},
+								"stroke": {
+									"value": "#fff"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"fill": {
+									"scale": "color",
+									"field": "depth"
+								}
+							}
+						}
+					},
+					{
+						"type": "text",
+						"from": {
+							"data": "tree"
+						},
+						"encode": {
+							"enter": {
+								"text": {
+									"field": "name"
+								},
+								"fontSize": {
+									"value": 9
+								},
+								"baseline": {
+									"value": "middle"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"dx": {
+									"signal": "datum.children ? -7 : 7"
+								},
+								"align": {
+									"signal": "datum.children ? 'right' : 'left'"
+								},
+								"opacity": {
+									"signal": "labels ? 1 : 0"
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega/radial-tree-layout": {
+			"src": "vega/docs/examples/radial-tree-layout.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "An example of a radial layout for a node-link diagram of hierarchical data.",
+				"width": 720,
+				"height": 720,
+				"padding": 5,
+				"autosize": "none",
+				"signals": [
+					{
+						"name": "labels",
+						"value": true,
+						"bind": {
+							"input": "checkbox"
+						}
+					},
+					{
+						"name": "radius",
+						"value": 280,
+						"bind": {
+							"input": "range",
+							"min": 20,
+							"max": 600
+						}
+					},
+					{
+						"name": "extent",
+						"value": 360,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 360,
+							"step": 1
+						}
+					},
+					{
+						"name": "rotate",
+						"value": 0,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 360,
+							"step": 1
+						}
+					},
+					{
+						"name": "layout",
+						"value": "tidy",
+						"bind": {
+							"input": "radio",
+							"options": [
+								"tidy",
+								"cluster"
+							]
+						}
+					},
+					{
+						"name": "links",
+						"value": "line",
+						"bind": {
+							"input": "select",
+							"options": [
+								"line",
+								"curve",
+								"diagonal",
+								"orthogonal"
+							]
+						}
+					},
+					{
+						"name": "originX",
+						"update": "width / 2"
+					},
+					{
+						"name": "originY",
+						"update": "height / 2"
+					}
+				],
+				"data": [
+					{
+						"name": "tree",
+						"url": "data/flare.json",
+						"transform": [
+							{
+								"type": "stratify",
+								"key": "id",
+								"parentKey": "parent"
+							},
+							{
+								"type": "tree",
+								"method": {
+									"signal": "layout"
+								},
+								"size": [
+									1,
+									{
+										"signal": "radius"
+									}
+								],
+								"as": [
+									"alpha",
+									"radius",
+									"depth",
+									"children"
+								]
+							},
+							{
+								"type": "formula",
+								"expr": "(rotate + extent * datum.alpha + 270) % 360",
+								"as": "angle"
+							},
+							{
+								"type": "formula",
+								"expr": "PI * datum.angle / 180",
+								"as": "radians"
+							},
+							{
+								"type": "formula",
+								"expr": "inrange(datum.angle, [90, 270])",
+								"as": "leftside"
+							},
+							{
+								"type": "formula",
+								"expr": "originX + datum.radius * cos(datum.radians)",
+								"as": "x"
+							},
+							{
+								"type": "formula",
+								"expr": "originY + datum.radius * sin(datum.radians)",
+								"as": "y"
+							}
+						]
+					},
+					{
+						"name": "links",
+						"source": "tree",
+						"transform": [
+							{
+								"type": "treelinks"
+							},
+							{
+								"type": "linkpath",
+								"shape": {
+									"signal": "links"
+								},
+								"orient": "radial",
+								"sourceX": "source.radians",
+								"sourceY": "source.radius",
+								"targetX": "target.radians",
+								"targetY": "target.radius"
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "linear",
+						"range": {
+							"scheme": "magma"
+						},
+						"domain": {
+							"data": "tree",
+							"field": "depth"
+						},
+						"zero": true
+					}
+				],
+				"marks": [
+					{
+						"type": "path",
+						"from": {
+							"data": "links"
+						},
+						"encode": {
+							"update": {
+								"x": {
+									"signal": "originX"
+								},
+								"y": {
+									"signal": "originY"
+								},
+								"path": {
+									"field": "path"
+								},
+								"stroke": {
+									"value": "#ccc"
+								}
+							}
+						}
+					},
+					{
+						"type": "symbol",
+						"from": {
+							"data": "tree"
+						},
+						"encode": {
+							"enter": {
+								"size": {
+									"value": 100
+								},
+								"stroke": {
+									"value": "#fff"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"fill": {
+									"scale": "color",
+									"field": "depth"
+								}
+							}
+						}
+					},
+					{
+						"type": "text",
+						"from": {
+							"data": "tree"
+						},
+						"encode": {
+							"enter": {
+								"text": {
+									"field": "name"
+								},
+								"fontSize": {
+									"value": 9
+								},
+								"baseline": {
+									"value": "middle"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"dx": {
+									"signal": "(datum.leftside ? -1 : 1) * 6"
+								},
+								"angle": {
+									"signal": "datum.leftside ? datum.angle - 180 : datum.angle"
+								},
+								"align": {
+									"signal": "datum.leftside ? 'right' : 'left'"
+								},
+								"opacity": {
+									"signal": "labels ? 1 : 0"
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega/radar-chart": {
+			"src": "vega/docs/examples/radar-chart.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A radar chart example, showing multiple dimensions in a radial layout.",
+				"width": 400,
+				"height": 400,
+				"padding": 40,
+				"autosize": {
+					"type": "none",
+					"contains": "padding"
+				},
+				"signals": [
+					{
+						"name": "radius",
+						"update": "width / 2"
+					}
+				],
+				"data": [
+					{
+						"name": "table",
+						"values": [
+							{
+								"key": "key-0",
+								"value": 19,
+								"category": 0
+							},
+							{
+								"key": "key-1",
+								"value": 22,
+								"category": 0
+							},
+							{
+								"key": "key-2",
+								"value": 14,
+								"category": 0
+							},
+							{
+								"key": "key-3",
+								"value": 38,
+								"category": 0
+							},
+							{
+								"key": "key-4",
+								"value": 23,
+								"category": 0
+							},
+							{
+								"key": "key-5",
+								"value": 5,
+								"category": 0
+							},
+							{
+								"key": "key-6",
+								"value": 27,
+								"category": 0
+							},
+							{
+								"key": "key-0",
+								"value": 13,
+								"category": 1
+							},
+							{
+								"key": "key-1",
+								"value": 12,
+								"category": 1
+							},
+							{
+								"key": "key-2",
+								"value": 42,
+								"category": 1
+							},
+							{
+								"key": "key-3",
+								"value": 13,
+								"category": 1
+							},
+							{
+								"key": "key-4",
+								"value": 6,
+								"category": 1
+							},
+							{
+								"key": "key-5",
+								"value": 15,
+								"category": 1
+							},
+							{
+								"key": "key-6",
+								"value": 8,
+								"category": 1
+							}
+						]
+					},
+					{
+						"name": "keys",
+						"source": "table",
+						"transform": [
+							{
+								"type": "aggregate",
+								"groupby": [
+									"key"
+								]
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "angular",
+						"type": "point",
+						"range": {
+							"signal": "[-PI, PI]"
+						},
+						"padding": 0.5,
+						"domain": {
+							"data": "table",
+							"field": "key"
+						}
+					},
+					{
+						"name": "radial",
+						"type": "linear",
+						"range": {
+							"signal": "[0, radius]"
+						},
+						"zero": true,
+						"nice": false,
+						"domain": {
+							"data": "table",
+							"field": "value"
+						},
+						"domainMin": 0
+					},
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "table",
+							"field": "category"
+						},
+						"range": {
+							"scheme": "category10"
+						}
+					}
+				],
+				"encode": {
+					"enter": {
+						"x": {
+							"signal": "radius"
+						},
+						"y": {
+							"signal": "radius"
+						}
+					}
+				},
+				"marks": [
+					{
+						"type": "group",
+						"name": "categories",
+						"zindex": 1,
+						"from": {
+							"facet": {
+								"data": "table",
+								"name": "facet",
+								"groupby": [
+									"category"
+								]
+							}
+						},
+						"marks": [
+							{
+								"type": "line",
+								"name": "category-line",
+								"from": {
+									"data": "facet"
+								},
+								"encode": {
+									"enter": {
+										"interpolate": {
+											"value": "linear-closed"
+										},
+										"x": {
+											"signal": "scale('radial', datum.value) * cos(scale('angular', datum.key))"
+										},
+										"y": {
+											"signal": "scale('radial', datum.value) * sin(scale('angular', datum.key))"
+										},
+										"stroke": {
+											"scale": "color",
+											"field": "category"
+										},
+										"strokeWidth": {
+											"value": 1
+										},
+										"fill": {
+											"scale": "color",
+											"field": "category"
+										},
+										"fillOpacity": {
+											"value": 0.1
+										}
+									}
+								}
+							},
+							{
+								"type": "text",
+								"name": "value-text",
+								"from": {
+									"data": "category-line"
+								},
+								"encode": {
+									"enter": {
+										"x": {
+											"signal": "datum.x"
+										},
+										"y": {
+											"signal": "datum.y"
+										},
+										"text": {
+											"signal": "datum.datum.value"
+										},
+										"align": {
+											"value": "center"
+										},
+										"baseline": {
+											"value": "middle"
+										},
+										"fill": {
+											"value": "black"
+										}
+									}
+								}
+							}
+						]
+					},
+					{
+						"type": "rule",
+						"name": "radial-grid",
+						"from": {
+							"data": "keys"
+						},
+						"zindex": 0,
+						"encode": {
+							"enter": {
+								"x": {
+									"value": 0
+								},
+								"y": {
+									"value": 0
+								},
+								"x2": {
+									"signal": "radius * cos(scale('angular', datum.key))"
+								},
+								"y2": {
+									"signal": "radius * sin(scale('angular', datum.key))"
+								},
+								"stroke": {
+									"value": "lightgray"
+								},
+								"strokeWidth": {
+									"value": 1
+								}
+							}
+						}
+					},
+					{
+						"type": "text",
+						"name": "key-label",
+						"from": {
+							"data": "keys"
+						},
+						"zindex": 1,
+						"encode": {
+							"enter": {
+								"x": {
+									"signal": "(radius + 5) * cos(scale('angular', datum.key))"
+								},
+								"y": {
+									"signal": "(radius + 5) * sin(scale('angular', datum.key))"
+								},
+								"text": {
+									"field": "key"
+								},
+								"align": [
+									{
+										"test": "abs(scale('angular', datum.key)) > PI / 2",
+										"value": "right"
+									},
+									{
+										"value": "left"
+									}
+								],
+								"baseline": [
+									{
+										"test": "scale('angular', datum.key) > 0",
+										"value": "top"
+									},
+									{
+										"test": "scale('angular', datum.key) == 0",
+										"value": "middle"
+									},
+									{
+										"value": "bottom"
+									}
+								],
+								"fill": {
+									"value": "black"
+								},
+								"fontWeight": {
+									"value": "bold"
+								}
+							}
+						}
+					},
+					{
+						"type": "line",
+						"name": "outer-line",
+						"from": {
+							"data": "radial-grid"
+						},
+						"encode": {
+							"enter": {
+								"interpolate": {
+									"value": "linear-closed"
+								},
+								"x": {
+									"field": "x2"
+								},
+								"y": {
+									"field": "y2"
+								},
+								"stroke": {
+									"value": "lightgray"
+								},
+								"strokeWidth": {
+									"value": 1
+								}
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega/word-cloud": {
+			"src": "vega/docs/examples/word-cloud.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A word cloud visualization depicting Vega research paper abstracts.",
+				"width": 800,
+				"height": 400,
+				"padding": 0,
+				"data": [
+					{
+						"name": "table",
+						"values": [
+							"Declarative visualization grammars can accelerate development, facilitate retargeting across platforms, and allow language-level optimizations. However, existing declarative visualization languages are primarily concerned with visual encoding, and rely on imperative event handlers for interactive behaviors. In response, we introduce a model of declarative interaction design for data visualizations. Adopting methods from reactive programming, we model low-level events as composable data streams from which we form higher-level semantic signals. Signals feed predicates and scale inversions, which allow us to generalize interactive selections at the level of item geometry (pixels) into interactive queries over the data domain. Production rules then use these queries to manipulate the visualization’s appearance. To facilitate reuse and sharing, these constructs can be encapsulated as named interactors: standalone, purely declarative specifications of interaction techniques. We assess our model’s feasibility and expressivity by instantiating it with extensions to the Vega visualization grammar. Through a diverse range of examples, we demonstrate coverage over an established taxonomy of visualization interaction techniques.",
+							"We present Reactive Vega, a system architecture that provides the first robust and comprehensive treatment of declarative visual and interaction design for data visualization. Starting from a single declarative specification, Reactive Vega constructs a dataflow graph in which input data, scene graph elements, and interaction events are all treated as first-class streaming data sources. To support expressive interactive visualizations that may involve time-varying scalar, relational, or hierarchical data, Reactive Vega’s dataflow graph can dynamically re-write itself at runtime by extending or pruning branches in a data-driven fashion. We discuss both compile- and run-time optimizations applied within Reactive Vega, and share the results of benchmark studies that indicate superior interactive performance to both D3 and the original, non-reactive Vega system.",
+							"We present Vega-Lite, a high-level grammar that enables rapid specification of interactive data visualizations. Vega-Lite combines a traditional grammar of graphics, providing visual encoding rules and a composition algebra for layered and multi-view displays, with a novel grammar of interaction. Users specify interactive semantics by composing selections. In Vega-Lite, a selection is an abstraction that defines input event processing, points of interest, and a predicate function for inclusion testing. Selections parameterize visual encodings by serving as input data, defining scale extents, or by driving conditional logic. The Vega-Lite compiler automatically synthesizes requisite data flow and event handling logic, which users can override for further customization. In contrast to existing reactive specifications, Vega-Lite selections decompose an interaction design into concise, enumerable semantic units. We evaluate Vega-Lite through a range of examples, demonstrating succinct specification of both customized interaction methods and common techniques such as panning, zooming, and linked selection."
+						],
+						"transform": [
+							{
+								"type": "countpattern",
+								"field": "data",
+								"case": "upper",
+								"pattern": "[\\w']{3,}",
+								"stopwords": "(i|me|my|myself|we|us|our|ours|ourselves|you|your|yours|yourself|yourselves|he|him|his|himself|she|her|hers|herself|it|its|itself|they|them|their|theirs|themselves|what|which|who|whom|whose|this|that|these|those|am|is|are|was|were|be|been|being|have|has|had|having|do|does|did|doing|will|would|should|can|could|ought|i'm|you're|he's|she's|it's|we're|they're|i've|you've|we've|they've|i'd|you'd|he'd|she'd|we'd|they'd|i'll|you'll|he'll|she'll|we'll|they'll|isn't|aren't|wasn't|weren't|hasn't|haven't|hadn't|doesn't|don't|didn't|won't|wouldn't|shan't|shouldn't|can't|cannot|couldn't|mustn't|let's|that's|who's|what's|here's|there's|when's|where's|why's|how's|a|an|the|and|but|if|or|because|as|until|while|of|at|by|for|with|about|against|between|into|through|during|before|after|above|below|to|from|up|upon|down|in|out|on|off|over|under|again|further|then|once|here|there|when|where|why|how|all|any|both|each|few|more|most|other|some|such|no|nor|not|only|own|same|so|than|too|very|say|says|said|shall)"
+							},
+							{
+								"type": "formula",
+								"as": "angle",
+								"expr": "[-45, 0, 45][~~(random() * 3)]"
+							},
+							{
+								"type": "formula",
+								"as": "weight",
+								"expr": "if(datum.text=='VEGA', 600, 300)"
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "table",
+							"field": "text"
+						},
+						"range": [
+							"#d5a928",
+							"#652c90",
+							"#939597"
+						]
+					}
+				],
+				"marks": [
+					{
+						"type": "text",
+						"from": {
+							"data": "table"
+						},
+						"encode": {
+							"enter": {
+								"text": {
+									"field": "text"
+								},
+								"align": {
+									"value": "center"
+								},
+								"baseline": {
+									"value": "alphabetic"
+								},
+								"fill": {
+									"scale": "color",
+									"field": "text"
+								}
+							},
+							"update": {
+								"fillOpacity": {
+									"value": 1
+								}
+							},
+							"hover": {
+								"fillOpacity": {
+									"value": 0.5
+								}
+							}
+						},
+						"transform": [
+							{
+								"type": "wordcloud",
+								"size": [
+									800,
+									400
+								],
+								"text": {
+									"field": "text"
+								},
+								"rotate": {
+									"field": "datum.angle"
+								},
+								"font": "Helvetica Neue, Arial",
+								"fontSize": {
+									"field": "datum.count"
+								},
+								"fontWeight": {
+									"field": "datum.weight"
+								},
+								"fontSizeRange": [
+									12,
+									56
+								],
+								"padding": 2
+							}
+						]
+					}
+				]
+			}
+		},
+		"vega/calendar-view": {
+			"src": "vega/docs/examples/calendar-view.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A calendar visualization of daily changes to the S&P 500 since 2000.",
+				"padding": 5,
+				"signals": [
+					{
+						"name": "step",
+						"value": 16
+					},
+					{
+						"name": "offset",
+						"value": 10
+					},
+					{
+						"name": "width",
+						"update": "step * 52 + offset * 11"
+					},
+					{
+						"name": "height",
+						"update": "step * 5"
+					},
+					{
+						"name": "scheme",
+						"value": "pinkyellowgreen",
+						"bind": {
+							"input": "select",
+							"options": [
+								"pinkyellowgreen",
+								"blueorange",
+								"brownbluegreen",
+								"purplegreen",
+								"purpleorange",
+								"redblue",
+								"redgrey",
+								"redyellowblue",
+								"redyellowgreen",
+								"spectral"
+							]
+						}
+					}
+				],
+				"data": [
+					{
+						"name": "sp500",
+						"url": "data/sp500-2000.csv",
+						"format": {
+							"type": "csv",
+							"parse": {
+								"close": "number",
+								"date": "date"
+							}
+						},
+						"transform": [
+							{
+								"type": "window",
+								"sort": {
+									"field": "date",
+									"order": "ascending"
+								},
+								"ops": [
+									"lag"
+								],
+								"fields": [
+									"close"
+								],
+								"as": [
+									"prev"
+								]
+							},
+							{
+								"type": "formula",
+								"expr": "datum.prev ? (datum.close - datum.prev) / datum.prev : 0",
+								"as": "value"
+							},
+							{
+								"type": "formula",
+								"expr": "year(datum.date)",
+								"as": "year"
+							},
+							{
+								"type": "timeunit",
+								"field": "date",
+								"units": [
+									"year",
+									"week"
+								],
+								"as": [
+									"w0",
+									"w1"
+								]
+							},
+							{
+								"type": "formula",
+								"expr": "timeOffset('day', datum.w0)",
+								"as": "w0"
+							},
+							{
+								"type": "timeunit",
+								"field": "date",
+								"units": [
+									"day"
+								],
+								"as": [
+									"d0",
+									"d1"
+								]
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "y",
+						"type": "band",
+						"domain": {
+							"data": "sp500",
+							"field": "d0",
+							"sort": true
+						},
+						"range": {
+							"step": {
+								"signal": "step"
+							}
+						}
+					},
+					{
+						"name": "color",
+						"type": "linear",
+						"clamp": true,
+						"range": {
+							"scheme": {
+								"signal": "scheme"
+							}
+						},
+						"domain": [
+							-0.06,
+							0,
+							0.06
+						]
+					}
+				],
+				"legends": [
+					{
+						"fill": "color",
+						"title": "Daily Change, S&P 500",
+						"titleFontSize": 12,
+						"titleOrient": "left",
+						"titlePadding": 20,
+						"offset": 15,
+						"orient": "top",
+						"type": "gradient",
+						"direction": "horizontal",
+						"gradientLength": 250,
+						"gradientThickness": 10,
+						"format": "%"
+					}
+				],
+				"layout": {
+					"columns": 1,
+					"padding": 15
+				},
+				"marks": [
+					{
+						"type": "group",
+						"from": {
+							"facet": {
+								"data": "sp500",
+								"name": "values",
+								"groupby": "year"
+							}
+						},
+						"sort": {
+							"field": "datum.year",
+							"order": "descending"
+						},
+						"data": [
+							{
+								"name": "max",
+								"source": "values",
+								"transform": [
+									{
+										"type": "aggregate",
+										"ops": [
+											"max"
+										],
+										"fields": [
+											"date"
+										]
+									}
+								]
+							},
+							{
+								"name": "weeks",
+								"transform": [
+									{
+										"type": "sequence",
+										"start": 0,
+										"stop": 53,
+										"as": "weeknum"
+									},
+									{
+										"type": "formula",
+										"expr": "datetime(parent.year, 0, 1 + datum.weeknum * 7)",
+										"as": "date"
+									},
+									{
+										"type": "timeunit",
+										"units": [
+											"year",
+											"week"
+										],
+										"field": "date",
+										"as": [
+											"w0",
+											"w1"
+										]
+									},
+									{
+										"type": "formula",
+										"expr": "timeOffset('day', datum.w0)",
+										"as": "w0"
+									},
+									{
+										"type": "filter",
+										"expr": "datum.date < data('max')[0].max_date"
+									}
+								]
+							}
+						],
+						"scales": [
+							{
+								"name": "x",
+								"type": "band",
+								"domain": {
+									"data": "weeks",
+									"field": "w0",
+									"sort": true
+								},
+								"range": {
+									"step": {
+										"signal": "step"
+									}
+								}
+							}
+						],
+						"axes": [
+							{
+								"orient": "left",
+								"scale": "y",
+								"ticks": false,
+								"domain": false,
+								"labelPadding": 8,
+								"format": "%a",
+								"formatType": "time",
+								"title": {
+									"signal": "parent.year"
+								},
+								"titleAngle": 0,
+								"titleAlign": "right",
+								"titleX": -8,
+								"titleY": -2,
+								"titleFontSize": 10
+							},
+							{
+								"orient": "top",
+								"scale": "x",
+								"ticks": false,
+								"domain": false,
+								"format": "%b",
+								"formatType": "time",
+								"labelAlign": "left",
+								"encode": {
+									"labels": {
+										"update": {
+											"x": {
+												"scale": "x",
+												"field": "value",
+												"band": 0,
+												"offset": {
+													"signal": "month(datum.value) * offset"
+												}
+											},
+											"opacity": {
+												"signal": "date(datum.value) < 8 ? 1 : 0"
+											}
+										}
+									}
+								}
+							}
+						],
+						"marks": [
+							{
+								"type": "rect",
+								"from": {
+									"data": "values"
+								},
+								"encode": {
+									"enter": {
+										"x": {
+											"scale": "x",
+											"field": "w0",
+											"offset": {
+												"signal": "month(datum.date) * offset"
+											}
+										},
+										"width": {
+											"scale": "x",
+											"band": 1,
+											"offset": -1
+										},
+										"y": {
+											"scale": "y",
+											"field": "d0"
+										},
+										"height": {
+											"scale": "y",
+											"band": 1,
+											"offset": -1
+										},
+										"cornerRadius": {
+											"value": 2
+										},
+										"tooltip": {
+											"signal": "timeFormat(datum.date, '%a %b %d, %Y') + '\\n' + format(datum.value, '+.2%')"
+										}
+									},
+									"update": {
+										"fill": {
+											"scale": "color",
+											"field": "value"
+										}
+									}
+								}
+							}
+						]
+					}
+				]
+			}
+		},
+		"vega/violin-plot": {
+			"src": "vega/docs/examples/violin-plot.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A violin plot example showing distributions for pengiun body mass.",
+				"width": 500,
+				"padding": 5,
+				"config": {
+					"axisBand": {
+						"bandPosition": 1,
+						"tickExtra": true,
+						"tickOffset": 0
+					}
+				},
+				"signals": [
+					{
+						"name": "plotWidth",
+						"value": 60
+					},
+					{
+						"name": "height",
+						"update": "(plotWidth + 10) * 3"
+					},
+					{
+						"name": "trim",
+						"value": true,
+						"bind": {
+							"input": "checkbox"
+						}
+					},
+					{
+						"name": "bandwidth",
+						"value": 0,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 200,
+							"step": 1
+						}
+					}
+				],
+				"data": [
+					{
+						"name": "penguins",
+						"url": "data/penguins.json",
+						"transform": [
+							{
+								"type": "filter",
+								"expr": "datum.Species != null && datum['Body Mass (g)'] != null"
+							}
+						]
+					},
+					{
+						"name": "density",
+						"source": "penguins",
+						"transform": [
+							{
+								"type": "kde",
+								"field": "Body Mass (g)",
+								"groupby": [
+									"Species"
+								],
+								"bandwidth": {
+									"signal": "bandwidth"
+								},
+								"extent": {
+									"signal": "trim ? null : [2000, 6500]"
+								}
+							}
+						]
+					},
+					{
+						"name": "stats",
+						"source": "penguins",
+						"transform": [
+							{
+								"type": "aggregate",
+								"groupby": [
+									"Species"
+								],
+								"fields": [
+									"Body Mass (g)",
+									"Body Mass (g)",
+									"Body Mass (g)"
+								],
+								"ops": [
+									"q1",
+									"median",
+									"q3"
+								],
+								"as": [
+									"q1",
+									"median",
+									"q3"
+								]
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "layout",
+						"type": "band",
+						"range": "height",
+						"domain": {
+							"data": "penguins",
+							"field": "Species"
+						}
+					},
+					{
+						"name": "xscale",
+						"type": "linear",
+						"range": "width",
+						"round": true,
+						"domain": {
+							"data": "penguins",
+							"field": "Body Mass (g)"
+						},
+						"domainMin": 2000,
+						"zero": false,
+						"nice": true
+					},
+					{
+						"name": "hscale",
+						"type": "linear",
+						"range": [
+							0,
+							{
+								"signal": "plotWidth"
+							}
+						],
+						"domain": {
+							"data": "density",
+							"field": "density"
+						}
+					},
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "penguins",
+							"field": "Species"
+						},
+						"range": "category"
+					}
+				],
+				"axes": [
+					{
+						"orient": "bottom",
+						"scale": "xscale",
+						"zindex": 1
+					},
+					{
+						"orient": "left",
+						"scale": "layout",
+						"tickCount": 5,
+						"zindex": 1
+					}
+				],
+				"marks": [
+					{
+						"type": "group",
+						"from": {
+							"facet": {
+								"data": "density",
+								"name": "violin",
+								"groupby": "Species"
+							}
+						},
+						"encode": {
+							"enter": {
+								"yc": {
+									"scale": "layout",
+									"field": "Species",
+									"band": 0.5
+								},
+								"height": {
+									"signal": "plotWidth"
+								},
+								"width": {
+									"signal": "width"
+								}
+							}
+						},
+						"data": [
+							{
+								"name": "summary",
+								"source": "stats",
+								"transform": [
+									{
+										"type": "filter",
+										"expr": "datum.Species === parent.Species"
+									}
+								]
+							}
+						],
+						"marks": [
+							{
+								"type": "area",
+								"from": {
+									"data": "violin"
+								},
+								"encode": {
+									"enter": {
+										"fill": {
+											"scale": "color",
+											"field": {
+												"parent": "Species"
+											}
+										}
+									},
+									"update": {
+										"x": {
+											"scale": "xscale",
+											"field": "value"
+										},
+										"yc": {
+											"signal": "plotWidth / 2"
+										},
+										"height": {
+											"scale": "hscale",
+											"field": "density"
+										}
+									}
+								}
+							},
+							{
+								"type": "rect",
+								"from": {
+									"data": "summary"
+								},
+								"encode": {
+									"enter": {
+										"fill": {
+											"value": "black"
+										},
+										"height": {
+											"value": 2
+										}
+									},
+									"update": {
+										"x": {
+											"scale": "xscale",
+											"field": "q1"
+										},
+										"x2": {
+											"scale": "xscale",
+											"field": "q3"
+										},
+										"yc": {
+											"signal": "plotWidth / 2"
+										}
+									}
+								}
+							},
+							{
+								"type": "rect",
+								"from": {
+									"data": "summary"
+								},
+								"encode": {
+									"enter": {
+										"fill": {
+											"value": "black"
+										},
+										"width": {
+											"value": 2
+										},
+										"height": {
+											"value": 8
+										}
+									},
+									"update": {
+										"x": {
+											"scale": "xscale",
+											"field": "median"
+										},
+										"yc": {
+											"signal": "plotWidth / 2"
+										}
+									}
+								}
+							}
+						]
+					}
+				]
+			}
+		},
+		"vega/contour-plot": {
+			"src": "vega/docs/examples/contour-plot.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A contour plot example, overlaying a density estimate on scatter plot points.",
+				"width": 500,
+				"height": 400,
+				"padding": 5,
+				"autosize": "pad",
+				"signals": [
+					{
+						"name": "bandwidth",
+						"value": -1,
+						"bind": {
+							"input": "range",
+							"min": -1,
+							"max": 100,
+							"step": 1
+						}
+					},
+					{
+						"name": "resolve",
+						"value": "shared",
+						"bind": {
+							"input": "select",
+							"options": [
+								"independent",
+								"shared"
+							]
+						}
+					},
+					{
+						"name": "counts",
+						"value": true,
+						"bind": {
+							"input": "checkbox"
+						}
+					}
+				],
+				"data": [
+					{
+						"name": "source",
+						"url": "data/cars.json",
+						"transform": [
+							{
+								"type": "filter",
+								"expr": "datum.Horsepower != null && datum.Miles_per_Gallon != null"
+							}
+						]
+					},
+					{
+						"name": "density",
+						"source": "source",
+						"transform": [
+							{
+								"type": "kde2d",
+								"groupby": [
+									"Origin"
+								],
+								"size": [
+									{
+										"signal": "width"
+									},
+									{
+										"signal": "height"
+									}
+								],
+								"x": {
+									"expr": "scale('x', datum.Horsepower)"
+								},
+								"y": {
+									"expr": "scale('y', datum.Miles_per_Gallon)"
+								},
+								"bandwidth": {
+									"signal": "[bandwidth, bandwidth]"
+								},
+								"counts": {
+									"signal": "counts"
+								}
+							}
+						]
+					},
+					{
+						"name": "contours",
+						"source": "density",
+						"transform": [
+							{
+								"type": "isocontour",
+								"field": "grid",
+								"resolve": {
+									"signal": "resolve"
+								},
+								"levels": 3
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "x",
+						"type": "linear",
+						"round": true,
+						"nice": true,
+						"zero": true,
+						"domain": {
+							"data": "source",
+							"field": "Horsepower"
+						},
+						"range": "width"
+					},
+					{
+						"name": "y",
+						"type": "linear",
+						"round": true,
+						"nice": true,
+						"zero": true,
+						"domain": {
+							"data": "source",
+							"field": "Miles_per_Gallon"
+						},
+						"range": "height"
+					},
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "source",
+							"field": "Origin",
+							"sort": {
+								"order": "descending"
+							}
+						},
+						"range": "category"
+					}
+				],
+				"axes": [
+					{
+						"scale": "x",
+						"grid": true,
+						"domain": false,
+						"orient": "bottom",
+						"tickCount": 5,
+						"title": "Horsepower"
+					},
+					{
+						"scale": "y",
+						"grid": true,
+						"domain": false,
+						"orient": "left",
+						"titlePadding": 5,
+						"title": "Miles_per_Gallon"
+					}
+				],
+				"legends": [
+					{
+						"stroke": "color",
+						"symbolType": "stroke"
+					}
+				],
+				"marks": [
+					{
+						"name": "marks",
+						"type": "symbol",
+						"from": {
+							"data": "source"
+						},
+						"encode": {
+							"update": {
+								"x": {
+									"scale": "x",
+									"field": "Horsepower"
+								},
+								"y": {
+									"scale": "y",
+									"field": "Miles_per_Gallon"
+								},
+								"size": {
+									"value": 4
+								},
+								"fill": {
+									"value": "#ccc"
+								}
+							}
+						}
+					},
+					{
+						"type": "image",
+						"from": {
+							"data": "density"
+						},
+						"encode": {
+							"update": {
+								"x": {
+									"value": 0
+								},
+								"y": {
+									"value": 0
+								},
+								"width": {
+									"signal": "width"
+								},
+								"height": {
+									"signal": "height"
+								},
+								"aspect": {
+									"value": false
+								}
+							}
+						},
+						"transform": [
+							{
+								"type": "heatmap",
+								"field": "datum.grid",
+								"resolve": {
+									"signal": "resolve"
+								},
+								"color": {
+									"expr": "scale('color', datum.datum.Origin)"
+								}
+							}
+						]
+					},
+					{
+						"type": "path",
+						"clip": true,
+						"from": {
+							"data": "contours"
+						},
+						"encode": {
+							"enter": {
+								"strokeWidth": {
+									"value": 1
+								},
+								"strokeOpacity": {
+									"value": 1
+								},
+								"stroke": {
+									"scale": "color",
+									"field": "Origin"
+								}
+							}
+						},
+						"transform": [
+							{
+								"type": "geopath",
+								"field": "datum.contour"
+							}
+						]
+					}
+				]
+			}
+		},
+		"vega/edge-bundling": {
+			"src": "vega/docs/examples/edge-bundling.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A network diagram of software dependencies, with edges grouped via hierarchical edge bundling.",
+				"padding": 5,
+				"width": 720,
+				"height": 720,
+				"autosize": "none",
+				"signals": [
+					{
+						"name": "tension",
+						"value": 0.85,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 1,
+							"step": 0.01
+						}
+					},
+					{
+						"name": "radius",
+						"value": 280,
+						"bind": {
+							"input": "range",
+							"min": 20,
+							"max": 400
+						}
+					},
+					{
+						"name": "extent",
+						"value": 360,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 360,
+							"step": 1
+						}
+					},
+					{
+						"name": "rotate",
+						"value": 0,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 360,
+							"step": 1
+						}
+					},
+					{
+						"name": "textSize",
+						"value": 8,
+						"bind": {
+							"input": "range",
+							"min": 2,
+							"max": 20,
+							"step": 1
+						}
+					},
+					{
+						"name": "textOffset",
+						"value": 2,
+						"bind": {
+							"input": "range",
+							"min": 0,
+							"max": 10,
+							"step": 1
+						}
+					},
+					{
+						"name": "layout",
+						"value": "cluster",
+						"bind": {
+							"input": "radio",
+							"options": [
+								"tidy",
+								"cluster"
+							]
+						}
+					},
+					{
+						"name": "colorIn",
+						"value": "firebrick"
+					},
+					{
+						"name": "colorOut",
+						"value": "forestgreen"
+					},
+					{
+						"name": "originX",
+						"update": "width / 2"
+					},
+					{
+						"name": "originY",
+						"update": "height / 2"
+					},
+					{
+						"name": "active",
+						"value": null,
+						"on": [
+							{
+								"events": "text:pointerover",
+								"update": "datum.id"
+							},
+							{
+								"events": "pointerover[!event.item]",
+								"update": "null"
+							}
+						]
+					}
+				],
+				"data": [
+					{
+						"name": "tree",
+						"url": "data/flare.json",
+						"transform": [
+							{
+								"type": "stratify",
+								"key": "id",
+								"parentKey": "parent"
+							},
+							{
+								"type": "tree",
+								"method": {
+									"signal": "layout"
+								},
+								"size": [
+									1,
+									1
+								],
+								"as": [
+									"alpha",
+									"beta",
+									"depth",
+									"children"
+								]
+							},
+							{
+								"type": "formula",
+								"expr": "(rotate + extent * datum.alpha + 270) % 360",
+								"as": "angle"
+							},
+							{
+								"type": "formula",
+								"expr": "inrange(datum.angle, [90, 270])",
+								"as": "leftside"
+							},
+							{
+								"type": "formula",
+								"expr": "originX + radius * datum.beta * cos(PI * datum.angle / 180)",
+								"as": "x"
+							},
+							{
+								"type": "formula",
+								"expr": "originY + radius * datum.beta * sin(PI * datum.angle / 180)",
+								"as": "y"
+							}
+						]
+					},
+					{
+						"name": "leaves",
+						"source": "tree",
+						"transform": [
+							{
+								"type": "filter",
+								"expr": "!datum.children"
+							}
+						]
+					},
+					{
+						"name": "dependencies",
+						"url": "data/flare-dependencies.json",
+						"transform": [
+							{
+								"type": "formula",
+								"expr": "treePath('tree', datum.source, datum.target)",
+								"as": "treepath",
+								"initonly": true
+							}
+						]
+					},
+					{
+						"name": "selected",
+						"source": "dependencies",
+						"transform": [
+							{
+								"type": "filter",
+								"expr": "datum.source === active || datum.target === active"
+							}
+						]
+					}
+				],
+				"marks": [
+					{
+						"type": "text",
+						"from": {
+							"data": "leaves"
+						},
+						"encode": {
+							"enter": {
+								"text": {
+									"field": "name"
+								},
+								"baseline": {
+									"value": "middle"
+								}
+							},
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"dx": {
+									"signal": "textOffset * (datum.leftside ? -1 : 1)"
+								},
+								"angle": {
+									"signal": "datum.leftside ? datum.angle - 180 : datum.angle"
+								},
+								"align": {
+									"signal": "datum.leftside ? 'right' : 'left'"
+								},
+								"fontSize": {
+									"signal": "textSize"
+								},
+								"fontWeight": [
+									{
+										"test": "indata('selected', 'source', datum.id)",
+										"value": "bold"
+									},
+									{
+										"test": "indata('selected', 'target', datum.id)",
+										"value": "bold"
+									},
+									{
+										"value": null
+									}
+								],
+								"fill": [
+									{
+										"test": "datum.id === active",
+										"value": "black"
+									},
+									{
+										"test": "indata('selected', 'source', datum.id)",
+										"signal": "colorIn"
+									},
+									{
+										"test": "indata('selected', 'target', datum.id)",
+										"signal": "colorOut"
+									},
+									{
+										"value": "black"
+									}
+								]
+							}
+						}
+					},
+					{
+						"type": "group",
+						"from": {
+							"facet": {
+								"name": "path",
+								"data": "dependencies",
+								"field": "treepath"
+							}
+						},
+						"marks": [
+							{
+								"type": "line",
+								"interactive": false,
+								"from": {
+									"data": "path"
+								},
+								"encode": {
+									"enter": {
+										"interpolate": {
+											"value": "bundle"
+										},
+										"strokeWidth": {
+											"value": 1.5
+										}
+									},
+									"update": {
+										"stroke": [
+											{
+												"test": "parent.source === active",
+												"signal": "colorOut"
+											},
+											{
+												"test": "parent.target === active",
+												"signal": "colorIn"
+											},
+											{
+												"value": "steelblue"
+											}
+										],
+										"strokeOpacity": [
+											{
+												"test": "parent.source === active || parent.target === active",
+												"value": 1
+											},
+											{
+												"value": 0.2
+											}
+										],
+										"tension": {
+											"signal": "tension"
+										},
+										"x": {
+											"field": "x"
+										},
+										"y": {
+											"field": "y"
+										}
+									}
+								}
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": [
+							"depends on",
+							"imported by"
+						],
+						"range": [
+							{
+								"signal": "colorIn"
+							},
+							{
+								"signal": "colorOut"
+							}
+						]
+					}
+				],
+				"legends": [
+					{
+						"stroke": "color",
+						"orient": "bottom-right",
+						"title": "Dependencies",
+						"symbolType": "stroke"
+					}
+				]
+			}
+		},
+		"vega/force-directed-layout": {
+			"src": "vega/docs/examples/force-directed-layout.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "A node-link diagram with force-directed layout, depicting character co-occurrence in the novel Les Misérables.",
+				"width": 700,
+				"height": 500,
+				"padding": 0,
+				"autosize": "none",
+				"signals": [
+					{
+						"name": "cx",
+						"update": "width / 2"
+					},
+					{
+						"name": "cy",
+						"update": "height / 2"
+					},
+					{
+						"name": "nodeRadius",
+						"value": 8,
+						"bind": {
+							"input": "range",
+							"min": 1,
+							"max": 50,
+							"step": 1
+						}
+					},
+					{
+						"name": "nodeCharge",
+						"value": -30,
+						"bind": {
+							"input": "range",
+							"min": -100,
+							"max": 10,
+							"step": 1
+						}
+					},
+					{
+						"name": "linkDistance",
+						"value": 30,
+						"bind": {
+							"input": "range",
+							"min": 5,
+							"max": 100,
+							"step": 1
+						}
+					},
+					{
+						"name": "static",
+						"value": true,
+						"bind": {
+							"input": "checkbox"
+						}
+					},
+					{
+						"description": "State variable for active node fix status.",
+						"name": "fix",
+						"value": false,
+						"on": [
+							{
+								"events": "symbol:pointerout[!event.buttons], window:pointerup",
+								"update": "false"
+							},
+							{
+								"events": "symbol:pointerover",
+								"update": "fix || true"
+							},
+							{
+								"events": "[symbol:pointerdown, window:pointerup] > window:pointermove!",
+								"update": "xy()",
+								"force": true
+							}
+						]
+					},
+					{
+						"description": "Graph node most recently interacted with.",
+						"name": "node",
+						"value": null,
+						"on": [
+							{
+								"events": "symbol:pointerover",
+								"update": "fix === true ? item() : node"
+							}
+						]
+					},
+					{
+						"description": "Flag to restart Force simulation upon data changes.",
+						"name": "restart",
+						"value": false,
+						"on": [
+							{
+								"events": {
+									"signal": "fix"
+								},
+								"update": "fix && fix.length"
+							}
+						]
+					}
+				],
+				"data": [
+					{
+						"name": "node-data",
+						"url": "data/miserables.json",
+						"format": {
+							"type": "json",
+							"property": "nodes"
+						}
+					},
+					{
+						"name": "link-data",
+						"url": "data/miserables.json",
+						"format": {
+							"type": "json",
+							"property": "links"
+						}
+					}
+				],
+				"scales": [
+					{
+						"name": "color",
+						"type": "ordinal",
+						"domain": {
+							"data": "node-data",
+							"field": "group"
+						},
+						"range": {
+							"scheme": "category20c"
+						}
+					}
+				],
+				"marks": [
+					{
+						"name": "nodes",
+						"type": "symbol",
+						"zindex": 1,
+						"from": {
+							"data": "node-data"
+						},
+						"on": [
+							{
+								"trigger": "fix",
+								"modify": "node",
+								"values": "fix === true ? {fx: node.x, fy: node.y} : {fx: fix[0], fy: fix[1]}"
+							},
+							{
+								"trigger": "!fix",
+								"modify": "node",
+								"values": "{fx: null, fy: null}"
+							}
+						],
+						"encode": {
+							"enter": {
+								"fill": {
+									"scale": "color",
+									"field": "group"
+								},
+								"stroke": {
+									"value": "white"
+								}
+							},
+							"update": {
+								"size": {
+									"signal": "2 * nodeRadius * nodeRadius"
+								},
+								"cursor": {
+									"value": "pointer"
+								}
+							}
+						},
+						"transform": [
+							{
+								"type": "force",
+								"iterations": 300,
+								"restart": {
+									"signal": "restart"
+								},
+								"static": {
+									"signal": "static"
+								},
+								"signal": "force",
+								"forces": [
+									{
+										"force": "center",
+										"x": {
+											"signal": "cx"
+										},
+										"y": {
+											"signal": "cy"
+										}
+									},
+									{
+										"force": "collide",
+										"radius": {
+											"signal": "nodeRadius"
+										}
+									},
+									{
+										"force": "nbody",
+										"strength": {
+											"signal": "nodeCharge"
+										}
+									},
+									{
+										"force": "link",
+										"links": "link-data",
+										"distance": {
+											"signal": "linkDistance"
+										}
+									}
+								]
+							}
+						]
+					},
+					{
+						"type": "path",
+						"from": {
+							"data": "link-data"
+						},
+						"interactive": false,
+						"encode": {
+							"update": {
+								"stroke": {
+									"value": "#ccc"
+								},
+								"strokeWidth": {
+									"value": 0.5
+								}
+							}
+						},
+						"transform": [
+							{
+								"type": "linkpath",
+								"require": {
+									"signal": "force"
+								},
+								"shape": "line",
+								"sourceX": "datum.source.x",
+								"sourceY": "datum.source.y",
+								"targetX": "datum.target.x",
+								"targetY": "datum.target.y"
+							}
+						]
+					}
+				]
+			}
+		},
+		"vega/arc-diagram": {
+			"src": "vega/docs/examples/arc-diagram.vg.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega/v6.json",
+				"description": "An arc diagram depicting character co-occurrence in the novel Les Misérables.",
+				"width": 770,
+				"padding": 5,
+				"data": [
+					{
+						"name": "edges",
+						"url": "data/miserables.json",
+						"format": {
+							"type": "json",
+							"property": "links"
+						}
+					},
+					{
+						"name": "sourceDegree",
+						"source": "edges",
+						"transform": [
+							{
+								"type": "aggregate",
+								"groupby": [
+									"source"
+								]
+							}
+						]
+					},
+					{
+						"name": "targetDegree",
+						"source": "edges",
+						"transform": [
+							{
+								"type": "aggregate",
+								"groupby": [
+									"target"
+								]
+							}
+						]
+					},
+					{
+						"name": "nodes",
+						"url": "data/miserables.json",
+						"format": {
+							"type": "json",
+							"property": "nodes"
+						},
+						"transform": [
+							{
+								"type": "window",
+								"ops": [
+									"rank"
+								],
+								"as": [
+									"order"
+								]
+							},
+							{
+								"type": "lookup",
+								"from": "sourceDegree",
+								"key": "source",
+								"fields": [
+									"index"
+								],
+								"as": [
+									"sourceDegree"
+								],
+								"default": {
+									"count": 0
+								}
+							},
+							{
+								"type": "lookup",
+								"from": "targetDegree",
+								"key": "target",
+								"fields": [
+									"index"
+								],
+								"as": [
+									"targetDegree"
+								],
+								"default": {
+									"count": 0
+								}
+							},
+							{
+								"type": "formula",
+								"as": "degree",
+								"expr": "datum.sourceDegree.count + datum.targetDegree.count"
+							}
+						]
+					}
+				],
+				"scales": [
+					{
+						"name": "position",
+						"type": "band",
+						"domain": {
+							"data": "nodes",
+							"field": "order",
+							"sort": true
+						},
+						"range": "width"
+					},
+					{
+						"name": "color",
+						"type": "ordinal",
+						"range": "category",
+						"domain": {
+							"data": "nodes",
+							"field": "group"
+						}
+					}
+				],
+				"marks": [
+					{
+						"type": "symbol",
+						"name": "layout",
+						"interactive": false,
+						"from": {
+							"data": "nodes"
+						},
+						"encode": {
+							"enter": {
+								"opacity": {
+									"value": 0
+								}
+							},
+							"update": {
+								"x": {
+									"scale": "position",
+									"field": "order"
+								},
+								"y": {
+									"value": 0
+								},
+								"size": {
+									"field": "degree",
+									"mult": 5,
+									"offset": 10
+								},
+								"fill": {
+									"scale": "color",
+									"field": "group"
+								}
+							}
+						}
+					},
+					{
+						"type": "path",
+						"from": {
+							"data": "edges"
+						},
+						"encode": {
+							"update": {
+								"stroke": {
+									"value": "#000"
+								},
+								"strokeOpacity": {
+									"value": 0.2
+								},
+								"strokeWidth": {
+									"field": "value"
+								}
+							}
+						},
+						"transform": [
+							{
+								"type": "lookup",
+								"from": "layout",
+								"key": "datum.index",
+								"fields": [
+									"datum.source",
+									"datum.target"
+								],
+								"as": [
+									"sourceNode",
+									"targetNode"
+								]
+							},
+							{
+								"type": "linkpath",
+								"sourceX": {
+									"expr": "min(datum.sourceNode.x, datum.targetNode.x)"
+								},
+								"targetX": {
+									"expr": "max(datum.sourceNode.x, datum.targetNode.x)"
+								},
+								"sourceY": {
+									"expr": "0"
+								},
+								"targetY": {
+									"expr": "0"
+								},
+								"shape": "arc"
+							}
+						]
+					},
+					{
+						"type": "symbol",
+						"from": {
+							"data": "layout"
+						},
+						"encode": {
+							"update": {
+								"x": {
+									"field": "x"
+								},
+								"y": {
+									"field": "y"
+								},
+								"fill": {
+									"field": "fill"
+								},
+								"size": {
+									"field": "size"
+								}
+							}
+						}
+					},
+					{
+						"type": "text",
+						"from": {
+							"data": "nodes"
+						},
+						"encode": {
+							"update": {
+								"x": {
+									"scale": "position",
+									"field": "order"
+								},
+								"y": {
+									"value": 7
+								},
+								"fontSize": {
+									"value": 9
+								},
+								"align": {
+									"value": "right"
+								},
+								"baseline": {
+									"value": "middle"
+								},
+								"angle": {
+									"value": -90
+								},
+								"text": {
+									"field": "name"
+								}
+							}
+						}
+					}
+				]
+			}
 		}
 	};
 })(typeof window !== 'undefined' ? window : globalThis);

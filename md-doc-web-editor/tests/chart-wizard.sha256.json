@@ -1,7 +1,7 @@
 {
-  "chart-core.js": "9c656b1b930ce6c8f2399b97f2147dc36a9a4d9f0d8b81d15a19719d1882653b",
+  "chart-core.js": "48d8317f576888a8a512d60d972ae4f2b6ced8010543118114529098b6368826",
   "chart-geo-data.js": "dea97c5ae5e3d5150d82a503ea07ed5f13a8dfb722ecbbb86ff4199f12baebcc",
-  "chart-templates.js": "ba756b602128271ae20184e5260eea10f0d18ce471d99aeba6b63d463d6297cb",
+  "chart-templates.js": "87b5f17dce64da229e4befec4777e396c59cf235b8b83f7d174c9aa09c278901",
   "chart-types-bars.js": "fbfcfdedae7d55a92a0fae078d3a96060ae876b2a0f4483409f26b5f991aa46a",
   "chart-types-composition.js": "2aefa9d8b8e1008cf965eb52c120e060c387add82b46a56fa11f26a4d24d7e03",
   "chart-types-distribution.js": "18780de7530b8b20c3542f111d7cfa4e9a3cea34b05b0ca5e0acc8226492712c",
@@ -12,6 +12,6 @@
   "chart-types-relationship.js": "97ef5526ed1e1d8e4b273524bb35826ea3b6df07fce93208197e14244fff3fbf",
   "chart-types-text.js": "9398a66355cdcb8c0a79478f88b71612f838c221a38c985877b27e4ae212797f",
   "chart-types-trends.js": "183d9231b0db30df14af69d342c77be17b7d1d71c31935e1676e09b14e35c52e",
-  "chart-types-upstream.js": "bdf61ffbf3b8f3283ceda1e712cfd738b04507802e465b8da788ab14e3c00844",
+  "chart-types-upstream.js": "037a42fcc9f257530db6e430076fd5a1d12005865443b96a5f2437280989081e",
   "chart-wizard.js": "e33aed72af4e40f0cdfbe9a49bd83393bdd8415e57c2cf3cc64e84d9c12d9e7c"
 }

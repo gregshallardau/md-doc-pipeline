@@ -220,7 +220,7 @@
 	C.upstream({
 		id: 'waterfall', group: 'compare', label: 'Waterfall', desc: 'A running total built from ups and downs (rows named Begin and End)', sample: 'u_waterfall', sampleMap: { x: 'Label', y: 'Amount' },
 		roles: [role('x', 'Step', 'any'), role('y', 'Change', 'num')], options: [],
-		templates: [{ key: 'vega-lite/waterfall_chart', fields: { x: 'label', y: 'amount' }, edits: [
+		templates: [{ key: 'vega-lite/waterfall_chart', rename: 'data', fields: { x: 'label', y: 'amount' }, edits: [
 			retitle('its x axis title “Months” is the example’s own wording; here it is your column', 'x', (spec) => spec.encoding.x.axis),
 			retitle('its y axis title “Amount” is the example’s own wording; here it is your column', 'y', (spec) => spec.layer[0].encoding.y),
 		] }],
@@ -403,5 +403,62 @@
 		id: 'rose', group: 'composition', label: 'Nightingale rose', desc: 'Slices of equal angle whose reach shows the value', sample: 'u_dots', sampleMap: { x: 'Value' },
 		roles: [role('x', 'Values (number)', 'num')], options: [],
 		templates: [{ key: 'vega-lite/arc_radial', fields: { x: 'data' } }],
+	});
+
+	/* ── Full Vega: hierarchies, radar, word cloud, calendar, violin, contour ─ */
+
+	C.sample('u_tree', 'Id,Name,Parent,Size\n1,Company,,\n2,Engineering,1,\n3,Sales,1,\n4,Support,1,\n5,Platform,2,48\n6,Mobile,2,30\n7,Data,2,22\n8,Direct,3,35\n9,Partners,3,20\n10,Online,3,40\n11,Helpdesk,4,18\n12,Training,4,9');
+	C.sample('u_radar', () => ['Skill,Score,Person', ...['Ana', 'Ben'].flatMap((who, p) => ['Design', 'Code', 'Data', 'Talk', 'Plan', 'Test'].map((k, i) => `${k},${Math.round(40 + ((i * 17 + p * 31) % 55))},${who}`))].join('\n'));
+	C.sample('u_text', 'Text\n"Declarative visualization grammars can accelerate development, facilitate retargeting across platforms, and allow language-level optimizations. However, existing declarative visualization languages are primarily concerned with visual encoding, and rely on imperative event handlers for interactive behaviors. In response, we introduce a model of declarative interaction design for data visualizations."\n"We present Reactive Vega, a system architecture that provides the first robust and comprehensive treatment of declarative visual and interaction design for data visualization. Starting from a single declarative specification, Reactive Vega constructs a dataflow graph in which input data, scene graph elements, and interaction events are all treated as first-class streaming data sources."');
+	C.sample('u_closes', () => { const next = rng(41); let price = 1400; return ['Date,Close', ...Array.from({ length: 200 }, (_, i) => { price *= 1 + (next() - 0.48) * 0.03; return `${day(i)},${price.toFixed(2)}`; })].join('\n'); });
+	const treeRoles = [role('id', 'Id', 'any'), role('name', 'Label (defaults to the id)', 'any', false), role('parent', 'Parent id (blank for the root)', 'any'), role('size', 'Size (leaves)', 'num')];
+	const treeFields = { id: 'id', name: 'name', parent: 'parent', size: 'size' };
+	/** The example stratifies the rows: unique ids, every parent present, exactly one root. */
+	const checkTree = (s) => {
+		const ids = s.records.map((r) => r[s.f('id')]);
+		const dup = ids.find((v, i) => ids.indexOf(v) !== i);
+		if (dup !== undefined) throw new Error(`Id “${dup}” appears twice; every row needs its own id.`);
+		const known = new Set(ids);
+		const blank = (v) => v === null || v === undefined || v === '';
+		const roots = s.records.filter((r) => blank(r[s.f('parent')]));
+		if (roots.length !== 1) throw new Error(roots.length ? `${roots.length} rows have no parent; a tree has exactly one root.` : 'No row is the root: leave one row’s parent blank.');
+		const orphan = s.records.find((r) => !blank(r[s.f('parent')]) && !known.has(r[s.f('parent')]));
+		if (orphan) throw new Error(`Parent “${orphan[s.f('parent')]}” is not the id of any row.`);
+	};
+	const treeDef = (id, label, desc, key) => C.upstream({
+		check: checkTree,
+		id, group: 'hierarchy', label, desc, sample: 'u_tree', sampleMap: { id: 'Id', name: 'Name', parent: 'Parent', size: 'Size' },
+		roles: treeRoles, options: [],
+		templates: [{ key, fields: treeFields, fallback: { name: 'id' } }],
+	});
+	treeDef('treemap', 'Treemap', 'Nested rectangles sized by value', 'vega/treemap');
+	treeDef('sunburst', 'Sunburst', 'Nested rings sized by value', 'vega/sunburst');
+	treeDef('circle-pack', 'Circle packing', 'Nested circles sized by value', 'vega/circle-packing');
+	treeDef('tree', 'Tree', 'The hierarchy as a node-link tree', 'vega/tree-layout');
+	treeDef('radial-tree', 'Radial tree', 'The hierarchy as a tree around a circle', 'vega/radial-tree-layout');
+	C.upstream({
+		id: 'radar', group: 'compare', label: 'Radar', desc: 'Several measures per item on spokes', sample: 'u_radar', sampleMap: { key: 'Skill', value: 'Score', category: 'Person' },
+		roles: [role('key', 'Spoke', 'any'), role('value', 'Value', 'num'), role('category', 'Series', 'any')], options: [],
+		templates: [{ key: 'vega/radar-chart', fields: { key: 'key', value: 'value', category: 'category' } }],
+	});
+	C.upstream({
+		browserOnly: 'its word layout needs a canvas to measure text', id: 'word-cloud', group: 'text', label: 'Word cloud', desc: 'The most frequent words in your text, sized by count', sample: 'u_text', sampleMap: { text: 'Text' },
+		roles: [role('text', 'Text (one passage per row)', 'any')], options: [],
+		templates: [{ key: 'vega/word-cloud', fields: { text: 'data' } }],
+	});
+	C.upstream({
+		id: 'calendar', group: 'matrix', label: 'Calendar', desc: 'Daily change laid out by week and weekday', sample: 'u_closes', sampleMap: { date: 'Date', close: 'Close' },
+		roles: [role('date', 'Date', 'time'), role('close', 'Closing value', 'num')], options: [],
+		templates: [{ key: 'vega/calendar-view', rename: 'data', fields: { date: 'date', close: 'close' } }],
+	});
+	C.upstream({
+		id: 'violin', group: 'distribution', label: 'Violin', desc: 'The shape of each group’s distribution, with quartiles', sample: 'u_penguins', sampleMap: { group: 'Species', value: 'Body mass' },
+		roles: [role('group', 'Group', 'any'), role('value', 'Values (number)', 'num')], options: [],
+		templates: [{ key: 'vega/violin-plot', fields: { group: 'Species', value: 'Body Mass (g)' } }],
+	});
+	C.upstream({
+		browserOnly: 'its density grid needs a canvas', id: 'contour', group: 'matrix', label: 'Contour plot', desc: 'Density contours of a scatter, by group', sample: 'u_cars', sampleMap: { x: 'Horsepower', y: 'Miles per gallon', group: 'Origin' },
+		roles: [role('x', 'X (number)', 'num'), role('y', 'Y (number)', 'num'), role('group', 'Group', 'any')], options: [],
+		templates: [{ key: 'vega/contour-plot', fields: { x: 'Horsepower', y: 'Miles_per_Gallon', group: 'Origin' } }],
 	});
 })(typeof window !== 'undefined' ? window : globalThis);

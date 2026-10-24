@@ -86,7 +86,7 @@ const ctx = { console }; ctx.window = ctx; ctx.globalThis = ctx; vm.createContex
 const files = fs.readdirSync(dir).filter((f) => /^chart-(core|templates|geo-data|types-.*)\\.js$/.test(f)).sort((a, b) => { const rank = (f) => (f.includes('core') ? 0 : f.includes('templates') ? 1 : f.includes('upstream') ? 3 : 2); return rank(a) - rank(b) || a.localeCompare(b); });
 for (const f of files) vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f });
 const C = ctx.ChartCatalog;
-const out = C.TYPES.map((t) => { const spec = JSON.parse(JSON.stringify(C.sampleSpec(t))); return { id: t.id, random: t.random || null, spec, code: C.codeFor('yaml-fence', spec) }; });
+const out = C.TYPES.map((t) => { const spec = JSON.parse(JSON.stringify(C.sampleSpec(t))); return { id: t.id, random: t.random || null, browserOnly: t.browserOnly || null, spec, code: C.codeFor('yaml-fence', spec) }; });
 console.log(JSON.stringify(out));
 """
 
@@ -133,6 +133,8 @@ def test_every_wizard_chart_survives_yaml_and_renders_with_md_docs_renderer(wiza
         assert (
             yaml.safe_load(source) == item["spec"]
         ), f"{item['id']}: PyYAML disagrees with the wizard's YAML"
+        if item["browserOnly"]:
+            continue  # upstream needs a canvas (word layout, density grid); vl-convert has none
         svg = charts.render_svg(source)
         assert svg.startswith("<svg") and len(svg) > 500, item["id"]
 
@@ -145,7 +147,7 @@ def test_md_docs_renderer_is_deterministic_for_every_chart(wizard_charts):
         pytest.skip("needs the charts extra")
     ids = re.compile(r"(clip|gradient_)\d+")
     for item in wizard_charts:
-        if item["random"]:
+        if item["random"] or item["browserOnly"]:
             continue
         source = item["code"][len("```chart\n") : -len("\n```\n")]
         assert ids.sub(r"\1", charts.render_svg(source)) == ids.sub(
