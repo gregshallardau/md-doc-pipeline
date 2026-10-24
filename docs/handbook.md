@@ -5448,7 +5448,6 @@ Place these **before** the subcommand: `md-doc --debug build workspace/`.
 | [`refactor`](#commands-refactor) | Move text repeated across documents into a shared template. |
 | [`new`](#commands-new) | Scaffold a folder or a document. |
 | [`theme`](#commands-theme) | Create a brand theme or a colour override. |
-| [`diagram`](#commands-diagram) | Render Mermaid diagrams to SVG for other tools. |
 | [`export`](#commands-export) | Build only notes marked `export: true` and collect the outputs. |
 | [`extract`](#commands-extract) | Convert Word, PowerPoint, Excel, HTML or PDF back to Markdown. |
 | [`sync`](#commands-sync) | Upload built files to Azure, S3 or a local folder. |
@@ -5556,22 +5555,6 @@ md-doc theme override [DIRECTORY] [--force]
 - `override` writes a minimal `_pdf-theme.css` in a sub-folder that `@import`s the nearest parent
   theme and overrides only colours.
 - Both refuse to overwrite without `--force`. See the [theming guide](#themes).
-
-<a id="commands-diagram"></a>
-
-### diagram
-
-```
-md-doc diagram render [--jobs FILE]
-```
-
-Renders Mermaid diagrams with the same renderer the PDF builder uses and prints the SVGs. It reads
-a JSON list of `{"source": "<mermaid text>", "theme": {...}}` jobs from `--jobs FILE` (or stdin) and
-writes a JSON list in the same order, each entry `{"svg": "..."}` or `{"error": "..."}`, so one bad
-diagram never loses the rest. `theme` is optional and takes the diagram theme keys `primary`,
-`accent`, `body`, `muted`, `font`, `surface`, `mode` (`dark` or `light`) and `palette`. The
-presentation framework calls this to draw `mermaid` blocks in slides, so documents and decks share
-one renderer.
 
 <a id="commands-export"></a>
 

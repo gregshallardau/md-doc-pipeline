@@ -1013,27 +1013,3 @@ def test_c4_labelled_neighbours_get_room_and_relations_avoid_cards():
     )
     svg = m.render_c4_svg(cd)
     assert " Q " in svg  # a to c bends around b
-
-
-def test_diagram_render_cli_returns_svg_and_isolates_errors(tmp_path):
-    import json
-
-    from click.testing import CliRunner
-
-    from md_doc.cli import main
-
-    jobs = [
-        {"source": 'flowchart LR\n  A["a"] --> B["b"]', "theme": {"primary": "#0b6e4f"}},
-        {"source": 'pie title t\n  "x" : 1'},
-    ]
-    result = CliRunner().invoke(main, ["diagram", "render"], input=json.dumps(jobs))
-    assert result.exit_code == 0, result.output
-    out = json.loads(result.output)
-    assert len(out) == 2 and all(o["svg"].startswith("<svg") for o in out)
-    plain = CliRunner().invoke(
-        main, ["diagram", "render"], input=json.dumps([{"source": jobs[0]["source"]}])
-    )
-    assert json.loads(plain.output)[0]["svg"] != out[0]["svg"]  # the theme was applied
-
-    bad = CliRunner().invoke(main, ["diagram", "render"], input="{}")
-    assert bad.exit_code != 0
