@@ -295,6 +295,2498 @@
 				}
 			}
 		},
+		"vega-lite/line_slope": {
+			"src": "vega-lite/examples/specs/line_slope.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/barley.json"
+				},
+				"description": "Slope graph showing the change in yield for different barley sites. It shows the error in the year labels for the Morris site.",
+				"mark": "line",
+				"width": {
+					"step": 50
+				},
+				"encoding": {
+					"x": {
+						"field": "year",
+						"type": "ordinal",
+						"axis": {
+							"labelAngle": 0
+						}
+					},
+					"y": {
+						"aggregate": "median",
+						"field": "yield",
+						"type": "quantitative"
+					},
+					"color": {
+						"field": "site",
+						"type": "nominal"
+					}
+				}
+			}
+		},
+		"vega-lite/window_rank": {
+			"src": "vega-lite/examples/specs/window_rank.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"title": {
+					"text": "World Cup 2018: Group F Rankings",
+					"frame": "bounds"
+				},
+				"data": {
+					"values": [
+						{
+							"team": "Germany",
+							"matchday": 1,
+							"point": 0,
+							"diff": -1
+						},
+						{
+							"team": "Mexico",
+							"matchday": 1,
+							"point": 3,
+							"diff": 1
+						},
+						{
+							"team": "South Korea",
+							"matchday": 1,
+							"point": 0,
+							"diff": -1
+						},
+						{
+							"team": "Sweden",
+							"matchday": 1,
+							"point": 3,
+							"diff": 1
+						},
+						{
+							"team": "Germany",
+							"matchday": 2,
+							"point": 3,
+							"diff": 0
+						},
+						{
+							"team": "Mexico",
+							"matchday": 2,
+							"point": 6,
+							"diff": 2
+						},
+						{
+							"team": "South Korea",
+							"matchday": 2,
+							"point": 0,
+							"diff": -2
+						},
+						{
+							"team": "Sweden",
+							"matchday": 2,
+							"point": 3,
+							"diff": 0
+						},
+						{
+							"team": "Germany",
+							"matchday": 3,
+							"point": 3,
+							"diff": -2
+						},
+						{
+							"team": "Mexico",
+							"matchday": 3,
+							"point": 6,
+							"diff": -1
+						},
+						{
+							"team": "South Korea",
+							"matchday": 3,
+							"point": 3,
+							"diff": 0
+						},
+						{
+							"team": "Sweden",
+							"matchday": 3,
+							"point": 6,
+							"diff": 3
+						}
+					]
+				},
+				"transform": [
+					{
+						"sort": [
+							{
+								"field": "point",
+								"order": "descending"
+							},
+							{
+								"field": "diff",
+								"order": "descending"
+							}
+						],
+						"window": [
+							{
+								"op": "rank",
+								"as": "rank"
+							}
+						],
+						"groupby": [
+							"matchday"
+						]
+					}
+				],
+				"mark": {
+					"type": "line",
+					"orient": "vertical"
+				},
+				"encoding": {
+					"x": {
+						"field": "matchday",
+						"type": "ordinal"
+					},
+					"y": {
+						"field": "rank",
+						"type": "ordinal"
+					},
+					"color": {
+						"field": "team",
+						"type": "nominal",
+						"scale": {
+							"domain": [
+								"Germany",
+								"Mexico",
+								"South Korea",
+								"Sweden"
+							],
+							"range": [
+								"black",
+								"#127153",
+								"#C91A3C",
+								"#0C71AB"
+							]
+						}
+					}
+				}
+			}
+		},
+		"vega-lite/layer_ranged_dot": {
+			"src": "vega-lite/examples/specs/layer_ranged_dot.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A ranged dot plot that uses 'layer' to convey changing life expectancy for the five most populous countries (between 1955 and 2000).",
+				"data": {
+					"url": "data/countries.json"
+				},
+				"transform": [
+					{
+						"filter": {
+							"field": "country",
+							"oneOf": [
+								"China",
+								"India",
+								"United States",
+								"Indonesia",
+								"Brazil"
+							]
+						}
+					},
+					{
+						"filter": {
+							"field": "year",
+							"oneOf": [
+								1955,
+								2000
+							]
+						}
+					}
+				],
+				"encoding": {
+					"x": {
+						"field": "life_expect",
+						"type": "quantitative",
+						"title": "Life Expectancy (years)"
+					},
+					"y": {
+						"field": "country",
+						"type": "nominal",
+						"title": "Country",
+						"axis": {
+							"offset": 5,
+							"ticks": false,
+							"minExtent": 70,
+							"domain": false
+						}
+					}
+				},
+				"layer": [
+					{
+						"mark": "line",
+						"encoding": {
+							"detail": {
+								"field": "country",
+								"type": "nominal"
+							},
+							"color": {
+								"value": "#db646f"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "point",
+							"filled": true
+						},
+						"encoding": {
+							"color": {
+								"field": "year",
+								"type": "ordinal",
+								"scale": {
+									"domain": [
+										1955,
+										2000
+									],
+									"range": [
+										"#e6959c",
+										"#911a24"
+									]
+								},
+								"title": "Year"
+							},
+							"size": {
+								"value": 100
+							},
+							"opacity": {
+								"value": 1
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/facet_bullet": {
+			"src": "vega-lite/examples/specs/facet_bullet.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"values": [
+						{
+							"title": "Revenue",
+							"subtitle": "US$, in thousands",
+							"ranges": [
+								150,
+								225,
+								300
+							],
+							"measures": [
+								220,
+								270
+							],
+							"markers": [
+								250
+							]
+						},
+						{
+							"title": "Profit",
+							"subtitle": "%",
+							"ranges": [
+								20,
+								25,
+								30
+							],
+							"measures": [
+								21,
+								23
+							],
+							"markers": [
+								26
+							]
+						},
+						{
+							"title": "Order Size",
+							"subtitle": "US$, average",
+							"ranges": [
+								350,
+								500,
+								600
+							],
+							"measures": [
+								100,
+								320
+							],
+							"markers": [
+								550
+							]
+						},
+						{
+							"title": "New Customers",
+							"subtitle": "count",
+							"ranges": [
+								1400,
+								2000,
+								2500
+							],
+							"measures": [
+								1000,
+								1650
+							],
+							"markers": [
+								2100
+							]
+						},
+						{
+							"title": "Satisfaction",
+							"subtitle": "out of 5",
+							"ranges": [
+								3.5,
+								4.25,
+								5
+							],
+							"measures": [
+								3.2,
+								4.7
+							],
+							"markers": [
+								4.4
+							]
+						}
+					]
+				},
+				"facet": {
+					"row": {
+						"field": "title",
+						"type": "ordinal",
+						"header": {
+							"labelAngle": 0,
+							"title": "",
+							"labelAlign": "left"
+						}
+					}
+				},
+				"spacing": 10,
+				"spec": {
+					"encoding": {
+						"x": {
+							"type": "quantitative",
+							"scale": {
+								"nice": false
+							},
+							"title": null
+						}
+					},
+					"layer": [
+						{
+							"mark": {
+								"type": "bar",
+								"color": "#eee"
+							},
+							"encoding": {
+								"x": {
+									"field": "ranges[2]"
+								}
+							}
+						},
+						{
+							"mark": {
+								"type": "bar",
+								"color": "#ddd"
+							},
+							"encoding": {
+								"x": {
+									"field": "ranges[1]"
+								}
+							}
+						},
+						{
+							"mark": {
+								"type": "bar",
+								"color": "#ccc"
+							},
+							"encoding": {
+								"x": {
+									"field": "ranges[0]"
+								}
+							}
+						},
+						{
+							"mark": {
+								"type": "bar",
+								"color": "lightsteelblue",
+								"size": 10
+							},
+							"encoding": {
+								"x": {
+									"field": "measures[1]"
+								}
+							}
+						},
+						{
+							"mark": {
+								"type": "bar",
+								"color": "steelblue",
+								"size": 10
+							},
+							"encoding": {
+								"x": {
+									"field": "measures[0]"
+								}
+							}
+						},
+						{
+							"mark": {
+								"type": "tick",
+								"color": "black"
+							},
+							"encoding": {
+								"x": {
+									"field": "markers[0]"
+								}
+							}
+						}
+					]
+				},
+				"resolve": {
+					"scale": {
+						"x": "independent"
+					}
+				},
+				"config": {
+					"tick": {
+						"thickness": 2
+					},
+					"scale": {
+						"barBandPaddingInner": 0
+					}
+				}
+			}
+		},
+		"vega-lite/waterfall_chart": {
+			"src": "vega-lite/examples/specs/waterfall_chart.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"values": [
+						{
+							"label": "Begin",
+							"amount": 4000
+						},
+						{
+							"label": "Jan",
+							"amount": 1707
+						},
+						{
+							"label": "Feb",
+							"amount": -1425
+						},
+						{
+							"label": "Mar",
+							"amount": -1030
+						},
+						{
+							"label": "Apr",
+							"amount": 1812
+						},
+						{
+							"label": "May",
+							"amount": -1067
+						},
+						{
+							"label": "Jun",
+							"amount": -1481
+						},
+						{
+							"label": "Jul",
+							"amount": 1228
+						},
+						{
+							"label": "Aug",
+							"amount": 1176
+						},
+						{
+							"label": "Sep",
+							"amount": 1146
+						},
+						{
+							"label": "Oct",
+							"amount": 1205
+						},
+						{
+							"label": "Nov",
+							"amount": -1388
+						},
+						{
+							"label": "Dec",
+							"amount": 1492
+						},
+						{
+							"label": "End",
+							"amount": 0
+						}
+					]
+				},
+				"width": 800,
+				"height": 450,
+				"transform": [
+					{
+						"window": [
+							{
+								"op": "sum",
+								"field": "amount",
+								"as": "sum"
+							}
+						]
+					},
+					{
+						"window": [
+							{
+								"op": "lead",
+								"field": "label",
+								"as": "lead"
+							}
+						]
+					},
+					{
+						"calculate": "datum.lead === null ? datum.label : datum.lead",
+						"as": "lead"
+					},
+					{
+						"calculate": "datum.label === 'End' ? 0 : datum.sum - datum.amount",
+						"as": "previous_sum"
+					},
+					{
+						"calculate": "datum.label === 'End' ? datum.sum : datum.amount",
+						"as": "amount"
+					},
+					{
+						"calculate": "(datum.label !== 'Begin' && datum.label !== 'End' && datum.amount > 0 ? '+' : '') + datum.amount",
+						"as": "text_amount"
+					},
+					{
+						"calculate": "(datum.sum + datum.previous_sum) / 2",
+						"as": "center"
+					}
+				],
+				"encoding": {
+					"x": {
+						"field": "label",
+						"type": "ordinal",
+						"sort": null,
+						"axis": {
+							"labelAngle": 0,
+							"title": "Months"
+						}
+					}
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "bar",
+							"size": 45
+						},
+						"encoding": {
+							"y": {
+								"field": "previous_sum",
+								"type": "quantitative",
+								"title": "Amount"
+							},
+							"y2": {
+								"field": "sum"
+							},
+							"color": {
+								"condition": [
+									{
+										"test": "datum.label === 'Begin' || datum.label === 'End'",
+										"value": "#f7e0b6"
+									},
+									{
+										"test": "datum.sum < datum.previous_sum",
+										"value": "#f78a64"
+									}
+								],
+								"value": "#93c4aa"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "rule",
+							"color": "#404040",
+							"opacity": 1,
+							"strokeWidth": 2,
+							"xOffset": -22.5,
+							"x2Offset": 22.5
+						},
+						"encoding": {
+							"x2": {
+								"field": "lead"
+							},
+							"y": {
+								"field": "sum",
+								"type": "quantitative"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "text",
+							"dy": {
+								"expr": "datum.amount >= 0 ? -4 : 4"
+							},
+							"baseline": {
+								"expr": "datum.amount >= 0 ? 'bottom' : 'top'"
+							}
+						},
+						"encoding": {
+							"y": {
+								"field": "sum",
+								"type": "quantitative"
+							},
+							"text": {
+								"field": "sum",
+								"type": "nominal"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "text",
+							"fontWeight": "bold",
+							"baseline": "middle"
+						},
+						"encoding": {
+							"y": {
+								"field": "center",
+								"type": "quantitative"
+							},
+							"text": {
+								"field": "text_amount",
+								"type": "nominal"
+							},
+							"color": {
+								"condition": [
+									{
+										"test": "datum.label === 'Begin' || datum.label === 'End'",
+										"value": "#725a30"
+									}
+								],
+								"value": "white"
+							}
+						}
+					}
+				],
+				"config": {
+					"text": {
+						"fontWeight": "bold",
+						"color": "#404040"
+					}
+				}
+			}
+		},
+		"vega-lite/bar_diverging_stack_population_pyramid": {
+			"src": "vega-lite/examples/specs/bar_diverging_stack_population_pyramid.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A population pyramid for the US in 2000, created using stack. See https://vega.github.io/vega-lite/examples/concat_population_pyramid.html for a variant of this created using concat.",
+				"data": {
+					"url": "data/population.json"
+				},
+				"transform": [
+					{
+						"filter": "datum.year == 2000"
+					},
+					{
+						"calculate": "datum.sex == 2 ? 'Female' : 'Male'",
+						"as": "gender"
+					},
+					{
+						"calculate": "datum.sex == 2 ? -datum.people : datum.people",
+						"as": "signed_people"
+					}
+				],
+				"width": 300,
+				"height": 200,
+				"mark": "bar",
+				"encoding": {
+					"y": {
+						"field": "age",
+						"axis": null,
+						"sort": "descending"
+					},
+					"x": {
+						"aggregate": "sum",
+						"field": "signed_people",
+						"title": "population",
+						"axis": {
+							"format": "s"
+						}
+					},
+					"color": {
+						"field": "gender",
+						"scale": {
+							"range": [
+								"#675193",
+								"#ca8861"
+							]
+						},
+						"legend": {
+							"orient": "top",
+							"title": null
+						}
+					}
+				},
+				"config": {
+					"view": {
+						"stroke": null
+					},
+					"axis": {
+						"grid": false
+					}
+				}
+			}
+		},
+		"vega-lite/rect_mosaic_labelled_with_offset": {
+			"src": "vega-lite/examples/specs/rect_mosaic_labelled_with_offset.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/cars.json"
+				},
+				"transform": [
+					{
+						"aggregate": [
+							{
+								"op": "count",
+								"as": "count_*"
+							}
+						],
+						"groupby": [
+							"Origin",
+							"Cylinders"
+						]
+					},
+					{
+						"stack": "count_*",
+						"groupby": [],
+						"as": [
+							"stack_count_Origin1",
+							"stack_count_Origin2"
+						],
+						"offset": "normalize",
+						"sort": [
+							{
+								"field": "Origin",
+								"order": "ascending"
+							}
+						]
+					},
+					{
+						"window": [
+							{
+								"op": "min",
+								"field": "stack_count_Origin1",
+								"as": "x"
+							},
+							{
+								"op": "max",
+								"field": "stack_count_Origin2",
+								"as": "x2"
+							},
+							{
+								"op": "dense_rank",
+								"as": "rank_Cylinders"
+							},
+							{
+								"op": "distinct",
+								"field": "Cylinders",
+								"as": "distinct_Cylinders"
+							}
+						],
+						"groupby": [
+							"Origin"
+						],
+						"frame": [
+							null,
+							null
+						],
+						"sort": [
+							{
+								"field": "Cylinders",
+								"order": "ascending"
+							}
+						]
+					},
+					{
+						"window": [
+							{
+								"op": "dense_rank",
+								"as": "rank_Origin"
+							}
+						],
+						"frame": [
+							null,
+							null
+						],
+						"sort": [
+							{
+								"field": "Origin",
+								"order": "ascending"
+							}
+						]
+					},
+					{
+						"stack": "count_*",
+						"groupby": [
+							"Origin"
+						],
+						"as": [
+							"y",
+							"y2"
+						],
+						"offset": "normalize",
+						"sort": [
+							{
+								"field": "Cylinders",
+								"order": "ascending"
+							}
+						]
+					},
+					{
+						"calculate": "datum.y + (datum.rank_Cylinders - 1) * datum.distinct_Cylinders * 0.01 / 3",
+						"as": "ny"
+					},
+					{
+						"calculate": "datum.y2 + (datum.rank_Cylinders - 1) * datum.distinct_Cylinders * 0.01 / 3",
+						"as": "ny2"
+					},
+					{
+						"calculate": "datum.x + (datum.rank_Origin - 1) * 0.01",
+						"as": "nx"
+					},
+					{
+						"calculate": "datum.x2 + (datum.rank_Origin - 1) * 0.01",
+						"as": "nx2"
+					},
+					{
+						"calculate": "(datum.nx+datum.nx2)/2",
+						"as": "xc"
+					},
+					{
+						"calculate": "(datum.ny+datum.ny2)/2",
+						"as": "yc"
+					}
+				],
+				"vconcat": [
+					{
+						"mark": {
+							"type": "text",
+							"baseline": "middle",
+							"align": "center"
+						},
+						"encoding": {
+							"x": {
+								"aggregate": "min",
+								"field": "xc",
+								"title": "Origin",
+								"axis": {
+									"orient": "top"
+								}
+							},
+							"color": {
+								"field": "Origin",
+								"legend": null
+							},
+							"text": {
+								"field": "Origin"
+							}
+						}
+					},
+					{
+						"layer": [
+							{
+								"mark": {
+									"type": "rect"
+								},
+								"encoding": {
+									"x": {
+										"field": "nx",
+										"type": "quantitative",
+										"axis": null
+									},
+									"x2": {
+										"field": "nx2"
+									},
+									"y": {
+										"field": "ny",
+										"type": "quantitative"
+									},
+									"y2": {
+										"field": "ny2"
+									},
+									"color": {
+										"field": "Origin",
+										"type": "nominal",
+										"legend": null
+									},
+									"opacity": {
+										"field": "Cylinders",
+										"type": "quantitative",
+										"legend": null
+									},
+									"tooltip": [
+										{
+											"field": "Origin",
+											"type": "nominal"
+										},
+										{
+											"field": "Cylinders",
+											"type": "quantitative"
+										}
+									]
+								}
+							},
+							{
+								"mark": {
+									"type": "text",
+									"baseline": "middle"
+								},
+								"encoding": {
+									"x": {
+										"field": "xc",
+										"type": "quantitative",
+										"axis": null
+									},
+									"y": {
+										"field": "yc",
+										"type": "quantitative",
+										"axis": {
+											"title": "Cylinders"
+										}
+									},
+									"text": {
+										"field": "Cylinders",
+										"type": "nominal"
+									}
+								}
+							}
+						]
+					}
+				],
+				"resolve": {
+					"scale": {
+						"x": "shared"
+					}
+				},
+				"config": {
+					"view": {
+						"stroke": ""
+					},
+					"concat": {
+						"spacing": 10
+					},
+					"axis": {
+						"domain": false,
+						"ticks": false,
+						"labels": false,
+						"grid": false
+					}
+				}
+			}
+		},
+		"vega-lite/bar_gantt": {
+			"src": "vega-lite/examples/specs/bar_gantt.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A simple bar chart with ranged data (aka Gantt Chart).",
+				"data": {
+					"values": [
+						{
+							"task": "A",
+							"start": 1,
+							"end": 3
+						},
+						{
+							"task": "B",
+							"start": 3,
+							"end": 8
+						},
+						{
+							"task": "C",
+							"start": 8,
+							"end": 10
+						}
+					]
+				},
+				"mark": "bar",
+				"encoding": {
+					"y": {
+						"field": "task",
+						"type": "ordinal"
+					},
+					"x": {
+						"field": "start",
+						"type": "quantitative"
+					},
+					"x2": {
+						"field": "end"
+					}
+				}
+			}
+		},
+		"vega-lite/area_cumulative_freq": {
+			"src": "vega-lite/examples/specs/area_cumulative_freq.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/movies.json"
+				},
+				"transform": [
+					{
+						"aggregate": [
+							{
+								"op": "count",
+								"field": "*",
+								"as": "count"
+							}
+						],
+						"groupby": [
+							"IMDB Rating"
+						]
+					},
+					{
+						"sort": [
+							{
+								"field": "IMDB Rating"
+							}
+						],
+						"window": [
+							{
+								"op": "sum",
+								"field": "count",
+								"as": "Cumulative Count"
+							}
+						],
+						"frame": [
+							null,
+							0
+						]
+					}
+				],
+				"mark": "area",
+				"encoding": {
+					"x": {
+						"field": "IMDB Rating",
+						"type": "quantitative"
+					},
+					"y": {
+						"field": "Cumulative Count",
+						"type": "quantitative"
+					}
+				}
+			}
+		},
+		"vega-lite/layer_line_rolling_mean_point_raw": {
+			"src": "vega-lite/examples/specs/layer_line_rolling_mean_point_raw.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "Plot showing a 30 day rolling average with raw values in the background.",
+				"width": 400,
+				"height": 300,
+				"data": {
+					"url": "data/seattle-weather.csv"
+				},
+				"transform": [
+					{
+						"window": [
+							{
+								"field": "temp_max",
+								"op": "mean",
+								"as": "rolling_mean"
+							}
+						],
+						"frame": [
+							-15,
+							15
+						]
+					}
+				],
+				"encoding": {
+					"x": {
+						"field": "date",
+						"type": "temporal",
+						"title": "Date"
+					},
+					"y": {
+						"type": "quantitative",
+						"axis": {
+							"title": "Max Temperature and Rolling Mean"
+						}
+					}
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "point",
+							"opacity": 0.3
+						},
+						"encoding": {
+							"y": {
+								"field": "temp_max",
+								"title": "Max Temperature"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "line",
+							"color": "red",
+							"size": 3
+						},
+						"encoding": {
+							"y": {
+								"field": "rolling_mean",
+								"title": "Rolling Mean of Max Temperature"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/layer_dual_axis": {
+			"src": "vega-lite/examples/specs/layer_dual_axis.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A dual axis chart, created by setting y's scale resolution to `\"independent\"`",
+				"width": 400,
+				"height": 300,
+				"data": {
+					"url": "data/weather.csv"
+				},
+				"transform": [
+					{
+						"filter": "datum.location == \"Seattle\""
+					}
+				],
+				"encoding": {
+					"x": {
+						"timeUnit": "month",
+						"field": "date",
+						"axis": {
+							"format": "%b",
+							"title": null
+						}
+					}
+				},
+				"layer": [
+					{
+						"mark": {
+							"opacity": 0.3,
+							"type": "area",
+							"color": "#85C5A6"
+						},
+						"encoding": {
+							"y": {
+								"aggregate": "average",
+								"field": "temp_max",
+								"scale": {
+									"domain": [
+										0,
+										30
+									]
+								},
+								"title": "Avg. Temperature (°C)",
+								"axis": {
+									"titleColor": "#85C5A6"
+								}
+							},
+							"y2": {
+								"aggregate": "average",
+								"field": "temp_min"
+							}
+						}
+					},
+					{
+						"mark": {
+							"stroke": "#85A9C5",
+							"type": "line",
+							"interpolate": "monotone"
+						},
+						"encoding": {
+							"y": {
+								"aggregate": "average",
+								"field": "precipitation",
+								"title": "Precipitation (inches)",
+								"axis": {
+									"titleColor": "#85A9C5"
+								}
+							}
+						}
+					}
+				],
+				"resolve": {
+					"scale": {
+						"y": "independent"
+					}
+				}
+			}
+		},
+		"vega-lite/layer_candlestick": {
+			"src": "vega-lite/examples/specs/layer_candlestick.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"width": 400,
+				"description": "A candlestick chart inspired by an example in Protovis (http://mbostock.github.io/protovis/ex/candlestick.html)",
+				"data": {
+					"url": "data/ohlc.json"
+				},
+				"encoding": {
+					"x": {
+						"field": "date",
+						"type": "temporal",
+						"title": "Date in 2009",
+						"axis": {
+							"format": "%m/%d",
+							"labelAngle": -45,
+							"title": "Date in 2009"
+						}
+					},
+					"y": {
+						"type": "quantitative",
+						"scale": {
+							"zero": false
+						},
+						"axis": {
+							"title": "Price"
+						}
+					},
+					"color": {
+						"condition": {
+							"test": "datum.open < datum.close",
+							"value": "#06982d"
+						},
+						"value": "#ae1325"
+					}
+				},
+				"layer": [
+					{
+						"mark": "rule",
+						"encoding": {
+							"y": {
+								"field": "low"
+							},
+							"y2": {
+								"field": "high"
+							}
+						}
+					},
+					{
+						"mark": "bar",
+						"encoding": {
+							"y": {
+								"field": "open"
+							},
+							"y2": {
+								"field": "close"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/area_horizon": {
+			"src": "vega-lite/examples/specs/area_horizon.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "Horizon Graph with 2 layers. (See https://idl.cs.washington.edu/papers/horizon/ for more details on Horizon Graphs.)",
+				"width": 300,
+				"height": 50,
+				"data": {
+					"values": [
+						{
+							"x": 1,
+							"y": 28
+						},
+						{
+							"x": 2,
+							"y": 55
+						},
+						{
+							"x": 3,
+							"y": 43
+						},
+						{
+							"x": 4,
+							"y": 91
+						},
+						{
+							"x": 5,
+							"y": 81
+						},
+						{
+							"x": 6,
+							"y": 53
+						},
+						{
+							"x": 7,
+							"y": 19
+						},
+						{
+							"x": 8,
+							"y": 87
+						},
+						{
+							"x": 9,
+							"y": 52
+						},
+						{
+							"x": 10,
+							"y": 48
+						},
+						{
+							"x": 11,
+							"y": 24
+						},
+						{
+							"x": 12,
+							"y": 49
+						},
+						{
+							"x": 13,
+							"y": 87
+						},
+						{
+							"x": 14,
+							"y": 66
+						},
+						{
+							"x": 15,
+							"y": 17
+						},
+						{
+							"x": 16,
+							"y": 27
+						},
+						{
+							"x": 17,
+							"y": 68
+						},
+						{
+							"x": 18,
+							"y": 16
+						},
+						{
+							"x": 19,
+							"y": 49
+						},
+						{
+							"x": 20,
+							"y": 15
+						}
+					]
+				},
+				"encoding": {
+					"x": {
+						"field": "x",
+						"type": "quantitative",
+						"scale": {
+							"zero": false,
+							"nice": false
+						}
+					},
+					"y": {
+						"field": "y",
+						"type": "quantitative",
+						"scale": {
+							"domain": [
+								0,
+								50
+							]
+						},
+						"axis": {
+							"title": "y"
+						}
+					}
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "area",
+							"clip": true,
+							"orient": "vertical",
+							"opacity": 0.6
+						}
+					},
+					{
+						"transform": [
+							{
+								"calculate": "datum.y - 50",
+								"as": "ny"
+							}
+						],
+						"mark": {
+							"type": "area",
+							"clip": true,
+							"orient": "vertical"
+						},
+						"encoding": {
+							"y": {
+								"field": "ny",
+								"type": "quantitative",
+								"scale": {
+									"domain": [
+										0,
+										50
+									]
+								}
+							},
+							"opacity": {
+								"value": 0.3
+							}
+						}
+					}
+				],
+				"config": {
+					"area": {
+						"interpolate": "monotone"
+					}
+				}
+			}
+		},
+		"vega-lite/trellis_bar_histogram": {
+			"src": "vega-lite/examples/specs/trellis_bar_histogram.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/cars.json"
+				},
+				"mark": "bar",
+				"encoding": {
+					"x": {
+						"bin": {
+							"maxbins": 15
+						},
+						"field": "Horsepower",
+						"type": "quantitative"
+					},
+					"y": {
+						"aggregate": "count",
+						"type": "quantitative"
+					},
+					"row": {
+						"field": "Origin"
+					}
+				}
+			}
+		},
+		"vega-lite/circle_wilkinson_dotplot": {
+			"src": "vega-lite/examples/specs/circle_wilkinson_dotplot.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A Wilkinson Dot Plot",
+				"height": 100,
+				"data": {
+					"values": [
+						1,
+						1,
+						1,
+						1,
+						1,
+						1,
+						1,
+						1,
+						1,
+						1,
+						2,
+						2,
+						2,
+						3,
+						3,
+						4,
+						4,
+						4,
+						4,
+						4,
+						4
+					]
+				},
+				"transform": [
+					{
+						"window": [
+							{
+								"op": "rank",
+								"as": "id"
+							}
+						],
+						"groupby": [
+							"data"
+						]
+					}
+				],
+				"mark": {
+					"type": "circle",
+					"opacity": 1
+				},
+				"encoding": {
+					"x": {
+						"field": "data",
+						"type": "ordinal"
+					},
+					"y": {
+						"field": "id",
+						"type": "ordinal",
+						"axis": null,
+						"sort": "descending"
+					}
+				}
+			}
+		},
+		"vega-lite/area_density": {
+			"src": "vega-lite/examples/specs/area_density.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/movies.json"
+				},
+				"width": 400,
+				"height": 100,
+				"transform": [
+					{
+						"density": "IMDB Rating",
+						"bandwidth": 0.3
+					}
+				],
+				"mark": "area",
+				"encoding": {
+					"x": {
+						"field": "value",
+						"title": "IMDB Rating",
+						"type": "quantitative"
+					},
+					"y": {
+						"field": "density",
+						"type": "quantitative"
+					}
+				}
+			}
+		},
+		"vega-lite/area_density_stacked": {
+			"src": "vega-lite/examples/specs/area_density_stacked.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"title": "Distribution of Body Mass of Penguins",
+				"width": 400,
+				"height": 80,
+				"data": {
+					"url": "data/penguins.json"
+				},
+				"mark": "area",
+				"transform": [
+					{
+						"density": "Body Mass (g)",
+						"groupby": [
+							"Species"
+						],
+						"extent": [
+							2500,
+							6500
+						]
+					}
+				],
+				"encoding": {
+					"x": {
+						"field": "value",
+						"type": "quantitative",
+						"title": "Body Mass (g)"
+					},
+					"y": {
+						"field": "density",
+						"type": "quantitative",
+						"stack": "zero"
+					},
+					"color": {
+						"field": "Species",
+						"type": "nominal"
+					}
+				}
+			}
+		},
+		"vega-lite/area_density_facet": {
+			"src": "vega-lite/examples/specs/area_density_facet.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"title": "Distribution of Body Mass of Penguins",
+				"width": 400,
+				"height": 80,
+				"data": {
+					"url": "data/penguins.json"
+				},
+				"mark": "area",
+				"transform": [
+					{
+						"density": "Body Mass (g)",
+						"groupby": [
+							"Species"
+						],
+						"extent": [
+							2500,
+							6500
+						]
+					}
+				],
+				"encoding": {
+					"x": {
+						"field": "value",
+						"type": "quantitative",
+						"title": "Body Mass (g)"
+					},
+					"y": {
+						"field": "density",
+						"type": "quantitative",
+						"stack": "zero"
+					},
+					"row": {
+						"field": "Species"
+					}
+				}
+			}
+		},
+		"vega-lite/boxplot_2D_vertical": {
+			"src": "vega-lite/examples/specs/boxplot_2D_vertical.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A vertical box plot showing median and lower and upper quartiles of the distribution of body mass of penguins.",
+				"data": {
+					"url": "data/penguins.json"
+				},
+				"mark": "boxplot",
+				"encoding": {
+					"x": {
+						"field": "Species",
+						"type": "nominal"
+					},
+					"color": {
+						"field": "Species",
+						"type": "nominal",
+						"legend": null
+					},
+					"y": {
+						"field": "Body Mass (g)",
+						"type": "quantitative",
+						"scale": {
+							"zero": false
+						}
+					}
+				}
+			}
+		},
+		"vega-lite/tick_strip": {
+			"src": "vega-lite/examples/specs/tick_strip.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "Shows the relationship between horsepower and the number of cylinders using tick marks.",
+				"data": {
+					"url": "data/cars.json"
+				},
+				"mark": "tick",
+				"encoding": {
+					"x": {
+						"field": "Horsepower",
+						"type": "quantitative"
+					},
+					"y": {
+						"field": "Cylinders",
+						"type": "ordinal"
+					}
+				}
+			}
+		},
+		"vega-lite/layer_point_errorbar_ci": {
+			"src": "vega-lite/examples/specs/layer_point_errorbar_ci.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/barley.json"
+				},
+				"encoding": {
+					"y": {
+						"field": "variety",
+						"type": "ordinal"
+					}
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "point",
+							"filled": true
+						},
+						"encoding": {
+							"x": {
+								"aggregate": "mean",
+								"field": "yield",
+								"type": "quantitative",
+								"scale": {
+									"zero": false
+								},
+								"title": "Barley Yield"
+							},
+							"color": {
+								"value": "black"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "errorbar",
+							"extent": "ci"
+						},
+						"encoding": {
+							"x": {
+								"field": "yield",
+								"type": "quantitative",
+								"title": "Barley Yield"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/layer_line_errorband_ci": {
+			"src": "vega-lite/examples/specs/layer_line_errorband_ci.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/cars.json"
+				},
+				"encoding": {
+					"x": {
+						"field": "Year",
+						"timeUnit": "year"
+					}
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "errorband",
+							"extent": "ci"
+						},
+						"encoding": {
+							"y": {
+								"field": "Miles_per_Gallon",
+								"type": "quantitative",
+								"title": "Mean of Miles per Gallon (95% CIs)"
+							}
+						}
+					},
+					{
+						"mark": "line",
+						"encoding": {
+							"y": {
+								"aggregate": "mean",
+								"field": "Miles_per_Gallon"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/point_quantile_quantile": {
+			"src": "vega-lite/examples/specs/point_quantile_quantile.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/normal-2d.json"
+				},
+				"transform": [
+					{
+						"quantile": "u",
+						"step": 0.01,
+						"as": [
+							"p",
+							"v"
+						]
+					},
+					{
+						"calculate": "quantileUniform(datum.p)",
+						"as": "unif"
+					},
+					{
+						"calculate": "quantileNormal(datum.p)",
+						"as": "norm"
+					}
+				],
+				"hconcat": [
+					{
+						"mark": "point",
+						"encoding": {
+							"x": {
+								"field": "unif",
+								"type": "quantitative"
+							},
+							"y": {
+								"field": "v",
+								"type": "quantitative"
+							}
+						}
+					},
+					{
+						"mark": "point",
+						"encoding": {
+							"x": {
+								"field": "norm",
+								"type": "quantitative"
+							},
+							"y": {
+								"field": "v",
+								"type": "quantitative"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/layer_point_line_regression": {
+			"src": "vega-lite/examples/specs/layer_point_line_regression.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/movies.json"
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "point",
+							"filled": true
+						},
+						"encoding": {
+							"x": {
+								"field": "Rotten Tomatoes Rating",
+								"type": "quantitative"
+							},
+							"y": {
+								"field": "IMDB Rating",
+								"type": "quantitative"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "line",
+							"color": "firebrick"
+						},
+						"transform": [
+							{
+								"regression": "IMDB Rating",
+								"on": "Rotten Tomatoes Rating"
+							}
+						],
+						"encoding": {
+							"x": {
+								"field": "Rotten Tomatoes Rating",
+								"type": "quantitative"
+							},
+							"y": {
+								"field": "IMDB Rating",
+								"type": "quantitative"
+							}
+						}
+					},
+					{
+						"transform": [
+							{
+								"regression": "IMDB Rating",
+								"on": "Rotten Tomatoes Rating",
+								"params": true
+							},
+							{
+								"calculate": "'R²: '+format(datum.rSquared, '.2f')",
+								"as": "R2"
+							}
+						],
+						"mark": {
+							"type": "text",
+							"color": "firebrick",
+							"x": "width",
+							"align": "right",
+							"y": -5
+						},
+						"encoding": {
+							"text": {
+								"type": "nominal",
+								"field": "R2"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/layer_point_line_loess": {
+			"src": "vega-lite/examples/specs/layer_point_line_loess.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/movies.json"
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "point",
+							"filled": true
+						},
+						"encoding": {
+							"x": {
+								"field": "Rotten Tomatoes Rating",
+								"type": "quantitative"
+							},
+							"y": {
+								"field": "IMDB Rating",
+								"type": "quantitative"
+							}
+						}
+					},
+					{
+						"mark": {
+							"type": "line",
+							"color": "firebrick"
+						},
+						"transform": [
+							{
+								"loess": "IMDB Rating",
+								"on": "Rotten Tomatoes Rating"
+							}
+						],
+						"encoding": {
+							"x": {
+								"field": "Rotten Tomatoes Rating",
+								"type": "quantitative"
+							},
+							"y": {
+								"field": "IMDB Rating",
+								"type": "quantitative"
+							}
+						}
+					}
+				]
+			}
+		},
+		"vega-lite/connected_scatterplot": {
+			"src": "vega-lite/examples/specs/connected_scatterplot.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/driving.json"
+				},
+				"mark": {
+					"type": "line",
+					"point": true
+				},
+				"encoding": {
+					"x": {
+						"field": "miles",
+						"type": "quantitative",
+						"scale": {
+							"zero": false
+						}
+					},
+					"y": {
+						"field": "gas",
+						"type": "quantitative",
+						"scale": {
+							"zero": false
+						}
+					},
+					"order": {
+						"field": "year"
+					}
+				}
+			}
+		},
+		"vega-lite/parallel_coordinate": {
+			"src": "vega-lite/examples/specs/parallel_coordinate.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "Though Vega-Lite supports only one scale per axes, one can create a parallel coordinate plot by folding variables, using `joinaggregate` to normalize their values and using ticks and rules to manually create axes.",
+				"data": {
+					"url": "data/penguins.json"
+				},
+				"width": 600,
+				"height": 300,
+				"transform": [
+					{
+						"filter": "datum['Beak Length (mm)']"
+					},
+					{
+						"window": [
+							{
+								"op": "count",
+								"as": "index"
+							}
+						]
+					},
+					{
+						"fold": [
+							"Beak Length (mm)",
+							"Beak Depth (mm)",
+							"Flipper Length (mm)",
+							"Body Mass (g)"
+						]
+					},
+					{
+						"joinaggregate": [
+							{
+								"op": "min",
+								"field": "value",
+								"as": "min"
+							},
+							{
+								"op": "max",
+								"field": "value",
+								"as": "max"
+							}
+						],
+						"groupby": [
+							"key"
+						]
+					},
+					{
+						"calculate": "(datum.value - datum.min) / (datum.max-datum.min)",
+						"as": "norm_val"
+					},
+					{
+						"calculate": "(datum.min + datum.max) / 2",
+						"as": "mid"
+					}
+				],
+				"layer": [
+					{
+						"mark": {
+							"type": "rule",
+							"color": "#ccc"
+						},
+						"encoding": {
+							"detail": {
+								"aggregate": "count"
+							},
+							"x": {
+								"field": "key"
+							}
+						}
+					},
+					{
+						"mark": "line",
+						"encoding": {
+							"color": {
+								"type": "nominal",
+								"field": "Species"
+							},
+							"detail": {
+								"type": "nominal",
+								"field": "index"
+							},
+							"opacity": {
+								"value": 0.3
+							},
+							"x": {
+								"type": "nominal",
+								"field": "key"
+							},
+							"y": {
+								"type": "quantitative",
+								"field": "norm_val",
+								"axis": null
+							},
+							"tooltip": [
+								{
+									"type": "quantitative",
+									"field": "Beak Length (mm)"
+								},
+								{
+									"type": "quantitative",
+									"field": "Beak Depth (mm)"
+								},
+								{
+									"type": "quantitative",
+									"field": "Flipper Length (mm)"
+								},
+								{
+									"type": "quantitative",
+									"field": "Body Mass (g)"
+								}
+							]
+						}
+					},
+					{
+						"encoding": {
+							"x": {
+								"type": "nominal",
+								"field": "key"
+							},
+							"y": {
+								"value": 0
+							}
+						},
+						"layer": [
+							{
+								"mark": {
+									"type": "text",
+									"style": "label"
+								},
+								"encoding": {
+									"text": {
+										"aggregate": "max",
+										"field": "max"
+									}
+								}
+							},
+							{
+								"mark": {
+									"type": "tick",
+									"style": "tick",
+									"size": 8,
+									"color": "#ccc"
+								}
+							}
+						]
+					},
+					{
+						"encoding": {
+							"x": {
+								"type": "nominal",
+								"field": "key"
+							},
+							"y": {
+								"value": 150
+							}
+						},
+						"layer": [
+							{
+								"mark": {
+									"type": "text",
+									"style": "label"
+								},
+								"encoding": {
+									"text": {
+										"aggregate": "min",
+										"field": "mid"
+									}
+								}
+							},
+							{
+								"mark": {
+									"type": "tick",
+									"style": "tick",
+									"size": 8,
+									"color": "#ccc"
+								}
+							}
+						]
+					},
+					{
+						"encoding": {
+							"x": {
+								"type": "nominal",
+								"field": "key"
+							},
+							"y": {
+								"value": 300
+							}
+						},
+						"layer": [
+							{
+								"mark": {
+									"type": "text",
+									"style": "label"
+								},
+								"encoding": {
+									"text": {
+										"aggregate": "min",
+										"field": "min"
+									}
+								}
+							},
+							{
+								"mark": {
+									"type": "tick",
+									"style": "tick",
+									"size": 8,
+									"color": "#ccc"
+								}
+							}
+						]
+					}
+				],
+				"config": {
+					"axisX": {
+						"domain": false,
+						"labelAngle": 0,
+						"tickColor": "#ccc",
+						"title": null
+					},
+					"view": {
+						"stroke": null
+					},
+					"style": {
+						"label": {
+							"baseline": "middle",
+							"align": "right",
+							"dx": -5
+						},
+						"tick": {
+							"orient": "horizontal"
+						}
+					}
+				}
+			}
+		},
+		"vega-lite/layer_text_heatmap": {
+			"src": "vega-lite/examples/specs/layer_text_heatmap.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/cars.json"
+				},
+				"transform": [
+					{
+						"aggregate": [
+							{
+								"op": "count",
+								"as": "num_cars"
+							}
+						],
+						"groupby": [
+							"Origin",
+							"Cylinders"
+						]
+					}
+				],
+				"encoding": {
+					"y": {
+						"field": "Origin",
+						"type": "ordinal"
+					},
+					"x": {
+						"field": "Cylinders",
+						"type": "ordinal"
+					}
+				},
+				"layer": [
+					{
+						"mark": "rect",
+						"encoding": {
+							"color": {
+								"field": "num_cars",
+								"type": "quantitative",
+								"title": "Count of Records",
+								"legend": {
+									"direction": "horizontal",
+									"gradientLength": 120
+								}
+							}
+						}
+					},
+					{
+						"mark": "text",
+						"encoding": {
+							"text": {
+								"field": "num_cars",
+								"type": "quantitative"
+							},
+							"color": {
+								"condition": {
+									"test": "datum['num_cars'] < 40",
+									"value": "black"
+								},
+								"value": "white"
+							}
+						}
+					}
+				],
+				"config": {
+					"axis": {
+						"grid": true,
+						"tickBand": "extent"
+					}
+				}
+			}
+		},
+		"vega-lite/rect_binned_heatmap": {
+			"src": "vega-lite/examples/specs/rect_binned_heatmap.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"data": {
+					"url": "data/movies.json"
+				},
+				"transform": [
+					{
+						"filter": {
+							"and": [
+								{
+									"field": "IMDB Rating",
+									"valid": true
+								},
+								{
+									"field": "Rotten Tomatoes Rating",
+									"valid": true
+								}
+							]
+						}
+					}
+				],
+				"mark": "rect",
+				"width": 300,
+				"height": 200,
+				"encoding": {
+					"x": {
+						"bin": {
+							"maxbins": 60
+						},
+						"field": "IMDB Rating",
+						"type": "quantitative"
+					},
+					"y": {
+						"bin": {
+							"maxbins": 40
+						},
+						"field": "Rotten Tomatoes Rating",
+						"type": "quantitative"
+					},
+					"color": {
+						"aggregate": "count",
+						"type": "quantitative"
+					}
+				},
+				"config": {
+					"view": {
+						"stroke": "transparent"
+					}
+				}
+			}
+		},
+		"vega-lite/arc_radial": {
+			"src": "vega-lite/examples/specs/arc_radial.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"description": "A simple radial chart with embedded data.",
+				"data": {
+					"values": [
+						12,
+						23,
+						47,
+						6,
+						52,
+						19
+					]
+				},
+				"layer": [
+					{
+						"mark": {
+							"type": "arc",
+							"innerRadius": 20,
+							"stroke": "#fff"
+						}
+					},
+					{
+						"mark": {
+							"type": "text",
+							"radiusOffset": 10
+						},
+						"encoding": {
+							"text": {
+								"field": "data",
+								"type": "quantitative"
+							}
+						}
+					}
+				],
+				"encoding": {
+					"theta": {
+						"field": "data",
+						"type": "quantitative",
+						"stack": true
+					},
+					"radius": {
+						"field": "data",
+						"scale": {
+							"type": "sqrt",
+							"zero": true,
+							"rangeMin": 20
+						}
+					},
+					"color": {
+						"field": "data",
+						"type": "nominal",
+						"legend": null
+					}
+				}
+			}
+		},
+		"vega-lite/interactive_splom": {
+			"src": "vega-lite/examples/specs/interactive_splom.vl.json",
+			"spec": {
+				"$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+				"repeat": {
+					"row": [
+						"Horsepower",
+						"Acceleration",
+						"Miles_per_Gallon"
+					],
+					"column": [
+						"Miles_per_Gallon",
+						"Acceleration",
+						"Horsepower"
+					]
+				},
+				"spec": {
+					"data": {
+						"url": "data/cars.json"
+					},
+					"mark": "point",
+					"params": [
+						{
+							"name": "brush",
+							"select": {
+								"type": "interval",
+								"resolve": "union",
+								"on": "[pointerdown[event.shiftKey], window:pointerup] > window:pointermove!",
+								"translate": "[pointerdown[event.shiftKey], window:pointerup] > window:pointermove!",
+								"zoom": "wheel![event.shiftKey]"
+							}
+						},
+						{
+							"name": "grid",
+							"select": {
+								"type": "interval",
+								"resolve": "global",
+								"translate": "[pointerdown[!event.shiftKey], window:pointerup] > window:pointermove!",
+								"zoom": "wheel![!event.shiftKey]"
+							},
+							"bind": "scales"
+						}
+					],
+					"encoding": {
+						"x": {
+							"field": {
+								"repeat": "column"
+							},
+							"type": "quantitative"
+						},
+						"y": {
+							"field": {
+								"repeat": "row"
+							},
+							"type": "quantitative",
+							"axis": {
+								"minExtent": 30
+							}
+						},
+						"color": {
+							"condition": {
+								"param": "brush",
+								"field": "Origin",
+								"type": "nominal"
+							},
+							"value": "grey"
+						}
+					}
+				}
+			}
+		},
 		"vega-lite/arc_pie": {
 			"src": "vega-lite/examples/specs/arc_pie.vl.json",
 			"spec": {

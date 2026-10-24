@@ -360,7 +360,7 @@
 	 * else changes except the `edits` a type declares, each with its reason (C.EDITS lists them all).
 	 */
 	C.EDITS = [];
-	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by']);
+	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by', 'density', 'regression', 'loess', 'on', 'quantile', 'pivot']);
 	const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 	/** Deep copy of `node` with every field-name reference in `map` ({ example name: user column }) renamed. */
@@ -370,10 +370,10 @@
 			.replace(new RegExp(`datum\\.${escapeRe(from)}(?![\\w$])`, 'g'), () => `datum[${JSON.stringify(to)}]`)
 			.replace(new RegExp(`datum\\[(["'])${escapeRe(from)}\\1\\]`, 'g'), () => `datum[${JSON.stringify(to)}]`), text);
 		const walk = (v, key) => {
-			if (Array.isArray(v)) return v.map((x) => walk(x, key === 'groupby' || key === 'fields' ? key : undefined));
+			if (Array.isArray(v)) return v.map((x) => walk(x, key === 'groupby' || key === 'fields' || key === 'fold' || key === 'flatten' ? key : undefined));
 			if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
 			if (typeof v !== 'string') return v;
-			if (FIELD_KEYS.has(key) || key === 'groupby' || key === 'fields' || key === 'sort') return rename(v);
+			if (FIELD_KEYS.has(key) || key === 'groupby' || key === 'fields' || key === 'fold' || key === 'flatten' || key === 'sort') return rename(v);
 			if (key === 'calculate' || key === 'filter' || key === 'expr') return expr(v);
 			return v;
 		};
@@ -395,6 +395,7 @@
 
 	/** The user's data goes where the example's data was: `data.url` / `data.values` -> `data.values`. */
 	function fillData(spec, rows) {
+		if (!spec.data && spec.spec && typeof spec.spec === 'object') return fillData(spec.spec, rows); // repeat / facet keep their data inside
 		if (spec.data && typeof spec.data === 'object' && !Array.isArray(spec.data)) spec.data = { values: rows };
 		else if (Array.isArray(spec.data)) {
 			const source = spec.data.find((d) => d.url || d.values);
@@ -420,7 +421,7 @@
 			const map = {};
 			for (const [role, example] of Object.entries(t.fields)) if (s.has(role)) map[example] = s.f(role);
 			let spec = JSON.parse(JSON.stringify(up.spec));
-			for (const e of t.edits || []) e.apply(spec);
+			for (const e of t.edits || []) e.apply(spec, s);
 			spec = renameFields(spec, map);
 			fillData(spec, s.records);
 			if (s.opts.xTitle) setChannel(spec, 'x', 'title', s.opts.xTitle);
