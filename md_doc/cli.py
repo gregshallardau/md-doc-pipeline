@@ -2006,6 +2006,48 @@ def _prompt_color(prompt: str, default: str) -> str:
 
 
 @main.group()
+def diagram() -> None:
+    """Render Mermaid diagrams with the built-in renderer."""
+
+
+@diagram.command("render")
+@click.option(
+    "--jobs",
+    "jobs_file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="JSON file of jobs to render (default: read stdin).",
+)
+def diagram_render(jobs_file: Path | None) -> None:
+    """Render diagrams to SVG for other tools (the presentation framework uses this).
+
+    Reads a JSON list of ``{"source": "<mermaid text>", "theme": {...}}`` jobs and
+    writes a JSON list in the same order: ``{"svg": "..."}`` or ``{"error": "..."}``.
+    ``theme`` takes the diagram theme keys (``primary``, ``accent``, ``body``,
+    ``muted``, ``font``, ``surface``, ``mode``, ``palette``) and may be omitted.
+    """
+    import json
+
+    from .mermaid import render_to_svg
+
+    raw = jobs_file.read_text(encoding="utf-8") if jobs_file else sys.stdin.read()
+    try:
+        jobs = json.loads(raw)
+        if not isinstance(jobs, list):
+            raise ValueError("expected a JSON list of jobs")
+    except ValueError as exc:
+        raise click.ClickException(f"invalid jobs: {exc}") from exc
+    results: list[dict[str, str]] = []
+    for job in jobs:
+        try:
+            theme = {str(k): str(v) for k, v in (job.get("theme") or {}).items()}
+            results.append({"svg": render_to_svg(str(job["source"]), theme)})
+        except Exception as exc:  # one bad diagram must not lose the others
+            results.append({"error": f"{type(exc).__name__}: {exc}"})
+    click.echo(json.dumps(results))
+
+
+@main.group()
 def theme() -> None:
     """Create and manage PDF themes."""
 
