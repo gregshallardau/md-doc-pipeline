@@ -236,7 +236,7 @@ help reconstruct content when no source copy remains.
 ## Chart wizard
 
 **Insert → Chart…** opens a four-step builder (type, data, customize, insert) for Vega-Lite and Vega
-charts: 87 chart types in 11 groups, with a searchable picker whose thumbnails are drawn from each
+charts: 86 chart types in 11 groups, with a searchable picker whose thumbnails are drawn from each
 chart's own sample data. Paste a table or edit the sample, pick columns and options, and it inserts a
 `chart` block at the cursor; the preview uses this document's own theme
 (`GET /api/charts/config?path=…`). The block is rendered by `md-doc build` (needs the `charts` extra) and
