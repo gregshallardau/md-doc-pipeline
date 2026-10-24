@@ -1024,6 +1024,42 @@ This paragraph is centred.
 
 </div>
 
+<a id="markdown-charts-vega"></a>
+
+### Charts (Vega-Lite)
+
+For data charts — lines, areas, scatter, heatmaps, stacked and grouped bars, histograms, layered
+and dual-axis charts — use a fenced `chart` block holding a [Vega-Lite](https://vega.github.io/vega-lite/)
+spec, written as YAML (or JSON). A full [Vega](https://vega.github.io/vega/) spec works the same way.
+`vega-lite` and `vega` are accepted as the fence language too.
+
+````markdown
+```chart
+data: {url: sales.csv}
+mark: {type: line, point: true}
+encoding:
+  x: {field: month, type: ordinal, sort: [Jan, Feb, Mar]}
+  y: {field: revenue, type: quantitative}
+  color: {field: region, type: nominal}
+```
+````
+
+- **Data.** Inline with `data: {values: [...]}`, or `data: {url: file.csv}` (`.csv`, `.tsv` or `.json`)
+  read relative to the document. Remote URLs are not fetched at build time.
+- **Theme.** The spec holds data and encodings only. Colours, fonts, gridlines and the series
+  palette come from the same theme as Mermaid diagrams (`--mddoc-diagram-*` properties and the
+  brand colours), and anything under the spec's own `config` wins.
+- **Size.** `width` and `height` size the whole chart including axes and legend. The default width
+  is the text column (at most 720px) and the default height 320px. `width: container` means the
+  default.
+- **Formats.** PDF gets vector SVG; Word and PowerPoint get a 2x PNG. Interactive features
+  (tooltips, selections, bound controls) show only in the presentation framework, which runs the same
+  spec in the browser, so a spec copied between the two produces the same chart.
+- **Install.** Needs the optional `charts` extra: `uv sync --extra charts`. Without it, or when a
+  spec is invalid, the build warns and leaves the block as a code block.
+
+Use Mermaid for flowcharts, sequences and the other diagrams below, and `chart` for data.
+
 <a id="markdown-diagrams-mermaid"></a>
 
 ### Diagrams (Mermaid)
@@ -6078,6 +6114,20 @@ uv sync --extra mermaid   # + libcairo2 on Linux
 
 Without it, diagrams still work in PDF; in Word they fall back to a code block
 rather than breaking the build. PDF diagrams never require `cairosvg`.
+
+<a id="troubleshooting-chart-blocks-show-as-source-code"></a>
+
+### Chart blocks show as source code
+
+`chart`, `vega-lite` and `vega` blocks are drawn with the optional `vl-convert-python`
+dependency:
+
+```bash
+uv sync --extra charts
+```
+
+The build log names the problem when a spec is invalid (for example a missing data file) and
+leaves that one block as code.
 
 <a id="troubleshooting-s3--azure-sync-says-the-backend-isnt-available"></a>
 

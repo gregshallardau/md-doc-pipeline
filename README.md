@@ -72,8 +72,8 @@ Markdown source on the left, the generated PDF on the right, in the [browser edi
 uv tool install https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl
 md-doc doctor
 
-# With optional extras (azure, s3, mermaid):
-uv tool install "md-doc-pipeline[azure,s3,mermaid] @ https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl"
+# With optional extras (azure, s3, mermaid, charts):
+uv tool install "md-doc-pipeline[azure,s3,mermaid,charts] @ https://github.com/gregshallardau/md-doc-pipeline/releases/download/v0.4.0/md_doc_pipeline-0.4.0-py3-none-any.whl"
 ```
 
 `pip install <wheel URL>` works the same way inside a virtual environment. The browser editor, Neovim plugin and Filament plugin are installed from a checkout (below).

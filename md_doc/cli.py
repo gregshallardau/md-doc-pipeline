@@ -763,6 +763,11 @@ def doctor() -> None:
             "Mermaid diagrams in Word  [mermaid]",
             "install the [mermaid] extra (README › Installation) — without it, diagrams fall back to code blocks in .docx/.dotx",
         ),
+        (
+            "vl_convert",
+            "Vega-Lite charts  [charts]",
+            "install the [charts] extra (README › Installation) — without it, chart blocks stay as code",
+        ),
     ):
         try:
             __import__(module)

@@ -1,0 +1,114 @@
+"""Vega-Lite / Vega ``chart`` blocks."""
+
+from __future__ import annotations
+
+import pytest
+
+from md_doc import charts
+
+pytestmark = pytest.mark.skipif(not charts.available(), reason="vl-convert not installed")
+
+LINE = """
+data:
+  values:
+    - {m: Jan, v: 12}
+    - {m: Feb, v: 19}
+mark: line
+encoding:
+  x: {field: m, type: ordinal}
+  y: {field: v, type: quantitative}
+"""
+
+
+def _block(source: str, lang: str = "chart") -> str:
+    escaped = source.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f'<pre><code class="language-{lang}">{escaped}</code></pre>'
+
+
+def test_render_svg():
+    svg = charts.render_svg(LINE)
+    assert svg.startswith("<svg")
+
+
+def test_theme_palette_is_applied():
+    theme = {"primary": "#0b6e4f", "accent": "#e07a1f", "brand": "1"}
+    svg = charts.render_svg(LINE, theme)
+    assert "#0b6e4f" in svg.lower()
+
+
+def test_user_config_wins_over_theme():
+    spec = charts.prepare_spec(LINE + "config: {font: Courier}\n")
+    assert spec["config"]["font"] == "Courier"
+    assert spec["config"]["axis"]["labelAngle"] == 0
+
+
+def test_default_size_follows_column_and_container_means_default():
+    spec = charts.prepare_spec(LINE, {"column_px": "500"})
+    assert spec["width"] == 500
+    spec = charts.prepare_spec(LINE + "width: container\n", {"column_px": "500"})
+    assert spec["width"] == 500
+    spec = charts.prepare_spec(LINE + "width: 300\n", {"column_px": "500"})
+    assert spec["width"] == 300
+
+
+def test_csv_data_is_inlined(tmp_path):
+    (tmp_path / "d.csv").write_text("m,v\nJan,1\nFeb,2.5\n")
+    spec = charts.prepare_spec(
+        "data: {url: d.csv}\nmark: bar\nencoding: {x: {field: m}, y: {field: v}}",
+        base_dir=tmp_path,
+    )
+    assert spec["data"]["values"] == [{"m": "Jan", "v": 1}, {"m": "Feb", "v": 2.5}]
+
+
+def test_missing_data_file_is_an_error(tmp_path):
+    with pytest.raises(charts.ChartError):
+        charts.prepare_spec("data: {url: nope.csv}\nmark: bar", base_dir=tmp_path)
+
+
+def test_vega_detection():
+    assert not charts.is_vega({"mark": "bar"})
+    assert charts.is_vega({"$schema": "https://vega.github.io/schema/vega/v5.json"})
+    assert charts.is_vega({"marks": []})
+
+
+def test_png_has_natural_size():
+    png, w, h = charts.render_png(LINE)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert w > 100 and h > 100
+
+
+def test_process_html_replaces_all_languages_and_keeps_bad_blocks():
+    html = _block(LINE) + _block(LINE, "vega-lite") + _block("not: [valid")
+    out = charts.process_html(html)
+    assert out.count('class="chart-figure"') == 2
+    assert out.count("language-chart") == 1  # the invalid block is left as code
+
+
+def test_render_to_images_extends_the_shared_image_list():
+    images = [(b"existing", 1, 1)]
+    out = charts.render_to_images(_block(LINE), None, images)
+    assert len(images) == 2
+    assert 'src="mermaid://1"' in out
+
+
+def _key_paths(obj, prefix=""):
+    out = []
+    for key, value in obj.items():
+        path = f"{prefix}.{key}" if prefix else key
+        out += _key_paths(value, path) if isinstance(value, dict) else [path]
+    return sorted(out)
+
+
+def test_config_keys_match_the_presentation_framework():
+    """``vega_config`` and the deck's ``vegaConfig`` (src/lib/vega.js) set the same keys.
+
+    The same JSON lives in presentation-framework at src/lib/fixtures/chart-config-keys.json;
+    change both files together when a key is added or removed.
+    """
+    import json
+    from pathlib import Path
+
+    expected = json.loads(
+        (Path(__file__).parent / "fixtures" / "chart_config_keys.json").read_text()
+    )
+    assert _key_paths(charts.vega_config({"primary": "#2563eb", "accent": "#374151"})) == expected

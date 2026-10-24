@@ -983,6 +983,14 @@ def build(
     except Exception:
         mermaid_theme = None
     html, images = _render_mermaid_to_images(html, mermaid_theme)
+    from ..charts import render_to_images as _render_charts_to_images
+
+    html = _render_charts_to_images(
+        html,
+        mermaid_theme,
+        images,
+        base_dir=(doc_path.parent if doc_path and doc_path.is_file() else doc_path),
+    )
 
     # Presentation base + slide size.
     template = (

@@ -4758,6 +4758,14 @@ def build(
     except Exception:
         mermaid_theme = None
     html, mermaid_images = _render_mermaid_to_images(html, mermaid_theme)
+    from ..charts import render_to_images as _render_charts_to_images
+
+    html = _render_charts_to_images(
+        html,
+        mermaid_theme,
+        mermaid_images,
+        base_dir=(doc_path.parent if doc_path and doc_path.is_file() else doc_path),
+    )
     html = _render_component_svgs(html, mermaid_images)
 
     doc = Document()
