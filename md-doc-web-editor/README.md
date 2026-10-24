@@ -232,3 +232,17 @@ copies reduce the consequences; they do not provide a cross-application lock.
 Preview/export snapshots are temporary rendering inputs, not backups: jobs,
 expiry and shutdown can delete them. A displayed or downloaded output can still
 help reconstruct content when no source copy remains.
+
+## Chart wizard
+
+**Insert → Chart…** opens a four-step builder (type, data, customize, insert) for
+Vega-Lite charts. Paste a table or edit the sample, pick columns and options, and it
+inserts a `chart` block at the cursor; the preview uses this document's own theme
+(`GET /api/charts/config?path=…`). The block is rendered by `md-doc build` (needs the
+`charts` extra) and is the same one the presentation framework's Markdown slides take.
+
+`static/chart-wizard.js` is a byte-identical copy of the canonical file in the
+presentation framework's studio, and Vega, Vega-Lite and vega-embed are vendored in
+`static/vendor/vega-6.2.0/` (see `VERSIONS.txt`). `tests/test_chart_wizard.py` checks
+the copy against `tests/chart-wizard.sha256`; when the wizard changes, copy it over and
+update the hash file in both repos.

@@ -1055,6 +1055,10 @@ encoding:
 - **Formats.** PDF gets vector SVG; Word and PowerPoint get a 2x PNG. Interactive features
   (tooltips, selections, bound controls) show only in the presentation framework, which runs the same
   spec in the browser, so a spec copied between the two produces the same chart.
+- **Chart wizard.** In the browser editor, **Insert → Chart…** is a step-by-step builder (type, data,
+  customize, insert) with a live preview in this document's own theme. Paste a table or edit the sample,
+  pick the columns and options, and it inserts a `chart` block at the cursor. The presentation framework's
+  studio has the same wizard, and its Markdown slides take the same block.
 - **Install.** Needs the optional `charts` extra: `uv sync --extra charts`. Without it, or when a
   spec is invalid, the build warns and leaves the block as a code block.
 

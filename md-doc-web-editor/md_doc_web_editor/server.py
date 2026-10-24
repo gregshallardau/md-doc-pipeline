@@ -380,6 +380,21 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
         ws, full = _locate(path)
         return JSONResponse(_resolve_css(full, ws.root, _prefix(ws)))
 
+    # ── Chart wizard ──────────────────────────────────────────────────────────
+
+    @app.get("/api/charts/config")
+    def chart_config(path: str | None = None) -> JSONResponse:
+        """Vega config for the chart wizard's preview, in this document's theme."""
+        from md_doc import charts
+        from md_doc.mermaid import diagram_theme
+
+        theme = None
+        if path:
+            ws, full = _locate(path)
+            css = _resolve_css(full, ws.root, _prefix(ws))["css"]
+            theme = diagram_theme(css) if css else None
+        return JSONResponse(charts.vega_config(theme))
+
     # ── Included templates ────────────────────────────────────────────────────
 
     @app.get("/api/template")

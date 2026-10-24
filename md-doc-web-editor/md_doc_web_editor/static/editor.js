@@ -3319,6 +3319,19 @@
       ],
     );
   }
+  function chartWizard() {
+    if (!current()) return;
+    setEditMode("source");
+    window.ChartWizard.open({
+      // The same ```chart block the presentation framework's Markdown slides take.
+      format: "yaml-fence",
+      vendorBase: "/static/vendor/vega-6.2.0",
+      // Preview with this document's own theme colours and fonts.
+      getConfig: async () =>
+        api("/api/charts/config?path=" + encodeURIComponent(state.active)),
+      onInsert: (code) => insert("chart", "\n" + code),
+    });
+  }
   function insertionMenu() {
     const anchor = document.querySelector('[data-action="insert-menu"]');
     const existing = $("insert-submenu");
@@ -3353,6 +3366,14 @@
       ["slide", "Slide layout", "Two-column slide directive", "columns"],
     ])
       body.append(option(label, description, iconName, () => insert(kind)));
+    body.append(
+      option(
+        "Chart…",
+        "Build a Vega-Lite chart step by step (bar, line, pie, scatter, heatmap…)",
+        "columns",
+        chartWizard,
+      ),
+    );
     body.append(
       option(
         "Merge field",
