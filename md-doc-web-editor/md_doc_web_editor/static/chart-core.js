@@ -34,7 +34,12 @@
 	C.group = (g) => { C.GROUPS.push(g); return g; };
 	C.option = (id, def) => { C.OPTIONS[id] = { id, ...def }; };
 	C.sample = (key, text) => { C.SAMPLES[key] = text; };
-	C.type = (t) => { C.TYPES.push({ options: [], roles: [], defaults: {}, opts: {}, ...t }); return t; };
+	C.type = (t) => {
+		const def = { options: [], roles: [], defaults: {}, opts: {}, ...t };
+		const at = C.TYPES.findIndex((x) => x.id === def.id);
+		if (at >= 0) C.TYPES[at] = def; else C.TYPES.push(def);
+		return t;
+	};
 	C.chartType = (id) => C.TYPES.find((c) => c.id === id) || C.TYPES[0];
 	C.sampleText = (key) => (typeof C.SAMPLES[key] === 'function' ? C.SAMPLES[key]() : C.SAMPLES[key]);
 
@@ -348,6 +353,82 @@
 	h.r = (n, d = 2) => (Number.isFinite(n) ? Math.round(n * 10 ** d) / 10 ** d : n);
 	/** Distinct values of a column in first-seen order. */
 	h.distinct = (records, col) => [...new Set(records.map((r) => r[col]))];
+
+	/* ── Upstream templates ─────────────────────────────────────────────────
+	 * A chart is an upstream Vega / Vega-Lite example (chart-templates.js, verbatim) with the user's data
+	 * in place of the example's and the example's field names renamed to the user's columns. Nothing
+	 * else changes except the `edits` a type declares, each with its reason (C.EDITS lists them all).
+	 */
+	C.EDITS = [];
+	const FIELD_KEYS = new Set(['field', 'key', 'impute', 'by']);
+	const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+	/** Deep copy of `node` with every field-name reference in `map` ({ example name: user column }) renamed. */
+	function renameFields(node, map) {
+		const rename = (name) => (Object.prototype.hasOwnProperty.call(map, name) ? map[name] : name);
+		const expr = (text) => Object.entries(map).reduce((acc, [from, to]) => acc
+			.replace(new RegExp(`datum\\.${escapeRe(from)}(?![\\w$])`, 'g'), () => `datum[${JSON.stringify(to)}]`)
+			.replace(new RegExp(`datum\\[(["'])${escapeRe(from)}\\1\\]`, 'g'), () => `datum[${JSON.stringify(to)}]`), text);
+		const walk = (v, key) => {
+			if (Array.isArray(v)) return v.map((x) => walk(x, key === 'groupby' || key === 'fields' ? key : undefined));
+			if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
+			if (typeof v !== 'string') return v;
+			if (FIELD_KEYS.has(key) || key === 'groupby' || key === 'fields' || key === 'sort') return rename(v);
+			if (key === 'calculate' || key === 'filter' || key === 'expr') return expr(v);
+			return v;
+		};
+		return walk(node);
+	}
+
+	/** Set a property on an encoding channel wherever the template has it (top level or in layers). */
+	function setChannel(spec, channel, prop, value) {
+		let done = false;
+		const visit = (node) => {
+			if (!node || typeof node !== 'object') return;
+			if (node.encoding && node.encoding[channel]) { node.encoding[channel][prop] = value; done = true; }
+			(node.layer || []).forEach(visit);
+		};
+		visit(spec);
+		return done;
+	}
+	C.setChannel = setChannel;
+
+	/** The user's data goes where the example's data was: `data.url` / `data.values` -> `data.values`. */
+	function fillData(spec, rows) {
+		if (spec.data && typeof spec.data === 'object' && !Array.isArray(spec.data)) spec.data = { values: rows };
+		else if (Array.isArray(spec.data)) {
+			const source = spec.data.find((d) => d.url || d.values);
+			if (source) { delete source.url; delete source.format; source.values = rows; }
+		}
+	}
+
+	/**
+	 * Define a chart type backed by upstream templates.
+	 *   templates: [{ key, when?(opts), fields: { role: 'example field' }, edits?: [{ why, apply(spec) }] }]  first match wins
+	 * Only the options the template really supports are offered (see the option ids in `options`).
+	 */
+	C.upstream = (def) => {
+		for (const t of def.templates) for (const e of t.edits || []) C.EDITS.push({ type: def.id, template: t.key, why: e.why });
+		return upstreamType(def);
+	};
+	const upstreamType = (def) => C.type({
+		...def,
+		build(s) {
+			const t = def.templates.find((x) => !x.when || x.when(s.opts)) || def.templates[0];
+			const up = C.TEMPLATES[t.key];
+			if (!up) throw new Error(`Missing upstream template ${t.key}`);
+			const map = {};
+			for (const [role, example] of Object.entries(t.fields)) if (s.has(role)) map[example] = s.f(role);
+			let spec = JSON.parse(JSON.stringify(up.spec));
+			for (const e of t.edits || []) e.apply(spec);
+			spec = renameFields(spec, map);
+			fillData(spec, s.records);
+			if (s.opts.xTitle) setChannel(spec, 'x', 'title', s.opts.xTitle);
+			if (s.opts.yTitle) setChannel(spec, 'y', 'title', s.opts.yTitle);
+			if (s.opts.legend === false) { for (const ch of ['color', 'size']) setChannel(spec, ch, 'legend', null); }
+			return spec;
+		},
+	});
 
 	/* ── Output: YAML for fences, JSON for slide elements ───────────────── */
 

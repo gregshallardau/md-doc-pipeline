@@ -24,10 +24,12 @@
 
 	/** Catalogue files, in load order (core first; the rest only register themselves). */
 	const FILES = [
-		'chart-core.js', 'chart-geo-data.js', 'chart-types-bars.js', 'chart-types-trends.js', 'chart-types-distribution.js',
+		'chart-core.js', 'chart-templates.js', 'chart-geo-data.js', 'chart-types-bars.js', 'chart-types-trends.js', 'chart-types-distribution.js',
 		'chart-types-relationship.js', 'chart-types-matrix.js', 'chart-types-composition.js', 'chart-types-hierarchy.js',
 		'chart-types-flow.js', 'chart-types-text.js', 'chart-types-geo.js',
 	];
+	// Upstream-backed types replace the hand-built ones with the same id, so they load last.
+	const LATE = ['chart-types-upstream.js'];
 	const STEPS = ['Type', 'Data', 'Customize', 'Insert'];
 	const THUMB = { w: 132, h: 84 };
 
@@ -55,7 +57,9 @@
 		if (root.ChartCatalog && root.ChartCatalog.TYPES.length) return root.ChartCatalog;
 		const b = base.replace(/\/$/, '');
 		await loadScript(`${b}/${FILES[0]}`);
-		await Promise.all(FILES.slice(1).map((f) => loadScript(`${b}/${f}`)));
+		await loadScript(`${b}/${FILES[1]}`);
+		await Promise.all(FILES.slice(2).map((f) => loadScript(`${b}/${f}`)));
+		for (const f of LATE) await loadScript(`${b}/${f}`);
 		return root.ChartCatalog;
 	}
 
@@ -523,5 +527,5 @@
 		return open({ ...host, editing: read, onInsert: (code) => host.replaceRange(block.start, block.end, code) });
 	}
 
-	root.ChartWizard = { open, edit, FILES, ensureCatalog };
+	root.ChartWizard = { open, edit, FILES: [...FILES, ...LATE], ensureCatalog };
 })(typeof window !== 'undefined' ? window : globalThis);
