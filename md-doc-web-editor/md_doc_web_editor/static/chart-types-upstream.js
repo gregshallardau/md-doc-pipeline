@@ -58,7 +58,7 @@
 		id: 'hbar', group: 'compare', label: 'Horizontal bar', desc: 'Bars read left to right; long names fit', sample: 'u_bars',
 		roles: [cat, val], options: ['labels'],
 		templates: [
-			{ key: 'vega-lite/layer_bar_labels', when: (o) => o.labels === true, fields: { x: 'a', y: 'b' }, edits: [{ why: 'its x scale domain [0, 60] fits the example’s three values', apply(spec) { delete spec.encoding.x.scale; } }] },
+			{ key: 'vega-lite/layer_bar_labels', sets: { labels: true }, when: (o) => o.labels === true, fields: { x: 'a', y: 'b' }, edits: [{ why: 'its x scale domain [0, 60] fits the example’s three values', apply(spec) { delete spec.encoding.x.scale; } }] },
 			{ key: 'vega-lite/bar_aggregate', fields: { x: 'age', y: 'people' }, edits: [
 				dropTransform('it keeps one year (`datum.year == 2000`) of a multi-year file; your table is the data', (t) => t.filter),
 				dropChannelProp('its x axis title “population” names the example’s own field', 'x', 'title'),
@@ -187,6 +187,9 @@
 	C.sample('u_uniform', () => { const next = rng(31); return ['Value', ...Array.from({ length: 80 }, () => (next() + next() + next() + next() - 2).toFixed(2))].join('\n'); });
 	C.sample('u_dots', 'Value\n1\n1\n1\n1\n2\n2\n2\n3\n3\n3\n3\n3\n4\n4\n5\n5\n5\n6\n7\n7\n8');
 
+	/** The rows of a spec's first inline dataset (what the hooks below start from). */
+	const rowsOf0 = (spec) => { const d = spec.data || (spec.spec && spec.spec.data); const first = Array.isArray(d) ? d.find((x) => Array.isArray(x.values)) : d; return first && Array.isArray(first.values) ? first.values : null; };
+
 	/* ── Bars and comparison ────────────────────────────────────────────── */
 
 	C.upstream({
@@ -304,12 +307,6 @@
 			}),
 		] }],
 	});
-	C.upstream({
-		id: 'cumulative', group: 'trend', label: 'Cumulative total', desc: 'The running count of values up to each point', sample: 'u_uniform', sampleMap: { x: 'Value' },
-		roles: [role('x', 'Values (number)', 'num')], options: [],
-		templates: [{ key: 'vega-lite/area_cumulative_freq', fields: { x: 'IMDB Rating' } }],
-	});
-
 	/* ── Distribution (second batch) ────────────────────────────────────── */
 
 	C.upstream({
@@ -380,7 +377,7 @@
 		id: 'scatter-trend', group: 'relationship', label: 'Scatter with trend', desc: 'Points with a fitted line', sample: 'u_pairs', sampleMap: { x: 'Critics', y: 'Audience' },
 		roles: [role('x', 'X (number)', 'num'), role('y', 'Y (number)', 'num')], options: ['fit'],
 		templates: [
-			{ key: 'vega-lite/layer_point_line_loess', when: (o) => o.fit === 'loess', fields: { x: 'Rotten Tomatoes Rating', y: 'IMDB Rating' } },
+			{ key: 'vega-lite/layer_point_line_loess', sets: { fit: 'loess' }, when: (o) => o.fit === 'loess', fields: { x: 'Rotten Tomatoes Rating', y: 'IMDB Rating' } },
 			{ key: 'vega-lite/layer_point_line_regression', fields: { x: 'Rotten Tomatoes Rating', y: 'IMDB Rating' } },
 		],
 	});
@@ -392,7 +389,11 @@
 	C.upstream({
 		id: 'parallel', group: 'relationship', label: 'Parallel coordinates', desc: 'One line per row across several measures', sample: 'u_penguins', sampleMap: { group: 'Species', measures: ['Body mass', 'Beak length', 'Beak depth', 'Flipper length'] },
 		roles: [role('group', 'Colour by', 'any'), role('measures', 'Measures (2 or more)', 'num', true, { multi: true, min: 2 })], options: [],
-		templates: [{ key: 'vega-lite/parallel_coordinate', fields: { group: 'Species' }, edits: [
+		templates: [{ key: 'vega-lite/parallel_coordinate', fields: { group: 'Species' }, read: (b) => {
+			const rows = rowsOf0(b), fold = (b.transform || []).find((t) => t.fold);
+			const color = b.layer && b.layer[1] && b.layer[1].encoding && b.layer[1].encoding.color;
+			return rows && fold && color ? { rows, map: { group: color.field, measures: fold.fold } } : null;
+		}, edits: [
 			edit('its four measures (Beak Length, Beak Depth, Flipper Length, Body Mass) are the example’s columns; they become the columns you choose', (spec, s) => {
 				const cols = s.list('measures');
 				spec.transform[0].filter = `datum[${JSON.stringify(cols[0])}]`;
@@ -406,7 +407,10 @@
 	C.upstream({
 		id: 'scatter-matrix', group: 'relationship', label: 'Scatter matrix', desc: 'Every pair of measures against each other', sample: 'u_cars', sampleMap: { measures: ['Horsepower', 'Miles per gallon', 'Acceleration'], group: 'Origin' },
 		roles: [role('measures', 'Measures (2 or more)', 'num', true, { multi: true, min: 2 }), role('group', 'Colour by', 'any', false)], options: [],
-		templates: [{ key: 'vega-lite/interactive_splom', fields: { group: 'Origin' }, edits: [
+		templates: [{ key: 'vega-lite/interactive_splom', fields: { group: 'Origin' }, read: (b) => {
+			const rows = rowsOf0(b), color = b.spec && b.spec.encoding && b.spec.encoding.color;
+			return rows && b.repeat ? { rows, map: { measures: b.repeat.row, ...(color && color.condition ? { group: color.condition.field } : {}) } } : null;
+		}, edits: [
 			edit('its repeat lists the example’s three columns (Horsepower, Acceleration, Miles_per_Gallon); they become the columns you choose', (spec, s) => { spec.repeat = { row: s.list('measures'), column: [...s.list('measures')].reverse() }; }),
 		] }],
 	});
@@ -586,17 +590,27 @@
 			links: s.records.map((r) => ({ source: at(String(r[s.f('source')])), target: at(String(r[s.f('target')])), value: s.has('weight') ? Number(r[s.f('weight')]) || 1 : 1 })),
 		};
 	};
+	/** One table of links back from the nodes and links datasets (indexes to names). */
+	const linksFrom = (nodes, links) => {
+		if (!nodes || !links) return null;
+		const name = (i) => (nodes[i] ? nodes[i].name : String(i));
+		return {
+			rows: links.map((l) => ({ Source: name(l.source), Target: name(l.target), Weight: l.value, Group: nodes[l.source] ? nodes[l.source].group : 1 })),
+			map: { source: 'Source', target: 'Target', weight: 'Weight', group: 'Group' },
+		};
+	};
+	const dataNamed = (spec, name) => { const d = Array.isArray(spec.data) && spec.data.find((x) => x.name === name); return d && Array.isArray(d.values) ? d.values : null; };
 	const networkRoles = [role('source', 'From', 'any'), role('target', 'To', 'any'), role('weight', 'Weight (optional)', 'num', false), role('group', 'Group of the “From” item (optional)', 'any', false)];
 	const networkMap = { source: 'Source', target: 'Target', weight: 'Weight', group: 'Group' };
 	C.upstream({
 		id: 'arc-diagram', group: 'flow', label: 'Arc diagram', desc: 'Items along a line, links as arcs', sample: 'u_network', sampleMap: networkMap,
 		roles: networkRoles, options: [],
-		templates: [{ key: 'vega/arc-diagram', fields: {}, fill(spec, s) { const g = graphOf(s); setNamed(spec, 'edges', g.links); setNamed(spec, 'nodes', g.nodes); } }],
+		templates: [{ key: 'vega/arc-diagram', fields: {}, read: (b) => linksFrom(dataNamed(b, 'nodes'), dataNamed(b, 'edges')), fill(spec, s) { const g = graphOf(s); setNamed(spec, 'edges', g.links); setNamed(spec, 'nodes', g.nodes); } }],
 	});
 	C.upstream({
 		id: 'force', group: 'flow', label: 'Force network', desc: 'A network laid out by physical simulation; drag nodes to move them', sample: 'u_network', sampleMap: networkMap,
 		roles: networkRoles, options: [],
-		templates: [{ key: 'vega/force-directed-layout', fields: {}, fill(spec, s) { const g = graphOf(s); setNamed(spec, 'node-data', g.nodes); setNamed(spec, 'link-data', g.links); } }],
+		templates: [{ key: 'vega/force-directed-layout', fields: {}, read: (b) => linksFrom(dataNamed(b, 'node-data'), dataNamed(b, 'link-data')), fill(spec, s) { const g = graphOf(s); setNamed(spec, 'node-data', g.nodes); setNamed(spec, 'link-data', g.links); } }],
 	});
 	C.sample('u_imports', 'From,To\napp.ui.Button,app.core.Store\napp.ui.Menu,app.core.Store\napp.ui.Menu,app.ui.Button\napp.ui.Form,app.ui.Button\napp.ui.Form,app.data.Validator\napp.data.Loader,app.core.Http\napp.data.Loader,app.core.Store\napp.data.Validator,app.core.Store\napp.core.Http,app.util.Log\napp.core.Store,app.util.Log\napp.util.Log,app.util.Format\napp.ui.Chart,app.data.Loader\napp.ui.Chart,app.util.Format\napp.ui.Table,app.data.Loader\napp.ui.Table,app.util.Format');
 	/** Upstream's hierarchy is the dotted names themselves (flare.vis.Axes): one node per path prefix, links between the leaves. */
@@ -623,6 +637,12 @@
 	C.upstream({
 		id: 'edge-bundling', group: 'flow', label: 'Edge bundling', desc: 'Links between leaves, routed through the hierarchy (names like app.ui.Button give the hierarchy)', sample: 'u_imports', sampleMap: { source: 'From', target: 'To' },
 		roles: [role('source', 'From (dotted path)', 'any'), role('target', 'To (dotted path)', 'any')], options: [],
-		templates: [{ key: 'vega/edge-bundling', fields: {}, fill(spec, s) { const g = bundleOf(s); setNamed(spec, 'tree', g.tree); setNamed(spec, 'dependencies', g.links); } }],
+		templates: [{ key: 'vega/edge-bundling', fields: {}, read: (b) => {
+			const tree = dataNamed(b, 'tree'), deps = dataNamed(b, 'dependencies');
+			if (!tree || !deps) return null;
+			const byId = new Map(tree.map((n) => [n.id, n]));
+			const path = (id) => { const n = byId.get(id); return !n ? String(id) : n.parent && byId.get(n.parent) ? `${path(n.parent)}.${n.name}` : n.name; };
+			return { rows: deps.map((d) => ({ From: path(d.source), To: path(d.target) })), map: { source: 'From', target: 'To' } };
+		}, fill(spec, s) { const g = bundleOf(s); setNamed(spec, 'tree', g.tree); setNamed(spec, 'dependencies', g.links); } }],
 	});
 })(typeof window !== 'undefined' ? window : globalThis);

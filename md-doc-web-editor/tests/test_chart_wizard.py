@@ -79,6 +79,22 @@ def test_chart_config_endpoint_uses_the_documents_theme(tmp_path):
     assert themed["axis"]["labelAngle"] == 0
 
 
+def test_chart_parse_endpoint_reads_a_block_back_as_a_spec(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        ok = client.post(
+            "/api/charts/parse", json={"source": "mark: bar\ndata:\n  values: [{a: 1}]\n"}
+        )
+        assert ok.status_code == 200
+        assert ok.json()["spec"] == {"mark": "bar", "data": {"values": [{"a": 1}]}}
+        assert client.post("/api/charts/parse", json={"source": '{"mark": "point"}'}).json()[
+            "spec"
+        ] == {"mark": "point"}
+        for source in ("- 1\n- 2", "just text", "a: [unclosed"):
+            bad = client.post("/api/charts/parse", json={"source": source})
+            assert bad.status_code == 400, source
+            assert "chart spec" in bad.json()["detail"]
+
+
 NODE_DUMP = """
 const vm = require('vm'), fs = require('fs'), path = require('path');
 const dir = process.argv[1];

@@ -243,10 +243,12 @@ chart's own sample data. Paste a table or edit the sample, pick columns and opti
 is the same one the presentation framework's Markdown slides take. The full catalogue is in the
 [handbook](../docs/handbook.md#markdown-charts-catalogue).
 
-**Insert → Edit chart at cursor** reopens the wizard on the chart block the cursor is in, restricted to
-that chart's own type, with its data, columns and options restored; **Update chart** replaces the block
-in place. The settings live in a `# chart-wizard: {…}` comment on the block's first line, so only blocks
-the wizard wrote can be reopened, and a hand edit is flagged before it is replaced.
+**Right-click → Edit chart…** inside a chart block (or **Insert → Edit chart at cursor**) reopens the wizard on that
+chart. The wizard reads the block itself: it recognises the upstream example the spec is, takes the table out of
+the data and finds which columns fill the example's fields, then opens on that chart type only with everything
+restored; **Update chart** replaces the block in place. Nothing is stored in the block, so a chart pasted from the
+Vega documentation or edited by hand opens the same way. The page reads the block through
+`POST /api/charts/parse` (YAML or JSON to a spec).
 
 The wizard is the shared files `static/chart-*.js` (core, one module per chart family, map lookup tables
 and the dialog), byte-identical copies of the canonical ones in the presentation framework's studio.

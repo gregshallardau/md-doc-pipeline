@@ -228,8 +228,7 @@
 		const chart = () => C.chartType(state.type);
 		const optValue = (id) => (state.opts[id] !== undefined ? state.opts[id] : C.optionDefaults(chart())[id]);
 		const currentOpts = () => ({ ...C.optionDefaults(chart()), ...state.opts });
-		const snapshot = () => ({ type: state.type, table: state.table, types: state.types, map: state.map, opts: state.opts, userTyped: state.userTyped });
-		const codeNow = () => C.codeFor(host.format, current(), currentOpts().title, snapshot());
+		const codeNow = () => C.codeFor(host.format, current(), currentOpts().title);
 		const current = (warnings) => C.buildSpec({ type: state.type, table: state.table, types: state.types, map: state.map, opts: currentOpts() }, warnings);
 
 		function setTable(table) {
@@ -248,7 +247,7 @@
 			state.opts = {};
 		}
 		const editing = host.editing || null;
-		if (editing) Object.assign(state, editing.state, { step: 1, touched: true });
+		if (editing) Object.assign(state, editing.state);
 		else loadSample();
 
 		/* preview */
@@ -457,12 +456,11 @@
 		function insertStep() {
 			const warnings = [];
 			let code = '', problem = '';
-			try { code = C.codeFor(host.format, current(warnings), currentOpts().title, snapshot()); } catch (e) { problem = e.message; }
+			try { code = C.codeFor(host.format, current(warnings), currentOpts().title); } catch (e) { problem = e.message; }
 			const copy = h('button', { type: 'button', class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(code); copy.textContent = 'Copied'; } catch { copy.textContent = 'Copy failed'; } } }, 'Copy');
 			const rows = state.table.rows.length;
 			return [
 				h('h3', null, editing ? 'Ready to update' : 'Ready to insert'),
-				handEdited(),
 				h('p', { class: 'hint' }, editing ? 'This replaces the chart you opened, in place.' : host.format === 'deck-element'
 					? 'This <deck-chart-vega> goes in at the cursor. It is interactive on the slide.'
 					: 'This chart block goes in at the cursor. The same block works in md-doc documents and in Markdown slides.'),
@@ -474,9 +472,6 @@
 		}
 
 		/* shell */
-		const handEdited = () => (editing && editing.edited
-			? h('p', { class: 'cw-note warn' }, 'This block was changed by hand after the wizard wrote it. Updating it rebuilds the chart from the settings below and replaces those changes.')
-			: null);
 		const lowest = editing ? 1 : 0; // the chart type is fixed while editing a chart
 		function go(to) { state.step = Math.max(lowest, Math.min(STEPS.length - 1, to)); render(); }
 
@@ -498,7 +493,7 @@
 					? h('button', { type: 'button', class: 'btn primary', onclick: () => { try { host.onInsert(codeNow()); dialog.close(); } catch (e) { note.textContent = e.message; } } }, editing ? 'Update chart' : 'Insert at cursor')
 					: state.step === 0 ? null : h('button', { type: 'button', class: 'btn primary', onclick: () => go(state.step + 1) }, 'Next'));
 			dialog.replaceChildren(head, body, foot);
-			main.append(...[state.step === 1 ? handEdited() : null, ...[typeStep, dataStep, designStep, insertStep][state.step](refresh)].filter(Boolean));
+			main.append(...[typeStep, dataStep, designStep, insertStep][state.step](refresh).filter(Boolean));
 			if (showPreview) refresh();
 		}
 
@@ -509,21 +504,63 @@
 	}
 
 	/**
-	 * Edit the chart block under the cursor. The host also supplies
+	 * Edit an existing chart: the block under the cursor, or (with `target.spec`) the one whose spec is that chart's, as
+	 * when a chart is right-clicked in a preview. Nothing is stored in the block; the wizard reads the chart back from the
+	 * spec itself (ChartCatalog.readSpec), opens on that chart type only, and replaces the block in place. The host also supplies
 	 *   getSource():              { text, offset }  the whole document and the cursor position in it
+	 *   parseSpec(yamlText):      Promise<spec>     YAML (a superset of JSON) to an object
 	 *   replaceRange(start, end, code)              swap that part of the document for the new block
 	 *   notify(message)                             say why there is nothing to edit
-	 * Only a block the wizard wrote can be reopened, and only as its own chart type.
 	 */
-	async function edit(host) {
+	async function edit(host, target = null) {
 		const C = await ensureCatalog(host.scriptBase || '.');
 		const { text, offset } = host.getSource();
-		const block = C.findBlock(text, offset, host.format);
-		if (!block) return host.notify('Put the cursor inside a chart block to edit it.');
-		const read = C.readBlock(block.text, host.format);
-		if (read.error) return host.notify(read.error);
-		return open({ ...host, editing: read, onInsert: (code) => host.replaceRange(block.start, block.end, code) });
+		const parse = (block) => (host.format === 'deck-element' ? JSON.parse(C.blockSource(block.text, host.format)) : host.parseSpec(C.blockSource(block.text, host.format)));
+		let block = null, spec = null;
+		try {
+			if (target && target.spec) {
+				const want = C.canon(target.spec);
+				for (const b of C.findBlocks(text, host.format)) { const sp = await parse(b).catch(() => null); if (sp && C.canon(sp) === want) { block = b; spec = sp; break; } }
+				if (!block) return host.notify('That chart’s block was not found in the source; it may have changed.');
+			} else {
+				block = C.findBlock(text, offset, host.format);
+				if (!block) return host.notify('Put the cursor inside a chart block to edit it.');
+				spec = await parse(block);
+			}
+		} catch (error) {
+			return host.notify(`This chart block could not be read: ${error.message}`);
+		}
+		const read = C.readSpec(spec);
+		if (!read.length) return host.notify('This chart does not match any chart type the wizard builds, so edit it by hand.');
+		return open({ ...host, editing: { state: { ...read[0].state, step: 1, touched: true } }, onInsert: (code) => host.replaceRange(block.start, block.end, code) });
 	}
 
-	root.ChartWizard = { open, edit, FILES: [...FILES, ...LATE], ensureCatalog };
+	/**
+	 * Right-click "Edit chart…" in a Monaco editor, offered only while the cursor is inside a chart block.
+	 * `getHost()` returns the host for the file being edited (or null when none is open).
+	 */
+	function bindEditor(editor, getHost) {
+		const inside = editor.createContextKey('inChartBlock', false);
+		let C = null; // once the catalogue is loaded the key is set synchronously, before a context menu opens
+		const refresh = () => {
+			const host = getHost();
+			const { text, offset } = host ? host.getSource() : { text: '' };
+			if (!host || !/```chart|<deck-chart-vega/.test(text)) return inside.set(false);
+			if (C) return inside.set(!!C.findBlock(text, offset, host.format));
+			inside.set(false);
+			ensureCatalog(host.scriptBase || '.').then((loaded) => { C = loaded; refresh(); });
+		};
+		editor.onDidChangeCursorPosition(refresh);
+		editor.onDidChangeModel(refresh);
+		editor.addAction({
+			id: 'chart-wizard.edit',
+			label: 'Edit chart…',
+			contextMenuGroupId: 'navigation',
+			contextMenuOrder: 0,
+			precondition: 'inChartBlock',
+			run: () => { const host = getHost(); if (host) edit(host); },
+		});
+	}
+
+	root.ChartWizard = { open, edit, bindEditor, FILES: [...FILES, ...LATE], ensureCatalog };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -76,6 +76,10 @@ class IgnoreRequest(BaseModel):
     name: str = ""
 
 
+class ChartSource(BaseModel):
+    source: str
+
+
 class BuildRequest(BaseModel):
     path: str
     format: str = "pdf"
@@ -394,6 +398,16 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
             css = _resolve_css(full, ws.root, _prefix(ws))["css"]
             theme = diagram_theme(css) if css else None
         return JSONResponse(charts.vega_config(theme))
+
+    @app.post("/api/charts/parse")
+    def chart_parse(req: ChartSource) -> JSONResponse:
+        """A chart block's YAML (or JSON) as a spec, so the wizard can read an existing chart back."""
+        from md_doc import charts
+
+        try:
+            return JSONResponse({"spec": charts.parse_spec(req.source)})
+        except charts.ChartError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     # ── Included templates ────────────────────────────────────────────────────
 

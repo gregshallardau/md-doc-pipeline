@@ -440,6 +440,10 @@
                   (error) => toast(error.message, true),
                 );
             });
+            // Right-click inside a chart block: Edit chart…
+            window.ChartWizard?.bindEditor(state.editor, () =>
+              current() ? chartHost() : null,
+            );
             state.editor.addAction({
               id: "md-doc.edit-include",
               label: "Edit included template inline",
@@ -3355,6 +3359,13 @@
           changed(state.fallback.value);
         }
       },
+      parseSpec: async (source) =>
+        (
+          await api("/api/charts/parse", {
+            method: "POST",
+            body: JSON.stringify({ source }),
+          })
+        ).spec,
       notify: (message) => toast(message, true),
     };
   }

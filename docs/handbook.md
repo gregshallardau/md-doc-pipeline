@@ -1050,14 +1050,14 @@ encoding:
   chart's own sample data, lets you paste a table or edit the sample, and inserts the block at the
   cursor. The presentation framework's studio has the same wizard, and its Markdown slides take the
   same block, so a chart is the same in a document and on a slide.
-- **Editing a chart again.** Put the cursor inside a chart block the wizard wrote and choose
-  **Insert → Edit chart at cursor**. The wizard reopens on that chart's own type (the type cannot be
-  changed while editing; insert a new chart for that), with its data, columns and options restored,
-  and **Update chart** replaces the block in place. The wizard keeps these settings in a
-  `# chart-wizard: {…}` comment on the block's first line, which the build ignores. If you changed
-  the block by hand since the wizard wrote it, the wizard says so before it rebuilds the chart from
-  its settings, which replaces those changes. A chart written by hand has no saved settings, so it
-  cannot be reopened.
+- **Editing a chart again.** Right-click inside a chart block and choose **Edit chart…** (or
+  **Insert → Edit chart at cursor**). The wizard reads the block itself: it recognises which upstream
+  example the spec is, takes your table out of the data and works out which of your columns stand where the
+  example's fields were, then opens on that one chart type with everything filled in (the type cannot be changed;
+  insert a new chart for that). **Update chart** replaces the block in place. Nothing is stored in the block, so a
+  chart you pasted from the Vega documentation, or edited by hand (a number in the data, a different title), opens
+  the same way. A chart that matches none of the wizard's types is left for you to edit by hand, and the
+  wizard says so. In the deck studio you can also right-click a chart on the slide.
 - **Data.** Inline with `data: {values: [...]}`, or `data: {url: file.csv}` (`.csv`, `.tsv` or `.json`)
   read relative to the document. Remote URLs are not fetched at build time.
 - **Built-in maps.** `data: {url: "vega-datasets:world-110m"}` (countries; ISO 3166-1 numeric ids) and

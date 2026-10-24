@@ -511,69 +511,171 @@
 	 *   yaml-fence    a ```chart block (md-doc documents and deck .md slides)
 	 *   deck-element  <deck-chart-vega> with a JSON script (deck .html slides)
 	 */
-	function codeFor(format, spec, label, state) {
-		const token = state ? stateToken(state, format === 'deck-element' ? deckBody(spec) : yamlBody(spec)) : '';
+	function codeFor(format, spec, label) {
 		if (format === 'deck-element') {
-			const attr = (label ? ` label="${escAttr(label)}"` : '') + (token ? ` data-wizard="${escAttr(token)}"` : '');
+			const attr = label ? ` label="${String(label).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"` : '';
 			return `<deck-chart-vega${attr}>\n\t<script type="application/json">\n\t\t${deckBody(spec).replace(/\n/g, '\n\t\t')}\n\t</script>\n</deck-chart-vega>\n`;
 		}
-		return '```chart\n' + (token ? `# ${MARK} ${token}\n` : '') + yamlBody(spec) + '\n```\n';
+		return '```chart\n' + toYaml(spec) + '\n```\n';
 	}
-	const escAttr = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-	const unescAttr = (v) => String(v).replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-	const yamlBody = (spec) => toYaml(spec);
 	const deckBody = (spec) => JSON.stringify(spec, null, '\t').replace(/<\//g, '<\\/');
 
-	/* ── Editing a block again ──────────────────────────────────────────────
-	 * The wizard writes what it needs to reopen a chart into the block itself: a `# chart-wizard:`
-	 * comment line in a ```chart fence (YAML ignores it) or a data-wizard attribute on
-	 * <deck-chart-vega> (the component ignores it). It holds the type, data, column mapping and
-	 * options, plus a hash of the generated body so a hand edit can be noticed. */
-	const MARK = 'chart-wizard:';
-	const hashBody = (text) => { let x = 0x811c9dc5; for (const ch of String(text).replace(/\s+/g, '')) { x ^= ch.codePointAt(0); x = Math.imul(x, 0x01000193) >>> 0; } return x.toString(36); };
-	function stateToken(state, body) {
-		const opts = {};
-		for (const [k, v] of Object.entries(state.opts || {})) if (v !== undefined) opts[k] = v;
-		const userTyped = Object.keys(state.userTyped || {}).filter((c) => state.userTyped[c]);
-		return JSON.stringify({ v: 1, t: state.type, c: state.table.columns, r: state.table.rows, y: state.types, m: state.map, o: opts, u: userTyped, h: hashBody(body) });
+	/* ── Finding a chart block in a document ───────────────────────────────
+	 * Blocks carry nothing but the spec; the wizard finds one by where the cursor is, and reads the chart
+	 * back from the spec itself (readSpec below). */
+	const blockRe = (format) => (format === 'deck-element' ? /<deck-chart-vega\b[\s\S]*?<\/deck-chart-vega>[ \t]*\n?/g : /^```chart[^\n]*\n[\s\S]*?^```[ \t]*(?:\n|$)/gm);
+	/** Every chart block in `text`, as { start, end, text }. */
+	function findBlocks(text, format) {
+		return [...text.matchAll(blockRe(format))].map((m) => ({ start: m.index, end: m.index + m[0].length, text: m[0] }));
 	}
-
-	/** The block around `offset` in `text` ({ start, end, text }), or null. */
+	/** The block around `offset` in `text`, or null. */
 	function findBlock(text, offset, format) {
-		const re = format === 'deck-element' ? /<deck-chart-vega\b[\s\S]*?<\/deck-chart-vega>[ \t]*\n?/g : /^```chart[^\n]*\n[\s\S]*?^```[ \t]*(?:\n|$)/gm;
-		for (let m; (m = re.exec(text)); ) if (m.index <= offset && offset <= m.index + m[0].length) return { start: m.index, end: m.index + m[0].length, text: m[0] };
-		return null;
+		return findBlocks(text, format).find((b) => b.start <= offset && offset <= b.end) || null;
 	}
-
-	/**
-	 * Wizard state saved in a block, plus whether its body has been changed by hand since.
-	 * Returns { state, edited } or { error } (a block the wizard did not write, or one it can no longer open).
-	 */
-	function readBlock(blockText, format) {
-		let token, body;
-		if (format === 'deck-element') {
-			const attr = /\sdata-wizard="([^"]*)"/.exec(blockText.slice(0, blockText.indexOf('>') + 1));
-			token = attr && unescAttr(attr[1]);
-			body = (/<script[^>]*>([\s\S]*?)<\/script>/.exec(blockText) || [])[1] || '';
-		} else {
-			const lines = blockText.replace(/\n```[ \t]*\n?$/, '').split('\n').slice(1);
-			const first = lines[0] || '';
-			token = first.startsWith(`# ${MARK} `) ? first.slice(MARK.length + 3) : null;
-			body = lines.slice(token ? 1 : 0).join('\n');
-		}
-		if (!token) return { error: 'This chart was not made by the wizard, so its settings were not saved with it. Insert a new chart instead.' };
-		let t;
-		try { t = JSON.parse(token); } catch { return { error: 'The wizard settings saved in this chart are damaged.' }; }
-		const chart = t && t.v === 1 && C.TYPES.find((c) => c.id === t.t);
-		if (!chart) return { error: 'This chart was made with a chart type this wizard does not have.' };
-		const columns = Array.isArray(t.c) ? t.c : [];
-		const state = { type: chart.id, table: { columns, rows: Array.isArray(t.r) ? t.r : [] }, types: t.y || {}, map: t.m || {}, opts: t.o || {}, userTyped: Object.fromEntries((t.u || []).map((c) => [c, true])) };
-		const used = Object.values(state.map).flat();
-		if (used.some((c) => !columns.includes(c))) return { error: 'The wizard settings saved in this chart refer to columns that are no longer there.' };
-		return { state, edited: hashBody(body) !== t.h };
+	/** A block's spec source: the YAML between the fences, or the JSON in the element's script. */
+	function blockSource(blockText, format) {
+		if (format === 'deck-element') return ((/<script[^>]*>([\s\S]*?)<\/script>/.exec(blockText) || [])[1] || '').replace(/<\\\//g, '</');
+		return blockText.replace(/^```[^\n]*\n/, '').replace(/\n?```[ \t]*\n?$/, '');
 	}
+	C.findBlocks = findBlocks;
 	C.findBlock = findBlock;
-	C.readBlock = readBlock;
+	C.blockSource = blockSource;
+
+	/* ── Reading a chart back from its spec ─────────────────────────────────
+	 * The wizard fills an upstream spec with data and column names, so the reverse is a comparison: for each chart type,
+	 * walk its template beside the block to see which of the user's columns sit where the example's fields were, take the
+	 * rows out of the data, and rebuild: the chart is that type when the rebuilt spec equals the block (titles and the
+	 * rows themselves aside). Nothing is stored in the block. */
+	const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
+	/** A spec stripped of what may differ between a block and its rebuild: titles, a switched-off legend, the rows. */
+	const comparable = (spec) => {
+		const walk = (n, key) => {
+			if (Array.isArray(n)) return key === 'values' ? null : n.map((x) => walk(x));
+			if (!n || typeof n !== 'object') return n;
+			const out = {};
+			for (const [k, v] of Object.entries(n)) {
+				if (k === 'title' || k === '$schema' || (k === 'legend' && v === null)) continue;
+				out[k] = walk(v, k);
+			}
+			return out;
+		};
+		return walk(spec);
+	};
+	/** Walk `tpl` beside `blk`, noting which string the block has wherever the template names one of its example fields. */
+	function collectFields(tpl, blk, names, found) {
+		const note = (name, value) => { if (!(name in found) || (found[name] === name && value !== name)) found[name] = value; }; // a changed name beats an unchanged one (a lookup into the map's own ids)
+		if (typeof tpl === 'string') {
+			if (typeof blk !== 'string') return;
+			if (names.has(tpl)) { note(tpl, blk); return; }
+			// a field named inside an expression: datum.age in the template, datum["Age"] in the block
+			const hits = [...names].filter((n) => new RegExp(`datum\\.${escapeRe(n)}(?![\\w$])`).test(tpl));
+			if (!hits.length) return;
+			const order = [];
+			const pattern = escapeRe(tpl).replace(new RegExp(`datum\\\\\\.(${hits.map(escapeRe).join('|')})(?![\\\\w$])`, 'g'), (m, n) => { order.push(n); return `datum\\[(?:"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)')\\]`; });
+			const m = new RegExp(`^${pattern}$`).exec(blk);
+			if (m) order.forEach((n, i) => { const v = m[1 + i * 2] ?? m[2 + i * 2]; if (v !== undefined) note(n, JSON.parse(`"${String(v).replace(/"/g, '\\"')}"`)); });
+			return;
+		}
+		if (Array.isArray(tpl)) { if (Array.isArray(blk) && blk.length === tpl.length) tpl.forEach((x, i) => collectFields(x, blk[i], names, found)); return; }
+		if (tpl && typeof tpl === 'object' && blk && typeof blk === 'object') for (const k of Object.keys(tpl)) if (k !== 'values') collectFields(tpl[k], blk[k], names, found);
+	}
+	/** The rows a spec carries: at the template's data path, else in its first inline dataset. */
+	function rowsOf(spec, path) {
+		if (path) { let at = spec; for (const k of path) at = at && at[k]; return Array.isArray(at && at.values) ? at.values : null; }
+		const first = (d) => (Array.isArray(d) ? d.find((x) => Array.isArray(x.values)) : d && Array.isArray(d.values) ? d : null);
+		const d = first(spec.data) || (spec.spec && first(spec.spec.data));
+		return d ? d.values : null;
+	}
+	function tableOf(rows) {
+		if (!rows.length || rows.some((r) => !r || typeof r !== 'object' || Array.isArray(r))) return null;
+		const columns = [];
+		for (const r of rows) for (const k of Object.keys(r)) if (!columns.includes(k)) columns.push(k);
+		const cell = (v) => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+		return { columns, rows: rows.map((r) => columns.map((c) => cell(r[c]))) };
+	}
+	function stateFor(type, rows, map, opts) {
+		const table = tableOf(rows);
+		if (!table) return null;
+		const types = {};
+		for (const [i, c] of table.columns.entries()) types[c] = inferType(table.rows.map((r) => r[i]));
+		return { type: type.id, table, types, map, opts: { ...opts }, userTyped: {} };
+	}
+	/** The options a block shows beyond its template: chart title, axis titles, switched-off legend. */
+	function optionsOf(type, state, block) {
+		const opts = {};
+		let built;
+		try { built = buildSpec(state); } catch { return opts; }
+		if (typeof block.title === 'string' && block.title !== built.title) opts.title = block.title;
+		const channel = (spec, ch) => { let found; const visit = (n) => { if (found !== undefined || !n || typeof n !== 'object') return; if (n.encoding && n.encoding[ch] && n.encoding[ch].title !== undefined) found = n.encoding[ch].title; (n.layer || []).forEach(visit); }; visit(spec); return found; };
+		for (const [ch, key] of [['x', 'xTitle'], ['y', 'yTitle']]) { const t = channel(block, ch); if (typeof t === 'string' && t !== channel(built, ch)) opts[key] = t; }
+		const hidden = (spec, ch) => { let r = false; const visit = (n) => { if (!n || typeof n !== 'object') return; if (n.encoding && n.encoding[ch] && n.encoding[ch].legend === null) r = true; (n.layer || []).forEach(visit); }; visit(spec); return r; };
+		if (['color', 'size'].some((ch) => hidden(block, ch) && !hidden(built, ch))) opts.legend = false;
+		return opts;
+	}
+	/** Column assignments for a type with no template: try columns of the right kind for each role until the rebuild matches. */
+	function guessMaps(type, table, types, preset = {}, tries = 4000) {
+		const kindOk = (role, col) => role.kind === 'num' ? types[col] === 'quantitative' : role.kind === 'time' ? types[col] === 'temporal' || types[col] === 'nominal' : true;
+		const roles = type.roles.filter((r) => !r.multi && !(r.key in preset));
+		const out = [];
+		const go = (i, used, map) => {
+			if (out.length >= tries) return;
+			if (i === roles.length) { out.push({ ...preset, ...map }); return; }
+			const r = roles[i];
+			for (const c of table.columns) if (!used.has(c) && kindOk(r, c)) { used.add(c); map[r.key] = c; go(i + 1, used, map); delete map[r.key]; used.delete(c); }
+			if (!r.required) go(i + 1, used, map);
+		};
+		go(0, new Set(Object.values(preset).flat()), {});
+		return out;
+	}
+	/** Every chart type that could have produced `block`, best first: [{ type, state }]. */
+	function readSpec(block) {
+		const found = [];
+		const target = canon(comparable(block));
+		const matches = (type, state) => { try { return canon(comparable(buildSpec(state))) === target; } catch { return false; } };
+		for (const type of C.TYPES) {
+			if (type.templates) {
+				for (const tp of type.templates) {
+					const up = C.TEMPLATES[tp.key];
+					if (!up) continue;
+					let rows, map = {}, extra = {};
+					if (tp.read) { const got = tp.read(block); if (!got) continue; ({ rows, map, opts: extra = {} } = got); }
+					else {
+						rows = rowsOf(block, tp.dataPath);
+						if (!rows) continue;
+						const example = {};
+						const tpl = JSON.parse(JSON.stringify(up.spec));
+						for (const e of tp.edits || []) { try { e.apply(tpl, { records: rows, f: () => '', has: () => false, list: () => [] }); } catch { /* an edit that needs the user's columns is checked by the rebuild */ } }
+						collectFields(tpl, block, new Set(Object.values(tp.fields)), example);
+						for (const [role, name] of Object.entries(tp.fields)) { if (tp.rename === 'data') map[role] = name; else if (name in example) map[role] = example[name]; }
+					}
+					const base = stateFor(type, rows, map, { ...(tp.sets || {}), ...extra });
+					if (!base || Object.values(base.map).flat().some((c) => !base.table.columns.includes(c))) continue;
+					// roles the example never names (a tree layout ignores the size column) are filled from the columns left over
+					const missing = type.roles.some((r) => r.required && !(r.key in base.map));
+					for (const m of missing ? guessMaps(type, base.table, base.types, base.map) : [base.map]) {
+						const state = { ...base, map: m };
+						state.opts = { ...state.opts, ...optionsOf(type, state, block) };
+						if (matches(type, state)) { found.push({ type: type.id, state }); break; }
+					}
+				}
+			} else {
+				const rows = (type.read && type.read(block)) || null;
+				const got = rows || { rows: rowsOf(block), map: null };
+				if (!got.rows) continue;
+				const base = stateFor(type, got.rows, {}, {});
+				if (!base) continue;
+				const maps = got.map ? [got.map] : guessMaps(type, base.table, base.types);
+				for (const map of maps) {
+					const state = { ...base, map };
+					if (matches(type, state)) { state.opts = { ...state.opts, ...optionsOf(type, state, block) }; found.push({ type: type.id, state }); break; }
+				}
+			}
+		}
+		return found;
+	}
+	C.readSpec = readSpec;
+	C.canon = canon;
+	C.comparable = comparable; // a spec without the parts that may differ between a block and its rebuild
 	C.toYaml = toYaml;
 	C.codeFor = codeFor;
 

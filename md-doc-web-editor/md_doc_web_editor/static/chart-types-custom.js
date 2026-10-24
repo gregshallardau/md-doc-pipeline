@@ -215,6 +215,7 @@
 	C.type({
 		id: 'correlation', group: 'matrix', label: 'Correlation matrix', desc: 'How strongly every pair of measures moves together', sample: 'c_measures', sampleMap: { measures: ['Height', 'Weight', 'Age', 'Income'] },
 		roles: [role('measures', 'Measures (2 or more)', 'num', true, { multi: true, min: 2 })], options: [],
+		read: (b) => { const f = (b.transform || []).find((t) => t.fold); const d = b.data && b.data.values; return f && d ? { rows: d, map: { measures: f.fold } } : null; },
 		build(s) {
 			const cols = s.list('measures');
 			const pairs = cols.flatMap((a) => cols.map((b) => [a, b]));
@@ -427,7 +428,8 @@
 
 	C.type({
 		id: 'venn', group: 'relationship', label: 'Venn diagram', desc: 'Overlaps between two or three sets', sample: 'c_overlaps',
-		roles: [role('x', 'Sets in the region (A & B)', 'any'), role('y', 'Items in exactly that region', 'num')], options: ['labels'], sampleMap: { x: 'Sets', y: 'Size' }, opts: { labels: true },
+		roles: [role('x', 'Sets in the region (A & B)', 'any'), role('y', 'Items in exactly that region', 'num')], options: ['labels'],
+		read: (b) => { const l = (b.layer || []).filter((x) => x.data && Array.isArray(x.data.values) && x.transform).pop(); return l ? { rows: l.data.values, map: null } : null; }, sampleMap: { x: 'Sets', y: 'Size' }, opts: { labels: true },
 		build(s) {
 			const split = (txt) => String(txt).split(/\s*[&,;|\u2229]\s*/).map((x) => x.trim()).filter(Boolean);
 			const sets = [];
