@@ -473,4 +473,138 @@
 			return { width: g.w, height: g.h, padding: 6, autosize: { type: 'pad' }, layer: layers, view: { stroke: null } };
 		},
 	});
+
+	/* ── Flows ──────────────────────────────────────────────────────────── */
+
+	C.sample('c_flows', 'From,To,Amount\nSolar,Grid,35\nWind,Grid,28\nGas,Grid,40\nCoal,Grid,22\nGrid,Homes,60\nGrid,Industry,45\nGrid,Transport,12\nGas,Industry,18\nGas,Homes,9\nWind,Industry,6');
+	const flowRoles = [role('source', 'From', 'any'), role('target', 'To', 'any'), role('value', 'Amount (optional)', 'num', false)];
+	/** Vega data steps shared by chord and Sankey: the user's rows as src / tgt / w, and one row per item with its in and out totals. */
+	const flowData = (s) => [
+		{ name: 'edges', values: s.records, transform: [
+			{ type: 'formula', expr: `toString(${col(s.f('source'))})`, as: 'src' },
+			{ type: 'formula', expr: `toString(${col(s.f('target'))})`, as: 'tgt' },
+			{ type: 'formula', expr: s.has('value') ? `+${col(s.f('value'))} || 1` : '1', as: 'w' },
+		] },
+		{ name: 'ends', source: 'edges', transform: [
+			{ type: 'formula', expr: '[{n: datum.src, o: datum.w, i: 0}, {n: datum.tgt, o: 0, i: datum.w}]', as: 'pair' },
+			{ type: 'flatten', fields: ['pair'], as: ['p'] },
+			{ type: 'formula', expr: 'datum.p.n', as: 'node' },
+			{ type: 'formula', expr: 'datum.p.o', as: 'out' },
+			{ type: 'formula', expr: 'datum.p.i', as: 'inn' },
+		] },
+	];
+
+	// Pattern: Vega's arc-diagram and radial examples (data-driven nodes, `stack` for extents, `lookup` between datasets,
+	// `path` marks with expression-built paths). Each node owns an arc of the circle sized by its total flow; each link is a
+	// ribbon from a slice of the source's arc to a slice of the target's.
+	C.type({
+		id: 'chord', group: 'flow', label: 'Chord', desc: 'Connections between items around a circle', sample: 'c_flows', sampleMap: { source: 'From', target: 'To', value: 'Amount' },
+		roles: flowRoles, options: [],
+		build(s) {
+			const pt = (a) => `radius * sin(datum.${a}) + ',' + (-radius * cos(datum.${a}))`;
+			const ribbon = `'M' + ${pt('sa0')} + 'A' + radius + ',' + radius + ',0,0,1,' + ${pt('sa1')} + 'Q0,0,' + ${pt('ta0')} + 'A' + radius + ',' + radius + ',0,0,1,' + ${pt('ta1')} + 'Q0,0,' + ${pt('sa0')} + 'Z'`;
+			const angle = (field) => `datum.${field} / datum.grand * 2 * PI`;
+			return {
+				$schema: C.VEGA_SCHEMA, width: 460, height: 460, padding: { left: 90, right: 90, top: 30, bottom: 30 }, autosize: 'pad',
+				signals: [{ name: 'radius', value: 190 }, { name: 'band', value: 14 }],
+				data: [
+					...flowData(s),
+					{ name: 'nodes', source: 'ends', transform: [
+						{ type: 'aggregate', groupby: ['node'], ops: ['sum', 'sum'], fields: ['out', 'inn'], as: ['out', 'inn'] },
+						{ type: 'formula', expr: 'datum.out + datum.inn', as: 'total' },
+						{ type: 'stack', field: 'total', as: ['t0', 't1'] },
+						{ type: 'joinaggregate', ops: ['sum'], fields: ['total'], as: ['grand'] },
+						{ type: 'formula', expr: angle('t0'), as: 'a0' },
+						{ type: 'formula', expr: angle('t1'), as: 'a1' },
+						{ type: 'formula', expr: '(datum.a0 + datum.a1) / 2', as: 'am' },
+					] },
+					{ name: 'links', source: 'edges', transform: [
+						{ type: 'stack', groupby: ['src'], field: 'w', sort: { field: 'tgt' }, as: ['so0', 'so1'] },
+						{ type: 'stack', groupby: ['tgt'], field: 'w', sort: { field: 'src' }, as: ['ti0', 'ti1'] },
+						{ type: 'lookup', from: 'nodes', key: 'node', fields: ['src'], values: ['t0', 'grand'], as: ['s0', 'grand'] },
+						{ type: 'lookup', from: 'nodes', key: 'node', fields: ['tgt'], values: ['t0', 'out'], as: ['t0', 'tout'] },
+						// a node's arc holds its outgoing slices first, then its incoming ones
+						{ type: 'formula', expr: '(datum.s0 + datum.so0) / datum.grand * 2 * PI', as: 'sa0' },
+						{ type: 'formula', expr: '(datum.s0 + datum.so1) / datum.grand * 2 * PI', as: 'sa1' },
+						{ type: 'formula', expr: '(datum.t0 + datum.tout + datum.ti0) / datum.grand * 2 * PI', as: 'ta0' },
+						{ type: 'formula', expr: '(datum.t0 + datum.tout + datum.ti1) / datum.grand * 2 * PI', as: 'ta1' },
+						{ type: 'formula', expr: ribbon, as: 'ribbon' },
+					] },
+				],
+				scales: [{ name: 'color', type: 'ordinal', domain: { data: 'nodes', field: 'node' }, range: { scheme: 'category10' } }],
+				marks: [
+					{ type: 'path', from: { data: 'links' }, encode: { enter: { x: { signal: 'width / 2' }, y: { signal: 'height / 2' }, path: { field: 'ribbon' }, fill: { scale: 'color', field: 'src' }, fillOpacity: { value: 0.55 }, stroke: { value: 'white' }, strokeWidth: { value: 0.5 }, tooltip: { signal: "datum.src + ' → ' + datum.tgt + ': ' + datum.w" } } } },
+					{ type: 'arc', from: { data: 'nodes' }, encode: { enter: { x: { signal: 'width / 2' }, y: { signal: 'height / 2' }, startAngle: { field: 'a0' }, endAngle: { field: 'a1' }, innerRadius: { signal: 'radius' }, outerRadius: { signal: 'radius + band' }, fill: { scale: 'color', field: 'node' }, tooltip: { signal: "datum.node + ': ' + datum.total" } } } },
+					{ type: 'text', from: { data: 'nodes' }, encode: { enter: { x: { signal: "width / 2 + (radius + band + 8) * sin(datum.am)" }, y: { signal: 'height / 2 - (radius + band + 8) * cos(datum.am)' }, text: { field: 'node' }, align: { signal: "sin(datum.am) > 0 ? 'left' : 'right'" }, baseline: { value: 'middle' }, fontSize: { value: 12 } } } },
+				],
+			};
+		},
+	});
+
+	// Pattern: the same data steps, with `window` and `lookup` passes to find each item's column (an item sits one column
+	// right of the furthest of its sources; eight passes cover chains up to eight columns), `stack` to size and place the
+	// nodes, and thick `path` strokes for the links, as in Vega's stacked bar and arc examples.
+	const PASSES = 8;
+	C.type({
+		id: 'sankey', group: 'flow', label: 'Sankey', desc: 'Quantities flowing between stages (up to eight columns)', sample: 'c_flows', sampleMap: { source: 'From', target: 'To', value: 'Amount' },
+		roles: flowRoles, options: [],
+		build(s) {
+			const data = [
+				...flowData(s),
+				{ name: 'nodes0', source: 'ends', transform: [
+					{ type: 'aggregate', groupby: ['node'], ops: ['sum', 'sum'], fields: ['out', 'inn'], as: ['out', 'inn'] },
+					{ type: 'formula', expr: 'max(datum.out, datum.inn)', as: 'value' },
+					{ type: 'formula', expr: '0', as: 'd0' },
+				] },
+			];
+			for (let k = 1; k <= PASSES; k++) {
+				data.push(
+					{ name: `via${k}`, source: 'edges', transform: [
+						{ type: 'lookup', from: `nodes${k - 1}`, key: 'node', fields: ['src'], values: [`d${k - 1}`], as: ['sd'] },
+						{ type: 'aggregate', groupby: ['tgt'], ops: ['max'], fields: ['sd'], as: ['dm'] },
+					] },
+					{ name: `nodes${k}`, source: `nodes${k - 1}`, transform: [
+						{ type: 'lookup', from: `via${k}`, key: 'tgt', fields: ['node'], values: ['dm'], as: ['dm'], default: -1 },
+						{ type: 'formula', expr: 'datum.dm + 1', as: `d${k}` },
+					] },
+				);
+			}
+			data.push(
+				{ name: 'nodes', source: `nodes${PASSES}`, transform: [
+					{ type: 'formula', expr: `datum.d${PASSES}`, as: 'depth' },
+					{ type: 'joinaggregate', ops: ['max'], fields: ['depth'], as: ['lastDepth'] },
+					{ type: 'stack', groupby: ['depth'], field: 'value', sort: { field: 'node' }, as: ['v0', 'v1'] },
+					{ type: 'window', ops: ['row_number'], as: ['rank'], groupby: ['depth'], sort: { field: 'node' } },
+					{ type: 'joinaggregate', groupby: ['depth'], ops: ['sum', 'count'], fields: ['value', 'value'], as: ['colTotal', 'colCount'] },
+					{ type: 'joinaggregate', ops: ['max', 'max'], fields: ['colTotal', 'colCount'], as: ['maxTotal', 'maxCount'] },
+					{ type: 'formula', expr: '(height - gap * (datum.maxCount - 1)) / datum.maxTotal', as: 'ky' },
+					{ type: 'formula', expr: 'datum.v0 * datum.ky + (datum.rank - 1) * gap', as: 'y0' },
+					{ type: 'formula', expr: 'datum.y0 + datum.value * datum.ky', as: 'y1' },
+					{ type: 'formula', expr: 'datum.lastDepth ? datum.depth / datum.lastDepth * (width - nodeWidth) : 0', as: 'x0' },
+					{ type: 'formula', expr: 'datum.x0 + nodeWidth', as: 'x1' },
+				] },
+				{ name: 'links', source: 'edges', transform: [
+					{ type: 'lookup', from: 'nodes', key: 'node', fields: ['src'], values: ['x1', 'y0', 'ky'], as: ['sx', 'sy', 'ky'] },
+					{ type: 'lookup', from: 'nodes', key: 'node', fields: ['tgt'], values: ['x0', 'y0'], as: ['tx', 'ty'] },
+					{ type: 'stack', groupby: ['src'], field: 'w', sort: { field: 'ty' }, as: ['so0', 'so1'] },
+					{ type: 'stack', groupby: ['tgt'], field: 'w', sort: { field: 'sy' }, as: ['ti0', 'ti1'] },
+					{ type: 'formula', expr: 'datum.sy + (datum.so0 + datum.so1) / 2 * datum.ky', as: 'yA' },
+					{ type: 'formula', expr: 'datum.ty + (datum.ti0 + datum.ti1) / 2 * datum.ky', as: 'yB' },
+					{ type: 'formula', expr: "'M' + datum.sx + ',' + datum.yA + 'C' + (datum.sx + datum.tx) / 2 + ',' + datum.yA + ',' + (datum.sx + datum.tx) / 2 + ',' + datum.yB + ',' + datum.tx + ',' + datum.yB", as: 'curve' },
+					{ type: 'formula', expr: 'datum.w * datum.ky', as: 'thick' },
+				] },
+			);
+			return {
+				$schema: C.VEGA_SCHEMA, width: 520, height: 320, padding: { left: 10, right: 90, top: 10, bottom: 10 }, autosize: 'pad',
+				signals: [{ name: 'nodeWidth', value: 14 }, { name: 'gap', value: 12 }],
+				data,
+				scales: [{ name: 'color', type: 'ordinal', domain: { data: 'nodes', field: 'node' }, range: { scheme: 'category10' } }],
+				marks: [
+					{ type: 'path', from: { data: 'links' }, encode: { enter: { path: { field: 'curve' }, stroke: { scale: 'color', field: 'src' }, strokeOpacity: { value: 0.45 }, strokeWidth: { field: 'thick' }, fill: { value: null }, tooltip: { signal: "datum.src + ' → ' + datum.tgt + ': ' + datum.w" } } } },
+					{ type: 'rect', from: { data: 'nodes' }, encode: { enter: { x: { field: 'x0' }, x2: { field: 'x1' }, y: { field: 'y0' }, y2: { field: 'y1' }, fill: { scale: 'color', field: 'node' }, tooltip: { signal: "datum.node + ': ' + datum.value" } } } },
+					{ type: 'text', from: { data: 'nodes' }, encode: { enter: { x: { signal: 'datum.depth === datum.lastDepth ? datum.x1 + 6 : datum.x0 - 6' }, y: { signal: '(datum.y0 + datum.y1) / 2' }, text: { field: 'node' }, align: { signal: "datum.depth === datum.lastDepth ? 'left' : 'right'" }, baseline: { value: 'middle' }, fontSize: { value: 12 } } } },
+				],
+			};
+		},
+	});
 })(typeof window !== 'undefined' ? window : globalThis);

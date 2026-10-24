@@ -444,7 +444,8 @@
 				rows = s.records.map((rec) => { const out = { ...rec }; for (const [from, to] of Object.entries(map)) delete out[to]; for (const [from, to] of Object.entries(map)) out[from] = rec[to]; return out; });
 			} else spec = renameFields(spec, map);
 			if (t.prepare) rows = t.prepare(rows, s);
-			if (t.dataPath) { // the user's rows go inside the spec (e.g. a lookup table or a point layer), not in place of its geometry
+			if (t.fill) t.fill(spec, s); // a type that builds its own datasets from the user's table (networks)
+			else if (t.dataPath) { // the user's rows go inside the spec (e.g. a lookup table or a point layer), not in place of its geometry
 				let at = spec;
 				for (const k of t.dataPath.slice(0, -1)) at = at[k];
 				at[t.dataPath[t.dataPath.length - 1]] = { values: rows };

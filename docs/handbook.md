@@ -1223,11 +1223,11 @@ Vega-Lite on every render, so they differ slightly each time; that is upstream's
 
 | Chart | Id | Reads these columns | Upstream example |
 |-------|----|---------------------|------------------|
-| Sankey | `sankey` | From, To, Amount (optional) | none (same style) |
+| Arc diagram | `arc-diagram` | From, To, Weight (optional), Group of the “From” item (optional) | `vega/arc-diagram` |
+| Force network | `force` | From, To, Weight (optional), Group of the “From” item (optional) | `vega/force-directed-layout` |
+| Edge bundling | `edge-bundling` | From, To | `vega/edge-bundling` |
 | Chord | `chord` | From, To, Amount (optional) | none (same style) |
-| Arc diagram | `arc-diagram` | From, To, Amount (optional) | none (same style) |
-| Network (force-directed) | `force` | From, To, Amount (optional) | none (same style) |
-| Edge bundling | `edge-bundling` | Name, Parent, Links to | none (same style) |
+| Sankey | `sankey` | From, To, Amount (optional) | none (same style) |
 
 **Text** — words sized by weight
 

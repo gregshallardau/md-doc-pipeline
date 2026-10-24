@@ -565,4 +565,64 @@
 		roles: [role('lat', 'Latitude', 'num'), role('lon', 'Longitude', 'num')], options: [],
 		templates: [{ key: 'vega-lite/geo_layer', fields: { lat: 'latitude', lon: 'longitude' }, dataPath: ['layer', 1, 'data'], edits: [toWorld()] }],
 	});
+
+	/* ── Networks ───────────────────────────────────────────────────────── */
+
+	// The examples read a nodes table and a links table whose source/target are node indexes. Both are built here from
+	// one table of links (names in, indexes out); the spec itself is upstream's, untouched.
+	C.sample('u_network', 'Source,Target,Weight,Group\nMyriel,Napoleon,1,1\nMyriel,Mlle Baptistine,8,1\nMyriel,Mme Magloire,10,1\nMlle Baptistine,Mme Magloire,6,1\nMyriel,Geborand,1,1\nMyriel,Champtercier,1,1\nMyriel,Cravatte,1,1\nValjean,Myriel,5,2\nValjean,Mme Magloire,3,2\nValjean,Javert,17,2\nValjean,Fantine,9,2\nFantine,Tholomyes,3,3\nFantine,Marguerite,2,3\nTholomyes,Listolier,4,3\nTholomyes,Fameuil,4,3\nListolier,Fameuil,4,3\nJavert,Fantine,1,2\nJavert,Marius,2,2\nMarius,Cosette,21,4\nMarius,Courfeyrac,8,4\nCourfeyrac,Enjolras,7,4\nEnjolras,Combeferre,15,4\nValjean,Cosette,31,2');
+	const setNamed = (spec, name, rows) => {
+		const d = spec.data.find((x) => x.name === name);
+		delete d.url; delete d.format; d.values = rows;
+	};
+	/** { nodes: [{ name, group, index }], links: [{ source, target, value }] } from the user's table of links. */
+	const graphOf = (s) => {
+		const names = [], group = new Map();
+		const note = (name, g) => { if (!names.includes(name)) names.push(name); if (g !== undefined && g !== null && g !== '' && !group.has(name)) group.set(name, g); };
+		for (const r of s.records) { note(String(r[s.f('source')]), s.has('group') ? r[s.f('group')] : undefined); note(String(r[s.f('target')])); }
+		const at = (n) => names.indexOf(n);
+		return {
+			nodes: names.map((name, index) => ({ name, group: group.get(name) ?? 1, index })),
+			links: s.records.map((r) => ({ source: at(String(r[s.f('source')])), target: at(String(r[s.f('target')])), value: s.has('weight') ? Number(r[s.f('weight')]) || 1 : 1 })),
+		};
+	};
+	const networkRoles = [role('source', 'From', 'any'), role('target', 'To', 'any'), role('weight', 'Weight (optional)', 'num', false), role('group', 'Group of the “From” item (optional)', 'any', false)];
+	const networkMap = { source: 'Source', target: 'Target', weight: 'Weight', group: 'Group' };
+	C.upstream({
+		id: 'arc-diagram', group: 'flow', label: 'Arc diagram', desc: 'Items along a line, links as arcs', sample: 'u_network', sampleMap: networkMap,
+		roles: networkRoles, options: [],
+		templates: [{ key: 'vega/arc-diagram', fields: {}, fill(spec, s) { const g = graphOf(s); setNamed(spec, 'edges', g.links); setNamed(spec, 'nodes', g.nodes); } }],
+	});
+	C.upstream({
+		id: 'force', group: 'flow', label: 'Force network', desc: 'A network laid out by physical simulation; drag nodes to move them', sample: 'u_network', sampleMap: networkMap,
+		roles: networkRoles, options: [],
+		templates: [{ key: 'vega/force-directed-layout', fields: {}, fill(spec, s) { const g = graphOf(s); setNamed(spec, 'node-data', g.nodes); setNamed(spec, 'link-data', g.links); } }],
+	});
+	C.sample('u_imports', 'From,To\napp.ui.Button,app.core.Store\napp.ui.Menu,app.core.Store\napp.ui.Menu,app.ui.Button\napp.ui.Form,app.ui.Button\napp.ui.Form,app.data.Validator\napp.data.Loader,app.core.Http\napp.data.Loader,app.core.Store\napp.data.Validator,app.core.Store\napp.core.Http,app.util.Log\napp.core.Store,app.util.Log\napp.util.Log,app.util.Format\napp.ui.Chart,app.data.Loader\napp.ui.Chart,app.util.Format\napp.ui.Table,app.data.Loader\napp.ui.Table,app.util.Format');
+	/** Upstream's hierarchy is the dotted names themselves (flare.vis.Axes): one node per path prefix, links between the leaves. */
+	const bundleOf = (s) => {
+		const tree = [], idOf = new Map();
+		const need = (path) => {
+			if (idOf.has(path)) return idOf.get(path);
+			const parts = path.split('.');
+			const parent = parts.length > 1 ? need(parts.slice(0, -1).join('.')) : undefined;
+			const id = tree.length + 1;
+			idOf.set(path, id);
+			tree.push({ id, name: parts[parts.length - 1], ...(parent ? { parent } : {}) });
+			return id;
+		};
+		const links = s.records.map((r) => ({ source: need(String(r[s.f('source')])), target: need(String(r[s.f('target')])) }));
+		const roots = tree.filter((n) => !n.parent);
+		if (roots.length > 1) { // several top-level names: give them one root, as the example's tree needs exactly one
+			const id = tree.length + 1;
+			tree.push({ id, name: 'root' });
+			for (const n of roots) n.parent = id;
+		}
+		return { tree, links };
+	};
+	C.upstream({
+		id: 'edge-bundling', group: 'flow', label: 'Edge bundling', desc: 'Links between leaves, routed through the hierarchy (names like app.ui.Button give the hierarchy)', sample: 'u_imports', sampleMap: { source: 'From', target: 'To' },
+		roles: [role('source', 'From (dotted path)', 'any'), role('target', 'To (dotted path)', 'any')], options: [],
+		templates: [{ key: 'vega/edge-bundling', fields: {}, fill(spec, s) { const g = bundleOf(s); setNamed(spec, 'tree', g.tree); setNamed(spec, 'dependencies', g.links); } }],
+	});
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -25,8 +25,6 @@
 	/** Catalogue files, in load order (core first; the rest only register themselves). */
 	const FILES = [
 		'chart-core.js', 'chart-templates.js', 'chart-geo-data.js',
-		
-		'chart-types-flow.js',
 	];
 	// Upstream-backed types replace the hand-built ones with the same id, so they load last.
 	const LATE = ['chart-types-upstream.js', 'chart-types-custom.js'];
