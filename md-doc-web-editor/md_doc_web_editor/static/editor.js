@@ -3325,7 +3325,9 @@
     window.ChartWizard.open({
       // The same ```chart block the presentation framework's Markdown slides take.
       format: "yaml-fence",
+      scriptBase: "/static",
       vendorBase: "/static/vendor/vega-6.2.0",
+      datasetBase: "/static/vendor/vega-6.2.0/datasets",
       // Preview with this document's own theme colours and fonts.
       getConfig: async () =>
         api("/api/charts/config?path=" + encodeURIComponent(state.active)),

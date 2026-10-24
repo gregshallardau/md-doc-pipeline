@@ -7,6 +7,7 @@
  "axis.labelFontSize",
  "axis.labelOverlap",
  "axis.labelPadding",
+ "axis.labelSeparation",
  "axis.tickColor",
  "axis.tickSize",
  "axis.titleColor",

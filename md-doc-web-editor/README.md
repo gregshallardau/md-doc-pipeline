@@ -235,14 +235,21 @@ help reconstruct content when no source copy remains.
 
 ## Chart wizard
 
-**Insert → Chart…** opens a four-step builder (type, data, customize, insert) for
-Vega-Lite charts. Paste a table or edit the sample, pick columns and options, and it
-inserts a `chart` block at the cursor; the preview uses this document's own theme
-(`GET /api/charts/config?path=…`). The block is rendered by `md-doc build` (needs the
-`charts` extra) and is the same one the presentation framework's Markdown slides take.
+**Insert → Chart…** opens a four-step builder (type, data, customize, insert) for Vega-Lite and Vega
+charts: 84 chart types in 11 groups, with a searchable picker whose thumbnails are drawn from each
+chart's own sample data. Paste a table or edit the sample, pick columns and options, and it inserts a
+`chart` block at the cursor; the preview uses this document's own theme
+(`GET /api/charts/config?path=…`). The block is rendered by `md-doc build` (needs the `charts` extra) and
+is the same one the presentation framework's Markdown slides take. The full catalogue is in the
+[handbook](../docs/handbook.md#markdown-charts-catalogue).
 
-`static/chart-wizard.js` is a byte-identical copy of the canonical file in the
-presentation framework's studio, and Vega, Vega-Lite and vega-embed are vendored in
-`static/vendor/vega-6.2.0/` (see `VERSIONS.txt`). `tests/test_chart_wizard.py` checks
-the copy against `tests/chart-wizard.sha256`; when the wizard changes, copy it over and
-update the hash file in both repos.
+The wizard is the shared files `static/chart-*.js` (core, one module per chart family, map lookup tables
+and the dialog), byte-identical copies of the canonical ones in the presentation framework's studio.
+`static/vendor/vega-6.2.0/` holds Vega, Vega-Lite and vega-embed (see `VERSIONS.txt`) and the two
+basemaps. `tests/test_chart_wizard.py` checks the copies against `tests/chart-wizard.sha256.json`, that
+PyYAML reads back what the wizard writes for every chart, and that md-doc's renderer draws all of them
+identically twice. To change the wizard, edit it in the presentation framework and run
+`node scripts/chart-manifest.mjs --copy <this static folder>` there, which syncs both repos.
+
+To look at the charts, `uv run python tools/chart_contact_sheet.py SPECS OUT` renders a folder of specs
+(`node scripts/chart-check.mjs --out SPECS` writes one per chart type) into contact sheets.

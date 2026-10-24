@@ -1026,12 +1026,12 @@ This paragraph is centred.
 
 <a id="markdown-charts-vega"></a>
 
-### Charts (Vega-Lite)
+### Charts (Vega-Lite and Vega)
 
-For data charts — lines, areas, scatter, heatmaps, stacked and grouped bars, histograms, layered
-and dual-axis charts — use a fenced `chart` block holding a [Vega-Lite](https://vega.github.io/vega-lite/)
-spec, written as YAML (or JSON). A full [Vega](https://vega.github.io/vega/) spec works the same way.
-`vega-lite` and `vega` are accepted as the fence language too.
+For data charts, use a fenced `chart` block holding a [Vega-Lite](https://vega.github.io/vega-lite/)
+spec written as YAML (or JSON). A full [Vega](https://vega.github.io/vega/) spec works the same way
+(it is recognised by its `$schema` or its `marks`). `vega-lite` and `vega` are accepted as the fence
+language too.
 
 ````markdown
 ```chart
@@ -1044,25 +1044,188 @@ encoding:
 ```
 ````
 
+- **Don't write the spec by hand.** In the browser editor, **Insert → Chart…** is a step-by-step
+  builder (type, data, customize, insert) with a live preview in this document's own theme. It offers
+  every chart in the [catalogue](#markdown-charts-catalogue) below, shows a thumbnail drawn from each
+  chart's own sample data, lets you paste a table or edit the sample, and inserts the block at the
+  cursor. The presentation framework's studio has the same wizard, and its Markdown slides take the
+  same block, so a chart is the same in a document and on a slide.
 - **Data.** Inline with `data: {values: [...]}`, or `data: {url: file.csv}` (`.csv`, `.tsv` or `.json`)
   read relative to the document. Remote URLs are not fetched at build time.
-- **Theme.** The spec holds data and encodings only. Colours, fonts, gridlines and the series
-  palette come from the same theme as Mermaid diagrams (`--mddoc-diagram-*` properties and the
-  brand colours), and anything under the spec's own `config` wins.
-- **Size.** `width` and `height` size the whole chart including axes and legend. The default width
-  is the text column (at most 720px) and the default height 320px. `width: container` means the
-  default.
-- **Formats.** PDF gets vector SVG; Word and PowerPoint get a 2x PNG. Interactive features
-  (tooltips, selections, bound controls) show only in the presentation framework, which runs the same
-  spec in the browser, so a spec copied between the two produces the same chart.
-- **Chart wizard.** In the browser editor, **Insert → Chart…** is a step-by-step builder (type, data,
-  customize, insert) with a live preview in this document's own theme. Paste a table or edit the sample,
-  pick the columns and options, and it inserts a `chart` block at the cursor. The presentation framework's
-  studio has the same wizard, and its Markdown slides take the same block.
-- **Install.** Needs the optional `charts` extra: `uv sync --extra charts`. Without it, or when a
-  spec is invalid, the build warns and leaves the block as a code block.
+- **Built-in maps.** `data: {url: "vega-datasets:world-110m"}` (countries; ISO 3166-1 numeric ids) and
+  `vega-datasets:us-10m` (US states and counties; FIPS ids) are bundled with md-doc and never fetched.
+  The map charts below match your data to them by name, ISO code or FIPS code.
+- **Theme.** The spec holds data and encodings only. Colours, fonts, gridlines and the series palette
+  come from the same theme as Mermaid diagrams (`--mddoc-diagram-*` properties and the brand colours;
+  the series lead with the brand primary), and anything under the spec's own `config` wins.
+- **Size.** `width` and `height` size the whole chart including axes and legend. The default width is
+  the text column (at most 720px) and the default height 320px; `width: container` means the default.
+  Charts that carry their own layout (the full-Vega ones, repeats and facets) keep their own size.
+- **Same chart every time.** A build never uses random numbers, so a chart is identical on every build
+  and between a document and a slide. Where Vega-Lite would bootstrap a confidence interval from random
+  resamples, the wizard uses mean ± 1.96 standard errors (or standard error, standard deviation, or
+  quartiles, as you choose). Jitter is fixed when the chart is inserted.
+- **Formats.** PDF gets vector SVG; Word and PowerPoint get a 2x PNG. Interactive features (tooltips,
+  selections, bound controls) show only in the presentation framework, which runs the same spec in the
+  browser.
+- **Install.** Needs the optional `charts` extra: `uv sync --extra charts`. Without it, or when a spec is
+  invalid, the build warns and leaves the block as a code block.
 
 Use Mermaid for flowcharts, sequences and the other diagrams below, and `chart` for data.
+
+<a id="markdown-charts-catalogue"></a>
+
+#### Chart catalogue
+
+The wizard builds these chart types (the ids are what the wizard's search and the web editor's docs use).
+Each reads columns from a table you paste or edit; the wizard shows only the columns and options that
+make sense for the chart you pick.
+
+**Compare** — categories side by side
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Bar | `bar` | Category, Value, Group by (optional) |
+| Horizontal bar | `hbar` | Category, Value, Group by (optional) |
+| Grouped bar | `bar-grouped` | Category, Value, Group by |
+| Stacked bar | `bar-stacked` | Category, Value, Group by |
+| 100% stacked bar | `bar-percent` | Category, Value, Group by |
+| Diverging bar | `bar-diverging` | Category, Response level, Value |
+| Positive / negative bars | `bar-posneg` | Category, Change |
+| Lollipop | `lollipop` | Category, Value |
+| Dot plot | `dot-plot` | Category, Value, Group by (optional) |
+| Dumbbell | `dumbbell` | Category, From, To |
+| Waterfall | `waterfall` | Step, Amount |
+| Funnel | `funnel` | Stage, Count |
+| Population pyramid | `pyramid` | Age / band, Group, Amount |
+| Slope chart | `slope` | Item, Before / after, Value |
+| Pareto | `pareto` | Category, Count / amount |
+| Radar | `radar` | Axis, Value, Series (optional) |
+
+**Change over time** — trends, ranges and timelines
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Bump chart | `bump` | Item, Period, Score |
+| Gantt / timeline | `gantt` | Task, Start, End, Colour by (optional) |
+| Line | `line` | X axis, Value, Series (optional) |
+| Step line | `step` | X axis, Value, Series (optional) |
+| Area | `area` | X axis, Value, Series (optional) |
+| Stacked area | `area-stacked` | X axis, Value, Series |
+| 100% stacked area | `area-percent` | X axis, Value, Series |
+| Streamgraph | `streamgraph` | X axis, Value, Series |
+| Range band | `range-area` | X axis, Low, High, Average (optional) |
+| Running total | `cumulative` | X axis, Value |
+| Moving average | `moving-average` | X axis, Value |
+| Bars and line (dual axis) | `combo` | X axis, Bars, Line |
+| Candlestick | `candlestick` | Date, Open, High, Low, Close |
+| OHLC bars | `ohlc` | Date, Open, High, Low, Close |
+| Horizon graph | `horizon` | X axis, Value |
+| Control chart | `control-chart` | X axis, Measurement |
+| Event timeline | `timeline` | Date, Event, Track (optional) |
+
+**Distribution** — how values are spread
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Histogram | `histogram` | Values |
+| Histogram by group | `histogram-grouped` | Values, Group |
+| Dot histogram | `dot-histogram` | Values |
+| Density | `density` | Values |
+| Density by group | `density-groups` | Values, Group |
+| Ridgeline | `ridgeline` | Values, Group |
+| Box plot | `box` | Values, Group (optional) |
+| Violin | `violin` | Values, Group |
+| Strip plot | `strip` | Values, Group |
+| Error bars | `error-bars` | Group, Measurements |
+| Confidence band | `error-band` | X, Measurements |
+| Cumulative distribution | `ecdf` | Values, Group (optional) |
+| Q–Q plot | `qq-plot` | Values, Group (optional) |
+
+**Relationships** — how measures relate
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Scatter | `scatter` | X, Y, Colour by (optional), Size by (optional) |
+| Bubble | `bubble` | X, Y, Size, Colour by (optional), Label (optional) |
+| Scatter with trend line | `scatter-trend` | X, Y, Colour by (optional) |
+| Connected scatter | `connected-scatter` | X, Y, Order by |
+| Scatter matrix | `scatter-matrix` | Numeric columns, Colour by (optional) |
+| Parallel coordinates | `parallel` | Numeric columns, Colour by (optional) |
+| Quadrant chart | `quadrant` | X, Y, Label (optional), Size by (optional) |
+
+**Parts of a whole** — shares and proportions
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Marimekko | `marimekko` | Column, Segment, Amount |
+| Pie | `pie` | Slice label, Slice size |
+| Donut | `donut` | Slice label, Slice size |
+| Nightingale rose | `rose` | Category, Value |
+| Radial bar | `radial-bar` | Ring label, Value |
+| Waffle | `waffle` | Category, Amount |
+
+**Heatmaps and matrices** — intensity across two dimensions
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Heatmap | `heatmap` | Columns, Rows, Value |
+| Annotated heatmap | `heatmap-annotated` | Columns, Rows, Value |
+| 2D histogram | `hist2d` | X, Y |
+| Calendar heatmap | `calendar` | Date, Value |
+| Correlation matrix | `correlation` | Numeric columns |
+
+**Progress and KPIs** — single numbers and targets
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Bullet | `bullet` | Measure, Actual, Target |
+| Gauge | `gauge` | Label (optional), Value |
+| Sparkline | `sparkline` | X axis, Value |
+
+**Hierarchies** — nested and tree-shaped data
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Treemap | `treemap` | Name, Parent, Size (optional) |
+| Sunburst | `sunburst` | Name, Parent, Size (optional) |
+| Icicle | `icicle` | Name, Parent, Size (optional) |
+| Circle packing | `circle-pack` | Name, Parent, Size (optional) |
+| Tree | `tree` | Name, Parent |
+| Dendrogram | `dendrogram` | Name, Parent |
+| Radial tree | `radial-tree` | Name, Parent |
+
+**Flows and networks** — connections between things
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Sankey | `sankey` | From, To, Amount (optional) |
+| Chord | `chord` | From, To, Amount (optional) |
+| Arc diagram | `arc-diagram` | From, To, Amount (optional) |
+| Network (force-directed) | `force` | From, To, Amount (optional) |
+| Edge bundling | `edge-bundling` | Name, Parent, Links to |
+
+**Text** — words sized by weight
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| Word cloud | `word-cloud` | Word, Weight (optional) |
+
+**Maps** — values by place
+
+| Chart | Id | Reads these columns |
+|-------|----|---------------------|
+| World map (countries) | `map-world` | Country, Value |
+| US map (states) | `map-us` | State, Value |
+| World bubble map | `bubble-map-world` | Latitude, Longitude, Size (optional), Colour by (optional), Label (optional) |
+| US bubble map | `bubble-map-us` | Latitude, Longitude, Size (optional), Colour by (optional), Label (optional) |
+
+A few of these are laid out when the chart is inserted, and the result is drawn with Vega marks, because
+Vega has no transform for them: **Sankey**, **Chord**, **Arc diagram**, **Edge bundling**,
+**Marimekko**, **Waffle**, **Radial bar**, **Nightingale rose**, **Gauge**, **Funnel**, **Waterfall**,
+**Word cloud**, **Radar** and **Correlation matrix**. Their layout is computed from your data at that
+moment, so editing the numbers in the inserted block does not re-flow them; run the wizard again to
+rebuild. The rest are driven by the data in the block: change a value and the chart follows.
 
 <a id="markdown-diagrams-mermaid"></a>
 

@@ -34,6 +34,7 @@ _CHART_BLOCK_RE = re.compile(
 # The Vega-Lite release the presentation framework's ``vega-lite`` package matches,
 # pinned so a spec renders the same in documents and on slides.
 VEGALITE_VERSION = "6.4"
+COMPOUND_KEYS = ("repeat", "facet", "concat", "hconcat", "vconcat")
 DEFAULT_WIDTH = 560
 DEFAULT_HEIGHT = 320
 _RASTER_SCALE = 2.0
@@ -83,16 +84,22 @@ def is_vega(spec: dict[str, Any]) -> bool:
 
 def vega_config(theme: dict[str, str] | None = None) -> dict[str, Any]:
     """Vega ``config`` from the diagram theme tokens (brand colours, font, ink)."""
-    from .mermaid import _palette, _tokens
+    from .mermaid import _CATEGORICAL, _CATEGORICAL_DARK, _palette, _series_palette, _tokens
 
     t = _tokens(theme)
+    given = theme or {}
+    palette = _palette(t)
+    if given.get("brand") == "1" and not given.get("palette"):
+        # Lead with the brand primary only; a quiet accent (charcoal, grey) makes a poor second series.
+        fallback = _CATEGORICAL_DARK if t.get("mode") == "dark" else _CATEGORICAL
+        palette = _series_palette([t["primary"]], fallback)
     font = t["font"]
     ink, ink2, grid, baseline = t["ink"], t["ink2"], t["grid"], t["baseline"]
     return {
         "background": None,
         "font": font,
         "view": {"stroke": None},
-        "range": {"category": _palette(t), "ordinal": _palette(t)},
+        "range": {"category": palette, "ordinal": palette},
         "title": {"font": font, "color": ink, "fontSize": 14, "fontWeight": 600, "anchor": "start"},
         "axis": {
             "labelFont": font,
@@ -109,6 +116,7 @@ def vega_config(theme: dict[str, str] | None = None) -> dict[str, Any]:
             "labelPadding": 2,
             "labelAngle": 0,
             "labelOverlap": True,
+            "labelSeparation": 6,
         },
         "legend": {
             "labelFont": font,
@@ -120,7 +128,7 @@ def vega_config(theme: dict[str, str] | None = None) -> dict[str, Any]:
             "symbolSize": 100,
         },
         "text": {"font": font, "color": ink, "fontSize": 11},
-        "mark": {"color": _palette(t)[0]},
+        "mark": {"color": palette[0]},
         "line": {"strokeWidth": 2},
         "point": {"size": 30},
         "circle": {"size": 30},
@@ -138,6 +146,19 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
+DATASET_SCHEME = "vega-datasets:"
+_DATA_DIR = Path(__file__).parent / "data"
+
+
+def _builtin_dataset(name: str) -> Any:
+    """A basemap shipped with md-doc (``vega-datasets:world-110m``), read from the package."""
+    path = _DATA_DIR / f"{name}.json"
+    if not re.fullmatch(r"[\w.-]+", name) or not path.is_file():
+        known = ", ".join(sorted(p.stem for p in _DATA_DIR.glob("*.json")))
+        raise ChartError(f"unknown built-in dataset {name!r} (available: {known})")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _inline_data(spec: Any, base_dir: Path | None) -> None:
     """Replace local ``data: {url: file.csv|json}`` with inline ``values``.
 
@@ -153,7 +174,10 @@ def _inline_data(spec: Any, base_dir: Path | None) -> None:
     data = spec.get("data")
     if isinstance(data, dict) and isinstance(data.get("url"), str):
         url = data["url"]
-        if not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE):
+        if url.startswith(DATASET_SCHEME):
+            data["values"] = _builtin_dataset(url[len(DATASET_SCHEME) :])
+            del data["url"]
+        elif not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE):
             path = Path(url)
             if not path.is_absolute() and base_dir is not None:
                 path = base_dir / path
@@ -172,8 +196,8 @@ def _inline_data(spec: Any, base_dir: Path | None) -> None:
             else:
                 raise ChartError(f"unsupported chart data file type: {url}")
             spec["data"] = {"values": values}
-    for value in spec.values():
-        if isinstance(value, (dict, list)):
+    for key, value in spec.items():
+        if key != "values" and isinstance(value, (dict, list)):  # inline rows are data, not spec
             _inline_data(value, base_dir)
 
 
@@ -200,14 +224,16 @@ def prepare_spec(
     spec = parse_spec(source)
     column = int(float((theme or {}).get("column_px", DEFAULT_WIDTH)))
     width = min(column, 720) if column else DEFAULT_WIDTH
-    spec.setdefault("width", width)
-    if spec.get("width") == "container":
-        spec["width"] = width
-    # width/height size the whole chart (axes and legend included), not just the plot
-    spec.setdefault("autosize", {"type": "fit", "contains": "padding"})
-    spec.setdefault("height", DEFAULT_HEIGHT)
-    if spec.get("height") == "container":
-        spec["height"] = DEFAULT_HEIGHT
+    # Repeats, facets and concatenations size their inner views; a top-level width would be invalid.
+    if not any(key in spec for key in COMPOUND_KEYS):
+        spec.setdefault("width", width)
+        if spec.get("width") == "container":
+            spec["width"] = width
+        # width/height size the whole chart (axes and legend included), not just the plot
+        spec.setdefault("autosize", {"type": "fit", "contains": "padding"})
+        spec.setdefault("height", DEFAULT_HEIGHT)
+        if spec.get("height") == "container":
+            spec["height"] = DEFAULT_HEIGHT
     config = vega_config(theme)
     if background:
         config["background"] = background

@@ -112,3 +112,34 @@ def test_config_keys_match_the_presentation_framework():
         (Path(__file__).parent / "fixtures" / "chart_config_keys.json").read_text()
     )
     assert _key_paths(charts.vega_config({"primary": "#2563eb", "accent": "#374151"})) == expected
+
+
+def test_builtin_basemaps_resolve_locally_and_unknown_ones_fail():
+    spec = charts.prepare_spec(
+        "data: {url: 'vega-datasets:world-110m', format: {type: topojson, feature: countries}}\n"
+        "mark: geoshape\nprojection: {type: equalEarth}"
+    )
+    assert "url" not in spec["data"] and spec["data"]["values"]["type"] == "Topology"
+    assert spec["data"]["format"]["feature"] == "countries"
+    with pytest.raises(charts.ChartError, match="unknown built-in dataset"):
+        charts.prepare_spec("data: {url: 'vega-datasets:nope'}\nmark: bar")
+    with pytest.raises(charts.ChartError):
+        charts.prepare_spec("data: {url: 'vega-datasets:../../etc/passwd'}\nmark: bar")
+
+
+def test_compound_specs_are_not_given_a_top_level_size():
+    spec = charts.prepare_spec(
+        "data: {values: [{a: 1}]}\nrepeat: {column: [a]}\nspec: {mark: point, encoding: {x: {field: {repeat: column}, type: quantitative}}}"
+    )
+    assert "width" not in spec and "height" not in spec and "autosize" not in spec
+    assert "width" in charts.prepare_spec(
+        "data: {values: [{a: 1}]}\nmark: point\nencoding: {x: {field: a, type: quantitative}}"
+    )
+
+
+def test_a_full_vega_spec_renders():
+    svg = charts.render_svg(
+        "$schema: https://vega.github.io/schema/vega/v6.json\nwidth: 80\nheight: 40\n"
+        'marks: [{type: rect, encode: {enter: {x: {value: 0}, y: {value: 0}, width: {value: 40}, height: {value: 20}, fill: {value: "#2563eb"}}}}]'
+    )
+    assert "<svg" in svg and "#2563eb" in svg.lower()
