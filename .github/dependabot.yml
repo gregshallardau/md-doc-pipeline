@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # The web editor's incremental preview adapter only runs on weasyprint
+      # 68.1 (md_doc_web_editor/incremental.py supported_version); newer
+      # versions fall back to full renders and fail the browser regression
+      # test. Remove once the adapter is verified against a newer release.
+      - dependency-name: "weasyprint"
     groups:
       python-dependencies:
         patterns:
