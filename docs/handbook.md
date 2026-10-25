@@ -1059,7 +1059,9 @@ encoding:
   the same way. A chart that matches none of the wizard's types is left for you to edit by hand, and the
   wizard says so. In the deck studio you can also right-click a chart on the slide.
 - **Data.** Inline with `data: {values: [...]}`, or `data: {url: file.csv}` (`.csv`, `.tsv` or `.json`)
-  read relative to the document. Remote URLs are not fetched at build time.
+  read relative to the document. Full Vega's named datasets (`data: [{name: table, url: file.csv}]`)
+  use the same resolution, including built-in maps. Local JSON keeps `format` settings such as
+  `property` and TopoJSON `feature`. Remote URLs are not fetched at build time.
 - **Built-in maps.** `data: {url: "vega-datasets:world-110m"}` (countries; ISO 3166-1 numeric ids) and
   `vega-datasets:us-10m` (US states and counties; FIPS ids) are bundled with md-doc and never fetched.
   The map charts below match your data to them by name, ISO code or FIPS code.
@@ -1077,7 +1079,7 @@ encoding:
   selections, bound controls) show only in the presentation framework, which runs the same spec in the
   browser.
 - **Install.** Needs the optional `charts` extra: `uv sync --extra charts`. Without it, or when a spec is
-  invalid, the build warns and leaves the block as a code block.
+  invalid (including malformed or unreadable data files), the build warns and leaves the block as a code block.
 
 Use Mermaid for flowcharts, sequences and the other diagrams below, and `chart` for data.
 

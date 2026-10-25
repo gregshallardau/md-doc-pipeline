@@ -177,3 +177,72 @@ def test_every_chart_type_is_in_the_handbook(wizard_charts):
     assert (
         not missing
     ), f"chart types missing from docs/handbook.md#markdown-charts-catalogue: {missing}"
+
+
+def test_customized_charts_reopen_with_their_options():
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    script = NODE_DUMP.split("const out =")[0] + r"""
+const assert = require('assert');
+for (const [id, opts] of [
+    ['gauge', {gaugeMin: -25, gaugeMax: 200, unit: ' kg "net"'}],
+    ['pictogram', {icon: 'heart', pictoUnit: 5, agg: 'mean'}],
+    ['venn', {labels: false}],
+    ['radial-bar', {agg: 'mean', legend: true}],
+    ['waffle', {agg: 'count', legend: false}],
+]) {
+    const state = C.sampleState(C.chartType(id));
+    state.opts = {...opts, title: 'Custom title'};
+    const spec = C.buildSpec(state);
+    const result = C.readSpec(spec).find((r) => r.type === id);
+    assert(result, `${id} cannot reopen`);
+    assert.equal(C.canon(C.buildSpec(result.state)), C.canon(spec), `${id} changed on reopen`);
+    for (const [key, value] of Object.entries(opts)) assert.equal(result.state.opts[key], value, `${id}: ${key}`);
+}
+"""
+    subprocess.run(["node", "-e", script, str(STATIC)], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_concurrent_vega_loading_restores_monaco(fail):
+    if shutil.which("node") is None:
+        pytest.skip("needs node")
+    script = r"""
+const vm = require('vm'), fs = require('fs'), assert = require('assert');
+const fail = process.argv[2] === 'True';
+const amd = () => {};
+const loaded = [];
+const ctx = {define: amd, document: {
+    createElement: () => ({}),
+    head: {append(s) {
+        loaded.push(s.src);
+        queueMicrotask(() => {
+            assert.equal(ctx.define, undefined);
+            if (fail) s.onerror();
+            else {
+                if (s.src.endsWith('/vega-embed.min.js')) ctx.vegaEmbed = () => {};
+                s.onload();
+            }
+        });
+    }},
+}};
+ctx.window = ctx;
+vm.createContext(ctx);
+const source = fs.readFileSync(process.argv[1], 'utf8').replace('root.ChartWizard = {', 'root.ChartWizard = { loadVega,');
+vm.runInContext(source, ctx);
+(async () => {
+    const results = await Promise.allSettled(Array.from({length: 8}, () => ctx.ChartWizard.loadVega('/vendor')));
+    assert.strictEqual(ctx.define, amd);
+    assert.equal(loaded.length, fail ? 1 : 3);
+    for (const result of results) {
+        assert.equal(result.status, fail ? 'rejected' : 'fulfilled');
+        if (!fail) assert.strictEqual(result.value, ctx.vegaEmbed);
+    }
+})().catch((err) => { console.error(err); process.exitCode = 1; });
+"""
+    subprocess.run(
+        ["node", "-e", script, str(STATIC / "chart-wizard.js"), str(fail)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )

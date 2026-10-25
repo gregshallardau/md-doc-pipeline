@@ -260,11 +260,18 @@
 	}
 
 
+	function categoryOptions(b) {
+		const aggregate = (b.transform || []).flatMap((t) => t.aggregate || []).find((a) => a.as === 'amount');
+		const color = (b.layer || []).map((l) => l.encoding && l.encoding.color).find((c) => c && ['group', 'cat'].includes(c.field));
+		return { ...(aggregate ? { agg: aggregate.op } : {}), ...(color ? { legend: color.legend !== null } : {}) };
+	}
+
+
 	/* ── Radial bar ─────────────────────────────────────────────────────── */
 
 	C.type({
 		id: 'radial-bar', group: 'composition', label: 'Radial bar', desc: 'Concentric rings, each filled to its value', sample: 'c_quota',
-		roles: [role('x', 'Ring label', 'any'), role('y', 'Value', 'num')], options: ['agg', 'legend'], opts: { legend: false },
+		roles: [role('x', 'Ring label', 'any'), role('y', 'Value', 'num')], options: ['agg', 'legend'], readOptions: categoryOptions, opts: { legend: false },
 		build(s) {
 			const outer = 160, inner = 34;
 			const band = `(${outer - inner} / datum.n)`;
@@ -296,7 +303,7 @@
 
 	C.type({
 		id: 'waffle', group: 'composition', label: 'Waffle', desc: '100 squares, shared out by proportion', sample: 'c_shares',
-		roles: [role('x', 'Category', 'any'), role('y', 'Amount', 'num')], options: ['agg', 'legend'],
+		roles: [role('x', 'Category', 'any'), role('y', 'Amount', 'num')], options: ['agg', 'legend'], readOptions: categoryOptions,
 		build(s) {
 			return {
 				data: { values: s.records },
@@ -328,6 +335,15 @@
 	C.type({
 		id: 'gauge', group: 'kpi', label: 'Gauge', desc: 'One number against a range', sample: 'c_gauge',
 		roles: [role('label', 'Label (optional)', 'any', false), role('y', 'Value', 'num')], options: ['gaugeMin', 'gaugeMax', 'unit'], opts: { gaugeMin: 0, gaugeMax: 100, unit: '%' }, sampleMap: { label: 'Metric', y: 'Value' },
+		readOptions(b) {
+			const transforms = b.transform || [];
+			const frac = transforms.find((t) => t.as === 'frac');
+			const range = frac && /^max\(0, min\(1, \(datum\.v - ([-+\d.eE]+)\) \/ ([-+\d.eE]+)\)\)$/.exec(frac.calculate);
+			const text = transforms.find((t) => t.as === 'text');
+			let unit;
+			try { unit = JSON.parse(text.calculate.slice("format(datum.v, ',.2~f') + ".length)); } catch { /* checked by rebuild */ }
+			return { ...(range ? { gaugeMin: Number(range[1]), gaugeMax: Number(range[1]) + Number(range[2]) } : {}), ...(typeof unit === 'string' ? { unit } : {}) };
+		},
 		build(s) {
 			const lo = Number(s.opts.gaugeMin) || 0, hi = Number(s.opts.gaugeMax);
 			const top = Number.isFinite(hi) && hi > lo ? hi : lo + 100;
@@ -383,6 +399,12 @@
 	C.type({
 		id: 'pictogram', group: 'composition', label: 'Pictogram', desc: 'Rows of icons, each standing for a quantity', sample: 'c_people',
 		roles: [role('x', 'Category', 'any'), role('y', 'Amount', 'num')], options: ['agg', 'icon', 'pictoUnit'], sampleMap: { x: 'Group', y: 'People' },
+		readOptions(b) {
+			const layer = (b.layer || []).find((l) => l.mark && l.mark.type === 'point');
+			const icon = layer && Object.keys(ICONS).find((key) => ICONS[key] === layer.mark.shape);
+			const unit = (b.transform || []).find((t) => t.as === 'unit');
+			return { ...categoryOptions(b), ...(icon ? { icon } : {}), pictoUnit: unit && Number(unit.calculate) > 0 ? Number(unit.calculate) : 0 };
+		},
 		build(s) {
 			const given = Number(s.opts.pictoUnit) > 0 ? Number(s.opts.pictoUnit) : 0;
 			// automatic unit: the smallest round number (1, 2, 2.5, 5, 10 × a power of ten) that keeps the longest row to 12 icons
@@ -429,6 +451,7 @@
 	C.type({
 		id: 'venn', group: 'relationship', label: 'Venn diagram', desc: 'Overlaps between two or three sets', sample: 'c_overlaps',
 		roles: [role('x', 'Sets in the region (A & B)', 'any'), role('y', 'Items in exactly that region', 'num')], options: ['labels'],
+		readOptions: (b) => ({ labels: (b.layer || []).some((l) => (l.transform || []).some((t) => t.as === 'region')) }),
 		read: (b) => { const l = (b.layer || []).filter((x) => x.data && Array.isArray(x.data.values) && x.transform).pop(); return l ? { rows: l.data.values, map: null } : null; }, sampleMap: { x: 'Sets', y: 'Size' }, opts: { labels: true },
 		build(s) {
 			const split = (txt) => String(txt).split(/\s*[&,;|\u2229]\s*/).map((x) => x.trim()).filter(Boolean);

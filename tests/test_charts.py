@@ -192,3 +192,69 @@ def test_a_failed_render_does_not_break_the_next_chart():
         charts.render_svg(bad)
     for _ in range(3):
         assert charts.render_svg(good).startswith("<svg")
+
+
+def test_full_vega_inlines_multiple_datasets_and_keeps_transforms(tmp_path):
+    (tmp_path / "d.csv").write_text("x,v\na,2\n")
+    spec = charts.prepare_spec(
+        "marks: []\ndata:\n"
+        "  - {name: local, url: d.csv, transform: [{type: filter, expr: 'datum.v > 0'}]}\n"
+        "  - {name: map, url: 'vega-datasets:us-10m', format: {type: topojson, feature: states}}\n"
+        "  - {name: remote, url: 'https://example.com/data.json'}\n",
+        base_dir=tmp_path,
+    )
+    local, basemap, remote = spec["data"]
+    assert local == {
+        "name": "local",
+        "values": [{"x": "a", "v": 2}],
+        "transform": [{"type": "filter", "expr": "datum.v > 0"}],
+    }
+    assert basemap["values"]["type"] == "Topology" and "url" not in basemap
+    assert basemap["format"] == {"type": "topojson", "feature": "states"}
+    assert remote["url"] == "https://example.com/data.json"
+
+
+@pytest.mark.parametrize(
+    "format_options,contents",
+    [
+        ({"property": "rows"}, '{"rows": [{"x": 1}]}'),
+        ({"type": "topojson", "feature": "countries"}, '{"type": "Topology", "objects": {}}'),
+    ],
+)
+def test_local_json_preserves_format(tmp_path, format_options, contents):
+    import json
+
+    (tmp_path / "d.json").write_text(contents)
+    source = json.dumps({"data": {"url": "d.json", "format": format_options}, "mark": "point"})
+    spec = charts.prepare_spec(source, base_dir=tmp_path)
+    assert spec["data"] == {"values": json.loads(contents), "format": format_options}
+
+
+@pytest.mark.parametrize("contents", [b"{broken", b"\xff"])
+def test_bad_local_data_uses_source_fallback(tmp_path, contents):
+    (tmp_path / "bad.json").write_bytes(contents)
+    source = "data: {url: bad.json}\nmark: point"
+    with pytest.raises(charts.ChartError, match="could not read chart data file"):
+        charts.prepare_spec(source, base_dir=tmp_path)
+    html = _block(source)
+    assert charts.process_html(html, base_dir=tmp_path) == html
+    images = []
+    assert charts.render_to_images(html, None, images, base_dir=tmp_path) == html
+    assert images == []
+
+
+def test_unreadable_local_data_uses_chart_error(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    path = tmp_path / "d.json"
+    path.write_text("[]")
+    read_text = Path.read_text
+
+    def denied(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(charts.ChartError, match="denied"):
+        charts.prepare_spec("data: {url: d.json}\nmark: point", base_dir=tmp_path)

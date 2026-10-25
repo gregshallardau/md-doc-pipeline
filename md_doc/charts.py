@@ -185,7 +185,10 @@ def _inline_data(spec: Any, base_dir: Path | None) -> None:
     if not isinstance(spec, dict):
         return
     data = spec.get("data")
-    if isinstance(data, dict) and isinstance(data.get("url"), str):
+    datasets = data if isinstance(data, list) else [data]
+    for data in datasets:
+        if not isinstance(data, dict) or not isinstance(data.get("url"), str):
+            continue
         url = data["url"]
         bundled = _bundled_name(url, base_dir)
         if bundled:
@@ -198,18 +201,22 @@ def _inline_data(spec: Any, base_dir: Path | None) -> None:
             if not path.is_file():
                 raise ChartError(f"chart data file not found: {url}")
             suffix = path.suffix.lower()
-            text = path.read_text(encoding="utf-8-sig")
-            if suffix == ".json":
-                values = json.loads(text)
-            elif suffix in (".csv", ".tsv"):
-                delim = "\t" if suffix == ".tsv" else ","
-                values = [
-                    {k: _coerce(v) for k, v in row.items()}
-                    for row in csv.DictReader(text.splitlines(), delimiter=delim)
-                ]
-            else:
-                raise ChartError(f"unsupported chart data file type: {url}")
-            spec["data"] = {"values": values}
+            try:
+                text = path.read_text(encoding="utf-8-sig")
+                if suffix == ".json":
+                    values = json.loads(text)
+                elif suffix in (".csv", ".tsv"):
+                    delim = "\t" if suffix == ".tsv" else ","
+                    values = [
+                        {k: _coerce(v) for k, v in row.items()}
+                        for row in csv.DictReader(text.splitlines(), delimiter=delim)
+                    ]
+                else:
+                    raise ChartError(f"unsupported chart data file type: {url}")
+            except (OSError, UnicodeError, ValueError, csv.Error) as exc:
+                raise ChartError(f"could not read chart data file {url}: {exc}") from exc
+            data["values"] = values
+            del data["url"]
     for key, value in spec.items():
         if key != "values" and isinstance(value, (dict, list)):  # inline rows are data, not spec
             _inline_data(value, base_dir)

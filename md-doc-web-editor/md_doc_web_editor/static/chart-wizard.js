@@ -61,22 +61,27 @@
 		return root.ChartCatalog;
 	}
 
+	let vegaLoading;
 	async function loadVega(base) {
-		const b = base.replace(/\/$/, '');
-		if (!root.vegaEmbed) {
-			// Monaco's AMD loader defines `define`, which makes these UMD bundles register as
-			// AMD modules instead of setting globals - hide it while they load.
-			const amd = root.define;
-			root.define = undefined;
-			try {
-				await loadScript(`${b}/vega.min.js`);
-				await loadScript(`${b}/vega-lite.min.js`);
-				await loadScript(`${b}/vega-embed.min.js`);
-			} finally {
-				root.define = amd;
-			}
+		if (!vegaLoading) {
+			vegaLoading = (async () => {
+				const b = base.replace(/\/$/, '');
+				if (!root.vegaEmbed) {
+					// Hide Monaco's AMD loader once for the whole shared initialization.
+					const amd = root.define;
+					root.define = undefined;
+					try {
+						await loadScript(`${b}/vega.min.js`);
+						await loadScript(`${b}/vega-lite.min.js`);
+						await loadScript(`${b}/vega-embed.min.js`);
+					} finally {
+						root.define = amd;
+					}
+				}
+				return root.vegaEmbed;
+			})();
 		}
-		return root.vegaEmbed;
+		return vegaLoading;
 	}
 
 	/* ── DOM helpers ────────────────────────────────────────────────────── */

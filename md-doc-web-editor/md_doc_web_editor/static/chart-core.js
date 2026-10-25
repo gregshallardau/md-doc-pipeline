@@ -602,7 +602,7 @@
 	}
 	/** The options a block shows beyond its template: chart title, axis titles, switched-off legend. */
 	function optionsOf(type, state, block) {
-		const opts = {};
+		const opts = type.readOptions ? type.readOptions(block) : {};
 		let built;
 		try { built = buildSpec(state); } catch { return opts; }
 		if (typeof block.title === 'string' && block.title !== built.title) opts.title = block.title;
@@ -662,12 +662,13 @@
 				const rows = (type.read && type.read(block)) || null;
 				const got = rows || { rows: rowsOf(block), map: null };
 				if (!got.rows) continue;
-				const base = stateFor(type, got.rows, {}, {});
+				const base = stateFor(type, got.rows, {}, got.opts || {});
 				if (!base) continue;
 				const maps = got.map ? [got.map] : guessMaps(type, base.table, base.types);
 				for (const map of maps) {
 					const state = { ...base, map };
-					if (matches(type, state)) { state.opts = { ...state.opts, ...optionsOf(type, state, block) }; found.push({ type: type.id, state }); break; }
+					state.opts = { ...state.opts, ...optionsOf(type, state, block) };
+					if (matches(type, state)) { found.push({ type: type.id, state }); break; }
 				}
 			}
 		}
