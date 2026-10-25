@@ -521,4 +521,9 @@ uv run ruff check .
 uv run black --check .
 uv run mypy md_doc/
 ```
+## Licence
+
+MIT (`LICENSE`). Third-party notices (Vega and Vega-Lite specs, basemap data, bundled browser libraries):
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 {% endraw %}
