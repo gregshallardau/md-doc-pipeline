@@ -1099,7 +1099,8 @@ upstream's own `layer_bar_labels` example).
 
 Two things to know. **Word cloud** and **contour plot** use Vega transforms that need a canvas, which the
 renderer md-doc uses for PDF and Word does not have, so they draw in the browser and on slides but not in a PDF
-build yet (the wizard warns when you insert them). **Error bars** and the **confidence band** are resampled by
+build yet (the wizard warns when you insert them, and a document build leaves the block as a code block and says why
+instead of drawing it blank). **Error bars** and the **confidence band** are resampled by
 Vega-Lite on every render, so they differ slightly each time; that is upstream's behaviour.
 
 **Compare** — categories side by side

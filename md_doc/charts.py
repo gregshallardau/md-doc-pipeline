@@ -256,12 +256,58 @@ def prepare_spec(
     return spec
 
 
+# Vega transforms that measure text or draw density grids on a canvas. vl-convert's Vega runtime has none: it logs the
+# error and returns a chart with the layer missing (a blank word cloud), and the next render then fails once.
+_CANVAS_TRANSFORMS = {"wordcloud": "its word layout", "kde2d": "its density grid"}
+
+
+def _needs_canvas(node: Any) -> str | None:
+    """The first canvas-only transform used anywhere in the spec, if any."""
+    if isinstance(node, list):
+        for item in node:
+            found = _needs_canvas(item)
+            if found:
+                return found
+    elif isinstance(node, dict):
+        kind = node.get("type")
+        if isinstance(kind, str) and kind in _CANVAS_TRANSFORMS:
+            return kind
+        for key, value in node.items():
+            if key != "values":
+                found = _needs_canvas(value)
+                if found:
+                    return found
+    return None
+
+
+def _check_renderable(spec: dict[str, Any]) -> None:
+    kind = _needs_canvas(spec)
+    if kind:
+        raise ChartError(
+            f"{_CANVAS_TRANSFORMS.get(kind, kind)} (Vega's {kind} transform) needs a canvas that the PDF/Word "
+            "renderer does not have; this chart draws in the browser and on slides"
+        )
+
+
+def _recover(vlc: Any) -> None:
+    """After a failed render the next one can fail once; a trivial render absorbs that."""
+    for _ in range(2):
+        try:
+            vlc.vegalite_to_svg(
+                {"data": {"values": [{"a": 1}]}, "mark": "point"}, vl_version=VEGALITE_VERSION
+            )
+            return
+        except Exception:
+            continue
+
+
 def render_svg(
     source: str,
     theme: dict[str, str] | None = None,
     base_dir: Path | None = None,
 ) -> str:
     spec = prepare_spec(source, theme, base_dir)
+    _check_renderable(spec)
     try:
         import vl_convert as vlc
     except Exception as exc:
@@ -271,6 +317,7 @@ def render_svg(
             return vlc.vega_to_svg(spec)
         return vlc.vegalite_to_svg(spec, vl_version=VEGALITE_VERSION)
     except Exception as exc:
+        _recover(vlc)
         raise ChartError(str(exc).splitlines()[0] if str(exc) else "render failed") from exc
 
 
@@ -282,6 +329,7 @@ def render_png(
     """PNG bytes plus the natural size in px, for Word and PowerPoint."""
     surface = (theme or {}).get("surface") or "#ffffff"
     spec = prepare_spec(source, theme, base_dir, background=surface)
+    _check_renderable(spec)
     try:
         import vl_convert as vlc
     except Exception as exc:
@@ -292,6 +340,7 @@ def render_png(
         else:
             png = vlc.vegalite_to_png(spec, vl_version=VEGALITE_VERSION, scale=_RASTER_SCALE)
     except Exception as exc:
+        _recover(vlc)
         raise ChartError(str(exc).splitlines()[0] if str(exc) else "render failed") from exc
     w, h = struct.unpack(">II", png[16:24])
     return png, int(w / _RASTER_SCALE), int(h / _RASTER_SCALE)

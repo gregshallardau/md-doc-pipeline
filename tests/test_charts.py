@@ -158,3 +158,37 @@ def test_upstream_basemap_urls_resolve_to_the_bundled_files(tmp_path):
     # other upstream file names are not guessed at
     with pytest.raises(charts.ChartError):
         charts.prepare_spec("data: {url: data/cars.json}\nmark: bar", base_dir=tmp_path)
+
+
+_WORDCLOUD = (
+    "$schema: https://vega.github.io/schema/vega/v6.json\nwidth: 200\nheight: 100\n"
+    "data: [{name: t, values: [{text: hello world hello}], transform: [{type: wordcloud, size: [200, 100], text: {field: text}}]}]\n"
+    "marks: [{type: text, from: {data: t}, encode: {enter: {text: {field: text}, x: {field: x}, y: {field: y}}}}]"
+)
+
+
+def test_canvas_only_transforms_fail_clearly_instead_of_drawing_a_blank_chart():
+    """vl-convert has no canvas: a word cloud used to come back empty with no error."""
+    with pytest.raises(charts.ChartError, match="canvas"):
+        charts.render_svg(_WORDCLOUD)
+    with pytest.raises(charts.ChartError, match="canvas"):
+        charts.render_png(_WORDCLOUD)
+    # the build leaves the source in place and says why, and the chart after it still renders
+    html = (
+        f'<pre><code class="language-chart">{_WORDCLOUD}</code></pre>'
+        '<pre><code class="language-chart">mark: bar\ndata: {values: [{a: 1}]}\nencoding: {x: {field: a, type: nominal}}</code></pre>'
+    )
+    out = charts.process_html(html)
+    assert "wordcloud" in out and "<svg" in out
+
+
+def test_a_failed_render_does_not_break_the_next_chart():
+    bad = (
+        "$schema: https://vega.github.io/schema/vega/v6.json\nwidth: 50\nheight: 50\n"
+        "data: [{name: t, values: [{a: 1}], transform: [{type: nosuchtransform}]}]"
+    )
+    good = "mark: bar\ndata: {values: [{a: 1}]}\nencoding: {x: {field: a, type: nominal}}"
+    with pytest.raises(charts.ChartError):
+        charts.render_svg(bad)
+    for _ in range(3):
+        assert charts.render_svg(good).startswith("<svg")
