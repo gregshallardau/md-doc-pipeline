@@ -1,0 +1,8 @@
+{
+  "chart-core.js": "6c3115942e354139278b2136bf9e50c51f304d7d3397dfb04ca7337161e3bdbe",
+  "chart-geo-data.js": "faad1de33312afdc85f21c2a31352943d35826b25bd0a702aaeb8dc608c0a496",
+  "chart-templates.js": "8458803a98413dd07060711dadc20fc7fe7a08c2ea170a32a7d028384d4b39f8",
+  "chart-types-custom.js": "992027f9a0766a911abc63b3e521faa960a9dd2a6dabf04440289d2b3cef83f4",
+  "chart-types-upstream.js": "f8e71f57d53f321961336e7077d99f6062b79de29dba28bdee1ec4f88bd3483f",
+  "chart-wizard.js": "2da546f5a4fc8818014607f74c8355bb9f62ed9752e09a270353f0292a5464c0"
+}

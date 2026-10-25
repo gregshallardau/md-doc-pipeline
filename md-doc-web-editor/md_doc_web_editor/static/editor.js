@@ -440,6 +440,10 @@
                   (error) => toast(error.message, true),
                 );
             });
+            // Right-click inside a chart block: Edit chart…
+            window.ChartWizard?.bindEditor(state.editor, () =>
+              current() ? chartHost() : null,
+            );
             state.editor.addAction({
               id: "md-doc.edit-include",
               label: "Edit included template inline",
@@ -3319,6 +3323,62 @@
       ],
     );
   }
+  function chartHost() {
+    return {
+      // The same ```chart block the presentation framework's Markdown slides take.
+      format: "yaml-fence",
+      scriptBase: "/static",
+      vendorBase: "/static/vendor/vega-6.2.0",
+      datasetBase: "/static/vendor/vega-6.2.0/datasets",
+      // Preview with this document's own theme colours and fonts.
+      getConfig: async () =>
+        api("/api/charts/config?path=" + encodeURIComponent(state.active)),
+      onInsert: (code) => insert("chart", "\n" + code),
+      getSource() {
+        if (state.editor) {
+          const model = state.editor.getModel();
+          return {
+            text: model.getValue(),
+            offset: model.getOffsetAt(state.editor.getPosition()),
+          };
+        }
+        return { text: state.fallback.value, offset: state.fallback.selectionStart };
+      },
+      replaceRange(start, end, code) {
+        if (state.editor) {
+          const model = state.editor.getModel();
+          const range = monaco.Range.fromPositions(
+            model.getPositionAt(start),
+            model.getPositionAt(end),
+          );
+          state.editor.executeEdits("studio-chart", [{ range, text: code }]);
+          state.editor.pushUndoStop();
+          state.editor.focus();
+        } else {
+          state.fallback.setRangeText(code, start, end, "end");
+          changed(state.fallback.value);
+        }
+      },
+      parseSpec: async (source) =>
+        (
+          await api("/api/charts/parse", {
+            method: "POST",
+            body: JSON.stringify({ source }),
+          })
+        ).spec,
+      notify: (message) => toast(message, true),
+    };
+  }
+  function chartWizard() {
+    if (!current()) return;
+    setEditMode("source");
+    window.ChartWizard.open(chartHost());
+  }
+  function editChart() {
+    if (!current()) return;
+    setEditMode("source");
+    window.ChartWizard.edit(chartHost());
+  }
   function insertionMenu() {
     const anchor = document.querySelector('[data-action="insert-menu"]');
     const existing = $("insert-submenu");
@@ -3353,6 +3413,22 @@
       ["slide", "Slide layout", "Two-column slide directive", "columns"],
     ])
       body.append(option(label, description, iconName, () => insert(kind)));
+    body.append(
+      option(
+        "Chart…",
+        "Build a Vega-Lite chart step by step (bar, line, pie, scatter, heatmap…)",
+        "columns",
+        chartWizard,
+      ),
+    );
+    body.append(
+      option(
+        "Edit chart at cursor",
+        "Reopen the wizard on the chart block the cursor is in",
+        "columns",
+        editChart,
+      ),
+    );
     body.append(
       option(
         "Merge field",

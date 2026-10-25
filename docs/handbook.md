@@ -1024,6 +1024,275 @@ This paragraph is centred.
 
 </div>
 
+<a id="markdown-charts-vega"></a>
+
+### Charts (Vega-Lite and Vega)
+
+For data charts, use a fenced `chart` block holding a [Vega-Lite](https://vega.github.io/vega-lite/)
+spec written as YAML (or JSON). A full [Vega](https://vega.github.io/vega/) spec works the same way
+(it is recognised by its `$schema` or its `marks`). `vega-lite` and `vega` are accepted as the fence
+language too.
+
+````markdown
+```chart
+data: {url: sales.csv}
+mark: {type: line, point: true}
+encoding:
+  x: {field: month, type: ordinal, sort: [Jan, Feb, Mar]}
+  y: {field: revenue, type: quantitative}
+  color: {field: region, type: nominal}
+```
+````
+
+- **Don't write the spec by hand.** In the browser editor, **Insert → Chart…** is a step-by-step
+  builder (type, data, customize, insert) with a live preview in this document's own theme. It offers
+  every chart in the [catalogue](#markdown-charts-catalogue) below, shows a thumbnail drawn from each
+  chart's own sample data, lets you paste a table or edit the sample, and inserts the block at the
+  cursor. The presentation framework's studio has the same wizard, and its Markdown slides take the
+  same block, so a chart is the same in a document and on a slide.
+- **Editing a chart again.** Right-click inside a chart block and choose **Edit chart…** (or
+  **Insert → Edit chart at cursor**). The wizard reads the block itself: it recognises which upstream
+  example the spec is, takes your table out of the data and works out which of your columns stand where the
+  example's fields were, then opens on that one chart type with everything filled in (the type cannot be changed;
+  insert a new chart for that). **Update chart** replaces the block in place. Nothing is stored in the block, so a
+  chart you pasted from the Vega documentation, or edited by hand (a number in the data, a different title), opens
+  the same way. A chart that matches none of the wizard's types is left for you to edit by hand, and the
+  wizard says so. In the deck studio you can also right-click a chart on the slide.
+- **Data.** Inline with `data: {values: [...]}`, or `data: {url: file.csv}` (`.csv`, `.tsv` or `.json`)
+  read relative to the document. Full Vega's named datasets (`data: [{name: table, url: file.csv}]`)
+  use the same resolution, including built-in maps. Local JSON keeps `format` settings such as
+  `property` and TopoJSON `feature`. Remote URLs are not fetched at build time.
+- **Built-in maps.** `data: {url: "vega-datasets:world-110m"}` (countries; ISO 3166-1 numeric ids) and
+  `vega-datasets:us-10m` (US states and counties; FIPS ids) are bundled with md-doc and never fetched.
+  The map charts below match your data to them by name, ISO code or FIPS code.
+- **Theme.** The spec holds data and encodings only. Colours, fonts, gridlines and the series palette
+  come from the same theme as Mermaid diagrams (`--mddoc-diagram-*` properties and the brand colours;
+  the series lead with the brand primary), and anything under the spec's own `config` wins.
+- **Size.** `width` and `height` size the whole chart including axes and legend. The default width is
+  the text column (at most 720px) and the default height 320px; `width: container` means the default.
+  Charts that carry their own layout (the full-Vega ones, repeats and facets) keep their own size.
+- **Same chart every time.** A build never uses random numbers, so a chart is identical on every build
+  and between a document and a slide. Where Vega-Lite would bootstrap a confidence interval from random
+  resamples, the wizard uses mean ± 1.96 standard errors (or standard error, standard deviation, or
+  quartiles, as you choose). Jitter is fixed when the chart is inserted.
+- **Formats.** PDF gets vector SVG; Word and PowerPoint get a 2x PNG. Interactive features (tooltips,
+  selections, bound controls) show only in the presentation framework, which runs the same spec in the
+  browser.
+- **Install.** Needs the optional `charts` extra: `uv sync --extra charts`. Without it, or when a spec is
+  invalid (including malformed or unreadable data files), the build warns and leaves the block as a code block.
+
+Use Mermaid for flowcharts, sequences and the other diagrams below, and `chart` for data.
+
+<a id="markdown-charts-catalogue"></a>
+
+#### Chart catalogue
+
+Every chart the wizard builds is an official **Vega-Lite or Vega example, verbatim**, with two things filled
+in: your table in place of the example's data, and your column names in place of the example's field names.
+Nothing is computed into the block, so what it holds is the upstream spec: copy it into the Vega editor or any
+other Vega renderer and it draws the same chart. A few examples carry steps that only made sense for their own
+dataset (a filter on one year, a title naming the example's field); those are the *edits* listed after the
+tables, each with its reason. The **Upstream example** column names the source file in
+[vega-lite](https://github.com/vega/vega-lite/tree/main/examples/specs) or
+[vega](https://github.com/vega/vega/tree/main/docs/examples). A chart with no upstream example is written in the
+same style from the nearest example's own marks and transforms, and says so. The wizard only offers the
+options its upstream example supports (the Labels option on the horizontal bar, for instance, switches to
+upstream's own `layer_bar_labels` example).
+
+Two things to know. **Word cloud** and **contour plot** use Vega transforms that need a canvas, which the
+renderer md-doc uses for PDF and Word does not have, so they draw in the browser and on slides but not in a PDF
+build yet (the wizard warns when you insert them, and a document build leaves the block as a code block and says why
+instead of drawing it blank). **Error bars** and the **confidence band** are resampled by
+Vega-Lite on every render, so they differ slightly each time; that is upstream's behaviour.
+
+**Compare** — categories side by side
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Bar | `bar` | Category, Value | `vega-lite/bar` |
+| Horizontal bar | `hbar` | Category, Value | `vega-lite/layer_bar_labels`, `vega-lite/bar_aggregate` |
+| Grouped bar | `bar-grouped` | Category, Value, Group | `vega-lite/bar_grouped` |
+| Stacked bar | `bar-stacked` | Category, Value, Stack by | `vega-lite/stacked_bar_h` |
+| 100% stacked bar | `bar-percent` | Category, Value, Stack by | `vega-lite/stacked_bar_normalize` |
+| Slope chart | `slope` | Period, Value, Series | `vega-lite/line_slope` |
+| Bump chart | `bump` | Period, Score, Item | `vega-lite/window_rank` |
+| Dumbbell | `dumbbell` | Value, Item, Which of the two | `vega-lite/layer_ranged_dot` |
+| Waterfall | `waterfall` | Step, Change | `vega-lite/waterfall_chart` |
+| Population pyramid | `pyramid` | Category, Value, Side | `vega-lite/bar_diverging_stack_population_pyramid` |
+| Mosaic (Marimekko) | `marimekko` | Rows, Columns | `vega-lite/rect_mosaic_labelled_with_offset` |
+| Bar with negatives | `bar-posneg` | Category, Value | `vega-lite/bar_negative` |
+| Diverging stacked bar | `bar-diverging` | Question, Response, Percentage | `vega-lite/bar_diverging_stack_transform` |
+| Radar | `radar` | Spoke, Value, Series | `vega/radar-chart` |
+| Lollipop | `lollipop` | Category, Value | none (same style) |
+| Dot plot | `dot-plot` | Category, Value | none (same style) |
+| Funnel | `funnel` | Stage, Count | none (same style) |
+| Pareto | `pareto` | Category, Count | none (same style) |
+
+**Change over time** — trends, ranges and timelines
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Line | `line` | Date, Value | `vega-lite/line` |
+| Step line | `step` | Date, Value | `vega-lite/line_step` |
+| Area | `area` | Date, Value | `vega-lite/area` |
+| Stacked area | `area-stacked` | Date, Value, Series | `vega-lite/stacked_area` |
+| 100% stacked area | `area-percent` | Date, Value, Series | `vega-lite/stacked_area_normalize` |
+| Streamgraph | `streamgraph` | Date, Value, Series | `vega-lite/stacked_area_stream` |
+| Gantt | `gantt` | Task, Start, End | `vega-lite/bar_gantt` |
+| Rolling average | `moving-average` | Date, Value | `vega-lite/layer_line_rolling_mean_point_raw` |
+| Range and line | `combo` | Date, Range top, Range bottom, Line | `vega-lite/layer_dual_axis` |
+| Candlestick | `candlestick` | Date, Open, High, Low, Close | `vega-lite/layer_candlestick` |
+| Horizon | `horizon` | Position, Value | `vega-lite/area_horizon` |
+| Cumulative total | `cumulative` | Values | `vega-lite/area_cumulative_freq` |
+| Mean with confidence band | `error-band` | Date, Values | `vega-lite/layer_line_errorband_ci` |
+| Range area | `range-area` | Date, Low, High | none (same style) |
+| OHLC bars | `ohlc` | Date, Open, High, Low, Close | none (same style) |
+| Sparkline | `sparkline` | Date, Value | none (same style) |
+| Control chart | `control-chart` | Sample, Measurement | none (same style) |
+| Timeline | `timeline` | Date, Event | none (same style) |
+
+**Distribution** — how values are spread
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Histogram | `histogram` | Values | `vega-lite/histogram` |
+| Histogram by group | `histogram-grouped` | Values, Group | `vega-lite/trellis_bar_histogram` |
+| Dot histogram | `dot-histogram` | Values | `vega-lite/circle_wilkinson_dotplot` |
+| Density | `density` | Values | `vega-lite/area_density` |
+| Density by group | `density-groups` | Values, Group | `vega-lite/area_density_stacked` |
+| Ridgeline | `ridgeline` | Values, Group | `vega-lite/area_density_facet` |
+| Box plot | `box` | Group, Values | `vega-lite/boxplot_2D_vertical` |
+| Strip plot | `strip` | Values, Group | `vega-lite/tick_strip` |
+| Mean with error bars | `error-bars` | Group, Values | `vega-lite/layer_point_errorbar_ci` |
+| Cumulative distribution | `ecdf` | Values | `vega-lite/area_cumulative_freq` |
+| Q-Q plot | `qq-plot` | Values | `vega-lite/point_quantile_quantile` |
+| Violin | `violin` | Group, Values | `vega/violin-plot` |
+
+**Relationships** — how measures relate
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Scatter | `scatter` | X, Y | `vega-lite/point_2d` |
+| Bubble | `bubble` | X, Y, Size | `vega-lite/point_bubble` |
+| Scatter with trend | `scatter-trend` | X, Y | `vega-lite/layer_point_line_loess`, `vega-lite/layer_point_line_regression` |
+| Connected scatter | `connected-scatter` | X, Y, Order | `vega-lite/connected_scatterplot` |
+| Parallel coordinates | `parallel` | Colour by, Measures | `vega-lite/parallel_coordinate` |
+| Scatter matrix | `scatter-matrix` | Measures, Colour by (optional) | `vega-lite/interactive_splom` |
+| Quadrant | `quadrant` | X, Y, Label (optional) | none (same style) |
+| Venn diagram | `venn` | Sets in the region, Items in exactly that region | none (same style) |
+
+**Parts of a whole** — shares and proportions
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Pie | `pie` | Slice label, Slice size | `vega-lite/arc_pie` |
+| Donut | `donut` | Slice label, Slice size | `vega-lite/arc_donut` |
+| Nightingale rose | `rose` | Values | `vega-lite/arc_radial` |
+| Radial bar | `radial-bar` | Ring label, Value | none (same style) |
+| Waffle | `waffle` | Category, Amount | none (same style) |
+| Pictogram | `pictogram` | Category, Amount | none (same style) |
+
+**Heatmaps and matrices** — intensity across two dimensions
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Heatmap | `heatmap` | Rows, Columns, Colour | `vega-lite/rect_heatmap` |
+| Heatmap with counts | `heatmap-annotated` | Rows, Columns | `vega-lite/layer_text_heatmap` |
+| 2D histogram | `hist2d` | X, Y | `vega-lite/rect_binned_heatmap` |
+| Calendar | `calendar` | Date, Closing value | `vega/calendar-view` |
+| Contour plot | `contour` | X, Y, Group | `vega/contour-plot` |
+| Correlation matrix | `correlation` | Measures | none (same style) |
+
+**Progress and KPIs** — single numbers and targets
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Bullet chart | `bullet` | Measure, Band 1, Band 2, Band 3, Actual, Comparison, Target | `vega-lite/facet_bullet` |
+| Gauge | `gauge` | Label (optional), Value | none (same style) |
+
+**Hierarchies** — nested and tree-shaped data
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Treemap | `treemap` | Id, Label (optional), Parent id, Size | `vega/treemap` |
+| Sunburst | `sunburst` | Id, Label (optional), Parent id, Size | `vega/sunburst` |
+| Circle packing | `circle-pack` | Id, Label (optional), Parent id, Size | `vega/circle-packing` |
+| Tree | `tree` | Id, Label (optional), Parent id, Size | `vega/tree-layout` |
+| Radial tree | `radial-tree` | Id, Label (optional), Parent id, Size | `vega/radial-tree-layout` |
+| Icicle | `icicle` | Id, Label (optional), Parent id, Size | `vega/sunburst` |
+| Dendrogram | `dendrogram` | Id, Label (optional), Parent id, Size | `vega/tree-layout` |
+
+**Flows and networks** — connections between things
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Arc diagram | `arc-diagram` | From, To, Weight (optional), Group of the “From” item (optional) | `vega/arc-diagram` |
+| Force network | `force` | From, To, Weight (optional), Group of the “From” item (optional) | `vega/force-directed-layout` |
+| Edge bundling | `edge-bundling` | From, To | `vega/edge-bundling` |
+| Chord | `chord` | From, To, Amount (optional) | none (same style) |
+| Sankey | `sankey` | From, To, Amount (optional) | none (same style) |
+
+**Text** — words sized by weight
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| Word cloud | `word-cloud` | Text | `vega/word-cloud` |
+
+**Maps** — values by place
+
+| Chart | Id | Reads these columns | Upstream example |
+|-------|----|---------------------|------------------|
+| US county map | `map-us` | County FIPS id, Value | `vega-lite/geo_choropleth` |
+| US point map | `bubble-map-us` | Latitude, Longitude | `vega-lite/geo_layer` |
+| World map | `map-world` | Country, Value | `vega-lite/geo_choropleth` |
+| World point map | `bubble-map-world` | Latitude, Longitude | `vega-lite/geo_layer` |
+
+**Edits to upstream specs**
+
+Every other chart is its upstream example with only your data and column names filled in. These are the exceptions, each removing or replacing something that only made sense for the example’s own data:
+
+| Chart | Upstream example | Edit |
+|-------|------------------|------|
+| `hbar` | `vega-lite/layer_bar_labels` | Its x scale domain [0, 60] fits the example’s three values |
+| `hbar` | `vega-lite/bar_aggregate` | It keeps one year (`datum.year == 2000`) of a multi-year file; your table is the data |
+| `hbar` | `vega-lite/bar_aggregate` | Its x axis title “population” names the example’s own field |
+| `bar-percent` | `vega-lite/stacked_bar_normalize` | It filters one year and derives `gender` from the example’s `sex` code; your table already has the split |
+| `bar-percent` | `vega-lite/stacked_bar_normalize` | Its y axis title “population” names the example’s own field |
+| `line` | `vega-lite/line` | It plots one stock (`symbol === 'GOOG'`) from a multi-stock file; your table is the series |
+| `step` | `vega-lite/line_step` | It plots one stock (`symbol === 'GOOG'`) from a multi-stock file; your table is the series |
+| `area` | `vega-lite/area` | Its y axis title “count” names the example’s own field |
+| `bump` | `vega-lite/window_rank` | Its chart title names the example’s own data |
+| `bump` | `vega-lite/window_rank` | Its ranking breaks ties on a second column (`diff`) your table does not have |
+| `bump` | `vega-lite/window_rank` | Its colour scale lists the example’s four teams with fixed colours |
+| `dumbbell` | `vega-lite/layer_ranged_dot` | It keeps five named countries and two years of a larger file |
+| `dumbbell` | `vega-lite/layer_ranged_dot` | Its axis and legend titles are the example’s own wording |
+| `dumbbell` | `vega-lite/layer_ranged_dot` | Its colour scale pins the example’s two years (1955, 2000) |
+| `waterfall` | `vega-lite/waterfall_chart` | Its x axis title “Months” is the example’s own wording; here it is your column |
+| `waterfall` | `vega-lite/waterfall_chart` | Its y axis title “Amount” is the example’s own wording; here it is your column |
+| `pyramid` | `vega-lite/bar_diverging_stack_population_pyramid` | It filters one year and derives `gender` from the example’s `sex` code; your table has Gender (Female / Male) already, which also decides which side a bar is drawn on |
+| `pyramid` | `vega-lite/bar_diverging_stack_population_pyramid` | Its x axis title “population” names the example’s own field; here it is your value column |
+| `bar-diverging` | `vega-lite/bar_diverging_stack_transform` | Its axis and legend titles (“Question”, “Response”, “Percentage”) are the example’s own wording |
+| `moving-average` | `vega-lite/layer_line_rolling_mean_point_raw` | Its layer titles (“Max Temperature”, “Rolling Mean of Max Temperature”) and axis title name the example’s own field; the axis is titled with your column |
+| `combo` | `vega-lite/layer_dual_axis` | It keeps one city (`location == "Seattle"`) of a multi-city file |
+| `combo` | `vega-lite/layer_dual_axis` | Its range axis is fixed to [0, 30] °C and titled “Avg. Temperature (°C)” / “Precipitation (inches)” for the example’s data |
+| `candlestick` | `vega-lite/layer_candlestick` | Its x axis title “Date in 2009” and %m/%d format describe the example’s data |
+| `horizon` | `vega-lite/area_horizon` | Its band height 50 (domain [0, 50] and `datum.y - 50`) is half of the example’s largest value; here it is half of yours |
+| `density` | `vega-lite/area_density` | Its x axis title “IMDB Rating” names the example’s own field |
+| `density-groups` | `vega-lite/area_density_stacked` | Its chart title names the example’s own data |
+| `density-groups` | `vega-lite/area_density_stacked` | Its density extent [2500, 6500] is the range of the example’s body masses |
+| `density-groups` | `vega-lite/area_density_stacked` | Its x axis title “Body Mass (g)” names the example’s own field |
+| `ridgeline` | `vega-lite/area_density_facet` | Its chart title names the example’s own data |
+| `ridgeline` | `vega-lite/area_density_facet` | Its density extent [2500, 6500] is the range of the example’s body masses |
+| `ridgeline` | `vega-lite/area_density_facet` | Its x axis title “Body Mass (g)” names the example’s own field |
+| `error-bars` | `vega-lite/layer_point_errorbar_ci` | Its x axis title “Barley Yield” names the example’s own field |
+| `error-band` | `vega-lite/layer_line_errorband_ci` | Its y axis title “Mean of Miles per Gallon (95% CIs)” names the example’s own field |
+| `parallel` | `vega-lite/parallel_coordinate` | Its four measures (Beak Length, Beak Depth, Flipper Length, Body Mass) are the example’s columns; they become the columns you choose |
+| `scatter-matrix` | `vega-lite/interactive_splom` | Its repeat lists the example’s three columns (Horsepower, Acceleration, Miles_per_Gallon); they become the columns you choose |
+| `icicle` | `vega/sunburst` | The partition is laid out in width × height instead of angle × radius, and the arcs become rectangles |
+| `dendrogram` | `vega/tree-layout` | Its layout option starts on “cluster” (a choice the upstream spec itself offers) instead of “tidy” |
+| `map-world` | `vega-lite/geo_choropleth` | It points at the world countries file with an equal-area world projection, in place of the US states/counties file and the albersUsa projection |
+| `bubble-map-world` | `vega-lite/geo_layer` | It points at the world countries file with an equal-area world projection, in place of the US states/counties file and the albersUsa projection |
+
 <a id="markdown-diagrams-mermaid"></a>
 
 ### Diagrams (Mermaid)
@@ -6078,6 +6347,20 @@ uv sync --extra mermaid   # + libcairo2 on Linux
 
 Without it, diagrams still work in PDF; in Word they fall back to a code block
 rather than breaking the build. PDF diagrams never require `cairosvg`.
+
+<a id="troubleshooting-chart-blocks-show-as-source-code"></a>
+
+### Chart blocks show as source code
+
+`chart`, `vega-lite` and `vega` blocks are drawn with the optional `vl-convert-python`
+dependency:
+
+```bash
+uv sync --extra charts
+```
+
+The build log names the problem when a spec is invalid (for example a missing data file) and
+leaves that one block as code.
 
 <a id="troubleshooting-s3--azure-sync-says-the-backend-isnt-available"></a>
 

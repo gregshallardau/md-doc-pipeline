@@ -2044,6 +2044,15 @@ def build(
     mermaid_theme = diagram_theme(css_text, config, resolve_config_path)
     html_body = _process_mermaid(html_body, theme=mermaid_theme)
 
+    # Vega-Lite / Vega charts from ``chart`` blocks, themed the same way
+    from ..charts import process_html as _process_charts
+
+    html_body = _process_charts(
+        html_body,
+        theme=mermaid_theme,
+        base_dir=(doc_path.parent if doc_path and doc_path.is_file() else doc_path),
+    )
+
     primary_color = mermaid_theme.get("primary") if mermaid_theme else None
 
     # Theme-derived layout facts shared with the docx builder: the @page side

@@ -404,5 +404,19 @@
       "web/pdf_viewer.css": "1f3c7c3c692d4da2334d0386d2286ec040a37db8654e02b8704b11262bc9bf49",
       "web/pdf_viewer.mjs": "2e112bf95cf962bcc9d3ace10d5bc74b3c5095245baa3eacd6bbbb9fc9a940a3"
     }
+  },
+  {
+    "package": "vega-6.2.0",
+    "files": {
+      "LICENSE-vega-embed.txt": "32df67148f0fc3db0eb9e263a7b75d07f1eb14c61955005a4a39c6918d10d137",
+      "LICENSE-vega-lite.txt": "f618900fd0d64046963b29f40590cdd1e341a2f41449f99110d82fd81fea808c",
+      "LICENSE-vega.txt": "63727832aaf62004a2b249c933e327f3c90caf49e41a72f4bf436edf632cbda8",
+      "VERSIONS.txt": "f16c9cda18bb59644c38567119042038d051cbdca16bc6950bf4853ad31dde1d",
+      "datasets/us-10m.json": "c367ba822438cd9e18d6906f8b6e36aff18b44841a5d1ef47bc5330722b009dc",
+      "datasets/world-110m.json": "d635dc07cb126f61c21f06b503cc60462d2418b7d3ed8913dbb5a271a4c34135",
+      "vega-embed.min.js": "c7111a41190080938b14c1de00074d9bda16ef2199e2919dd038cddf97d87354",
+      "vega-lite.min.js": "3cef62eb552b03bc3de6b97c830c1118e2ba64f662530088c9af9e0fab370523",
+      "vega.min.js": "ea6a5936381d06f912466354e2b6a20eb66c4d41f1ca9dff1e0236dfee6ee392"
+    }
   }
 ]
