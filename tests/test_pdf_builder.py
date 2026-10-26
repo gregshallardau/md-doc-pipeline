@@ -229,6 +229,37 @@ class TestBodyAlignAndCoverCss:
         assert ".cover-footer-no-line { border-top: none !important" in html
         assert 'class="cover cover-align-right"' in html
 
+    def test_cover_subtitle_detail_and_stripe_text(self, tmp_repo):
+        html = self._built_html(
+            tmp_repo,
+            {
+                "cover_page": True,
+                "cover_subtitle": "A study of <things>",
+                "cover_meta_detail": "Line one\nLine two",
+                "cover_stripe": True,
+                "cover_stripe_text": "Jane Author",
+                "cover_stripe_color": "#1e4632",
+            },
+        )
+        assert '<p class="cover-subtitle">A study of &lt;things&gt;</p>' in html
+        assert '<span class="cover-meta-detail">Line one<br>Line two</span>' in html
+        assert '<span class="cover-stripe-text">Jane Author</span>' in html
+        assert "background: #1e4632;" in html
+        assert ".cover-stripe-text {" in html
+
+    def test_cover_new_keys_absent_by_default(self, tmp_repo):
+        html = self._built_html(tmp_repo, {"cover_page": True, "cover_stripe": True})
+        assert '<p class="cover-subtitle">' not in html
+        assert '<span class="cover-meta-detail">' not in html
+        assert '<span class="cover-stripe-text">' not in html
+
+    def test_cover_stripe_color_rejects_unsafe_values(self, tmp_repo):
+        html = self._built_html(
+            tmp_repo,
+            {"cover_page": True, "cover_stripe": True, "cover_stripe_color": "red;}</style>"},
+        )
+        assert "red;}" not in html
+
     def test_page_header_bar_logo_beats_header_logo(self, tmp_repo):
         # Same precedence as the docx builder: the more-specific
         # page_header_bar_logo wins inside the bar.

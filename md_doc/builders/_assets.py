@@ -301,6 +301,7 @@ _MDDOC_PROP_TO_KEY = {
     "cover-bar-bottom-height": "cover_bar_bottom_height",
     "cover-stripe-height": "cover_stripe_height",
     "cover-stripe-width": "cover_stripe_width",
+    "cover-stripe-color": "cover_stripe_color",
     "cover-footer-color": "cover_footer_color",
     "section-bar-color": "section_bar_color",
     "section-bar-text-color": "section_bar_text_color",

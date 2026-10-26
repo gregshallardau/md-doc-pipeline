@@ -79,3 +79,17 @@ def test_conversion_failure_is_actionable(monkeypatch):
 def test_inline_pdf_math_overrides_generic_block_image_style():
     html, _ = render_math(markdown_html("Before $x$ after", []))
     assert "display: inline-block; margin: 0" in html
+
+
+@pytest.mark.parametrize("source", [r"\bar{d}", r"\vec{v}", r"\overbrace{ab}"])
+def test_word_stretchy_accents_build(tmp_path, source):
+    # mathml2omml writes <m:groupChrPr>…</m:groupChr> for these; it is repaired.
+    path = tmp_path / "accent.docx"
+    build_word(f"Mean ${source}$ here.\n", {}, path, output_format="docx")
+    with ZipFile(path) as archive:
+        xml = ET.fromstring(archive.read("word/document.xml"))
+    ns = {"m": "http://schemas.openxmlformats.org/officeDocument/2006/math"}
+    group = xml.find(".//m:groupChr", ns)
+    assert group is not None
+    assert group.find("m:groupChrPr/m:chr", ns) is not None
+    assert group.find("m:e", ns) is not None

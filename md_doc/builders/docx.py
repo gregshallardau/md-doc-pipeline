@@ -240,6 +240,177 @@ def _compute_form_dims(theme: dict[str, Any]) -> dict[str, float]:
 _FORM_DIMS: ContextVar[dict[str, float] | None] = ContextVar("md_doc_form_dims", default=None)
 
 
+class _WordFootnotes:
+    """Real Word footnotes: a ``word/footnotes.xml`` part and its styles.
+
+    ``md_doc.footnotes.mark_for_word`` leaves ``<sup class="md-doc-fnref"
+    data-fn="N">`` markers; :meth:`reference` turns one into a
+    ``w:footnoteReference`` run and writes note *N* into the footnotes part.
+    """
+
+    _CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
+
+    def __init__(self, doc: Any, notes: list[str], theme: dict[str, Any]) -> None:
+        from docx.enum.style import WD_STYLE_TYPE
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
+        from docx.opc.packuri import PackURI
+        from docx.opc.part import XmlPart
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        self._doc = doc
+        self._notes = notes
+        self._next_id = 1
+        separators = "".join(
+            f'<w:footnote w:type="{kind}" w:id="{fid}"><w:p><w:pPr>'
+            '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+            f"<w:r><w:{kind}/></w:r></w:p></w:footnote>"
+            for kind, fid in (("separator", -1), ("continuationSeparator", 0))
+        )
+        self._root = parse_xml(f'<w:footnotes {nsdecls("w", "r")}>{separators}</w:footnotes>')
+        part = XmlPart(PackURI("/word/footnotes.xml"), self._CT, self._root, doc.part.package)
+        doc.part.relate_to(part, RT.FOOTNOTES)
+
+        # Word's own files list the separator notes in the settings.
+        settings = doc.settings.element
+        if settings.find(qn("w:footnotePr")) is None:
+            footnote_pr = parse_xml(
+                f'<w:footnotePr {nsdecls("w")}><w:footnote w:id="-1"/><w:footnote w:id="0"/>'
+                "</w:footnotePr>"
+            )
+            compat = settings.find(qn("w:compat"))
+            if compat is not None:
+                compat.addprevious(footnote_pr)
+            else:
+                settings.append(footnote_pr)
+
+        styles = doc.styles
+        try:
+            text_style = styles["Footnote Text"]
+        except KeyError:
+            text_style = styles.add_style("Footnote Text", WD_STYLE_TYPE.PARAGRAPH)
+            text_style.base_style = styles["Normal"]
+        size = theme.get("font_size_footnote") or 8.0
+        text_style.font.size = Pt(size)
+        if theme.get("font_footnote"):
+            _apply_font_name(text_style.font, theme["font_footnote"])
+        fmt = text_style.paragraph_format
+        fmt.space_before = Pt(0)
+        fmt.space_after = Pt(2)
+        fmt.first_line_indent = Pt(0)
+        fmt.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        fmt.line_spacing = Pt(size * 1.4)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        try:
+            ref_style = styles["Footnote Reference"]
+        except KeyError:
+            ref_style = styles.add_style("Footnote Reference", WD_STYLE_TYPE.CHARACTER)
+        ref_style.font.superscript = True
+        self._text_style_id = text_style.style_id
+        self._ref_style_id = ref_style.style_id
+
+    def _ref_run(self, tag: str, footnote_id: int | None = None) -> Any:
+        run = OxmlElement("w:r")
+        rpr = OxmlElement("w:rPr")
+        style = OxmlElement("w:rStyle")
+        style.set(qn("w:val"), self._ref_style_id)
+        rpr.append(style)
+        run.append(rpr)
+        ref = OxmlElement(tag)
+        if footnote_id is not None:
+            ref.set(qn("w:id"), str(footnote_id))
+        run.append(ref)
+        return run
+
+    def reference(self, paragraph: Any, index: int) -> None:
+        """Insert footnote *index* at the end of *paragraph*."""
+        if not 0 <= index < len(self._notes):
+            return
+        footnote_id = self._next_id
+        self._next_id += 1
+        paragraph._p.append(self._ref_run("w:footnoteReference", footnote_id))
+
+        from docx.text.paragraph import Paragraph
+
+        note = OxmlElement("w:footnote")
+        note.set(qn("w:id"), str(footnote_id))
+        self._root.append(note)
+        p = OxmlElement("w:p")
+        ppr = OxmlElement("w:pPr")
+        pstyle = OxmlElement("w:pStyle")
+        pstyle.set(qn("w:val"), self._text_style_id)
+        ppr.append(pstyle)
+        p.append(ppr)
+        p.append(self._ref_run("w:footnoteRef"))
+        note.append(p)
+        para = Paragraph(p, paragraph._parent)
+        para.add_run(" ")
+        _NoteRuns(para).feed(self._notes[index])
+
+
+class _NoteRuns(HTMLParser):
+    """Write a footnote's inline HTML as runs: bold, italic, code, links as text."""
+
+    def __init__(self, paragraph: Any) -> None:
+        super().__init__(convert_charrefs=True)
+        self._para = paragraph
+        self._bold = self._italic = self._code = self._sup = self._sub = False
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in ("strong", "b"):
+            self._bold = True
+        elif tag in ("em", "i"):
+            self._italic = True
+        elif tag == "code":
+            self._code = True
+        elif tag == "sup":
+            self._sup = True
+        elif tag == "sub":
+            self._sub = True
+        elif tag == "br":
+            self._para.add_run()._r.append(OxmlElement("w:br"))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("strong", "b"):
+            self._bold = False
+        elif tag in ("em", "i"):
+            self._italic = False
+        elif tag == "code":
+            self._code = False
+        elif tag == "sup":
+            self._sup = False
+        elif tag == "sub":
+            self._sub = False
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        run = self._para.add_run(data)
+        run.bold = self._bold or None
+        run.italic = self._italic or None
+        if self._code:
+            run.font.name = "Courier New"
+        if self._sup:
+            run.font.superscript = True
+        if self._sub:
+            run.font.subscript = True
+
+
+# The current document's page footnotes (set while the Word builder runs).
+_FOOTNOTES: ContextVar[_WordFootnotes | None] = ContextVar("md_doc_footnotes", default=None)
+
+
+def _footnote_marker(attrs: list) -> int | None:
+    """The note index of a ``<sup class="md-doc-fnref" data-fn="N">`` marker, else None."""
+    values = dict(attrs)
+    if "md-doc-fnref" not in (values.get("class") or ""):
+        return None
+    try:
+        return int(values.get("data-fn") or "")
+    except ValueError:
+        return None
+
+
 def _dim(name: str) -> float:
     """Form-geometry value for the document being built (theme-scaled)."""
     dims = _FORM_DIMS.get()
@@ -582,6 +753,10 @@ def _render_cell_html(
                 br_run._r.append(OxmlElement("w:br"))
             elif tag == "span" and "docx-input" in (dict(attrs).get("class") or ""):
                 self._start_input(dict(attrs).get("data-h"))
+            elif tag == "sup" and _footnote_marker(attrs) is not None:
+                notes = _FOOTNOTES.get()
+                if notes is not None:
+                    notes.reference(paragraph, _footnote_marker(attrs) or 0)
 
         def _start_input(self, declared: str | None = None) -> None:
             """An input sits on its own line, as tall as the PDF's input."""
@@ -761,6 +936,8 @@ class _DocxBuilder(HTMLParser):
         self._in_pre = False
         self._in_code = False
         self._in_blockquote = False
+        # Last plain body paragraph (for the theme's `p + p` first-line indent).
+        self._last_plain_p: Any = None
         self._bq_colors: dict[str, str] = {}
         self._bq_stack: list[Any] = []
         self._sup = False
@@ -975,6 +1152,36 @@ class _DocxBuilder(HTMLParser):
         if self._page_break_pending:
             self._page_break_pending = False
             self._begin_page_with(self._paragraph)
+
+    def _style_body_paragraph(self, attrs: list) -> None:
+        """Apply a theme paragraph class style, or the `p + p` first-line indent.
+
+        ``<p class="byline">`` takes the Word style the theme's ``p.byline`` rule
+        created. A plain body paragraph directly after another one takes the
+        theme's ``p + p { text-indent }``, as in the PDF.
+        """
+        para = self._paragraph
+        if para is None:
+            return
+        classes = (dict(attrs).get("class") or "").split()
+        styled = self._theme.get("para_classes") or {}
+        named = next((c for c in classes if c in styled), None)
+        if named:
+            try:
+                para.style = self.doc.styles[named]
+            except KeyError:
+                pass
+            return
+        if classes or self._in_blockquote:
+            return
+        indent = self._theme.get("para_indent_pt")
+        if (
+            indent
+            and self._last_plain_p is not None
+            and para._p.getprevious() is self._last_plain_p
+        ):
+            para.paragraph_format.first_line_indent = Pt(indent)
+        self._last_plain_p = para._p
 
     def _current_para(self) -> Any:
         if self._paragraph is None:
@@ -1622,6 +1829,7 @@ class _DocxBuilder(HTMLParser):
                 self._paragraph.paragraph_format.left_indent = Pt(18 * depth)
             else:
                 self._new_para("Normal")
+                self._style_body_paragraph(attrs)
             inline_align = self._parse_text_align(attrs)
             word_align = self._effective_alignment(inline_align)
             if word_align is not None and self._paragraph is not None:
@@ -1768,6 +1976,11 @@ class _DocxBuilder(HTMLParser):
 
         elif tag in ("em", "i"):
             self._italic = True
+
+        elif tag == "sup" and _footnote_marker(attrs) is not None:
+            notes = _FOOTNOTES.get()
+            if notes is not None:
+                notes.reference(self._current_para(), _footnote_marker(attrs) or 0)
 
         elif tag == "sup":
             self._sup = True
@@ -2370,7 +2583,8 @@ class _DocxBuilder(HTMLParser):
         cell_border_size = self._theme.get("size_table_cell_border", 0.5)
         last_border_color = self._theme.get("color_table_last_row_border", cell_border_color)
         last_border_size = self._theme.get("size_table_last_row_border", 1.0)
-        font_body = self._theme.get("font_body")
+        # Table cells take the theme's table font, falling back to the body font.
+        font_body = self._theme.get("font_table") or self._theme.get("font_body")
         font_code = self._theme.get("font_code", "Courier New")
         uppercase_th = self._theme.get("uppercase_th", False)
         letter_spacing_th = self._theme.get("letter_spacing_th_pt")
@@ -2804,6 +3018,31 @@ def _add_floating_table(
     return table
 
 
+def _add_stripe_text(cell: Any, text: str, font_body: str | None) -> None:
+    """Write *text* up the cover stripe: bottom-to-top, white, 30mm from the foot.
+
+    Mirrors the PDF's rotated ``.cover-stripe-text``. In a ``btLr`` cell the
+    paragraph's left indent is measured from the bottom of the cell.
+    """
+    tcPr = cell._tc.get_or_add_tcPr()
+    direction = OxmlElement("w:textDirection")
+    direction.set(qn("w:val"), "btLr")
+    v_align = tcPr.find(qn("w:vAlign"))
+    if v_align is not None:
+        v_align.addprevious(direction)
+    else:
+        tcPr.append(direction)
+    para = cell.paragraphs[0]
+    para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    para.paragraph_format.left_indent = Mm(30)
+    para.paragraph_format.line_spacing = Pt(11 * 1.2)
+    run = para.add_run(text)
+    run.font.size = Pt(11)
+    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    if font_body:
+        _apply_font_name(run.font, font_body)
+
+
 def _set_cell_margins_mm(cell: Any, top: float, right: float, bottom: float, left: float) -> None:
     """Set explicit tcMar margins (mm) on a table cell."""
     tcPr = cell._tc.get_or_add_tcPr()
@@ -2884,6 +3123,8 @@ def _add_docx_cover_page(
     show_stripe = bool(config.get("cover_stripe", False))
     stripe_h = _cfg_mm(config.get("cover_stripe_height"), 120.0)
     stripe_w = _cfg_mm(config.get("cover_stripe_width"), 6.0)
+    stripe_text = str(config.get("cover_stripe_text") or "")
+    meta_detail = str(config.get("cover_meta_detail") or "")
     text_on_bar = bool(config.get("cover_text_on_bar", False))
     show_divider = bool(config.get("cover_divider", True))
     show_footer = bool(config.get("cover_footer", True))
@@ -2955,13 +3196,18 @@ def _add_docx_cover_page(
 
     if show_stripe:
         stripe_y = bar_top_h if has_top_bar else 10.0
-        _add_floating_table(
+        stripe_fill = str(config.get("cover_stripe_color") or "").lstrip("#") or accent
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", stripe_fill):
+            stripe_fill = accent
+        stripe_tbl = _add_floating_table(
             doc,
             width_twips=max(1, round(stripe_w * _TWIPS_PER_MM)),
             height_mm=stripe_h,
-            fill=accent,
+            fill=stripe_fill,
             y_mm=stripe_y,
         )
+        if stripe_text:
+            _add_stripe_text(stripe_tbl.rows[0].cells[0], stripe_text, font_body)
         _tiny_spacer(doc)
 
     bar_logo_val = config.get("cover_bar_logo")
@@ -3130,13 +3376,14 @@ def _add_docx_cover_page(
     def _meta_line(bold_label: str, value: str) -> None:
         mp = _cover_para(0, 0)
         mp.paragraph_format.line_spacing = Pt(10.5 * 1.8)
-        lbl = mp.add_run(f"{bold_label} ")
-        lbl.bold = True
-        lbl.font.size = Pt(10.5)
-        if font_body:
-            _apply_font_name(lbl.font, font_body)
-        lr, lg, lb = _hex_to_rgb(meta_label_color)
-        lbl.font.color.rgb = RGBColor(lr, lg, lb)
+        if bold_label:
+            lbl = mp.add_run(f"{bold_label} ")
+            lbl.bold = True
+            lbl.font.size = Pt(10.5)
+            if font_body:
+                _apply_font_name(lbl.font, font_body)
+            lr, lg, lb = _hex_to_rgb(meta_label_color)
+            lbl.font.color.rgb = RGBColor(lr, lg, lb)
         val = mp.add_run(value)
         val.font.size = Pt(10.5)
         if font_body:
@@ -3158,6 +3405,9 @@ def _add_docx_cover_page(
 
     if show_meta and meta_author:
         _meta_line(meta_label, meta_author)
+    if show_meta:
+        for detail_line in meta_detail.split("\n") if meta_detail else []:
+            _meta_line("", detail_line)
     if show_meta and show_date and date_str:
         _meta_line("Date", date_str)
 
@@ -4103,20 +4353,14 @@ def _css_content_to_text(value: str, date_str: str) -> str | None:
     return text or None
 
 
-def _css_footer_defaults(css_text: str | None, date_str: str) -> dict[str, tuple[str, float, str]]:
-    """Extract the theme's default ``@page`` footer boxes for Word.
-
-    The PDF renders ``@bottom-left/center/right`` margin boxes straight from
-    the theme CSS (org name, running date, "Page N of M") even when no
-    ``footer_*`` config keys are set. Parse those defaults so the Word footer
-    shows the same content. Returns ``{slot: (text, font_size_pt, color_hex)}``.
-    """
+def _css_page_block(css_text: str | None) -> str:
+    """The body of the theme's first plain ``@page { … }`` rule (margin boxes included)."""
     if not css_text:
-        return {}
+        return ""
     clean = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
     m = re.search(r"@page\s*\{", clean)
     if not m:
-        return {}
+        return ""
     # Brace-match the @page block (it contains nested margin-box blocks).
     depth, i = 1, m.end()
     while i < len(clean) and depth:
@@ -4125,18 +4369,92 @@ def _css_footer_defaults(css_text: str | None, date_str: str) -> dict[str, tuple
         elif clean[i] == "}":
             depth -= 1
         i += 1
-    block = clean[m.end() : i - 1]
+    return clean[m.end() : i - 1]
+
+
+def _css_margin_box(block: str, box: str) -> dict[str, str] | None:
+    """Declarations of one ``@page`` margin box (e.g. ``top-left``), or None."""
+    bm = re.search(rf"@{box}\s*\{{([^}}]*)\}}", block)
+    if not bm:
+        return None
+    props: dict[str, str] = {}
+    for decl in bm.group(1).split(";"):
+        if ":" in decl:
+            prop, _, val = decl.partition(":")
+            props[prop.strip().lower()] = val.strip()
+    return props
+
+
+def _css_border(value: str) -> tuple[float, str] | None:
+    """``0.5pt solid #d5d8dc`` -> (0.5, "d5d8dc"); None for no visible border."""
+    if not value or re.search(r"\b(none|hidden)\b", value):
+        return None
+    m = re.search(r"([\d.]+)\s*(pt|px|mm)\b", value)
+    if not m:
+        return None
+    width = float(m.group(1)) * {"pt": 1.0, "px": 0.75, "mm": 72 / 25.4}[m.group(2)]
+    color_m = re.search(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", value)
+    color = color_m.group(1) if color_m else "000000"
+    if len(color) == 3:
+        color = "".join(c * 2 for c in color)
+    return width, color.lower()
+
+
+def _css_header_rule(css_text: str | None) -> tuple[float, str, float] | None:
+    """The rule a theme draws under its ``@top-*`` margin boxes.
+
+    Returns ``(width_pt, colour_hex, gap_mm)`` from the first ``@top-left``,
+    ``@top-center`` or ``@top-right`` box with a ``border-bottom``; *gap_mm* is
+    the box's ``margin-bottom`` (the space between the rule and the text).
+    """
+    block = _css_page_block(css_text)
+    for slot in ("left", "center", "right"):
+        props = _css_margin_box(block, f"top-{slot}")
+        if not props:
+            continue
+        border = _css_border(props.get("border-bottom", ""))
+        if border:
+            gap = re.search(r"([\d.]+)\s*mm\b", props.get("margin-bottom", ""))
+            return border[0], border[1], float(gap.group(1)) if gap else 0.0
+    return None
+
+
+def _css_footer_rule(css_text: str | None) -> tuple[float, str] | None | bool:
+    """The rule above the footer, from the theme's ``@bottom-*`` boxes.
+
+    ``(width_pt, colour_hex)`` when a box has a ``border-top``; ``None`` when the
+    theme defines footer boxes without one; ``False`` when it has none at all
+    (the caller keeps its default hairline).
+    """
+    block = _css_page_block(css_text)
+    boxes = [_css_margin_box(block, f"bottom-{slot}") for slot in ("left", "center", "right")]
+    if not any(box is not None for box in boxes):
+        return False
+    for props in boxes:
+        if props:
+            border = _css_border(props.get("border-top", ""))
+            if border:
+                return border
+    return None
+
+
+def _css_footer_defaults(css_text: str | None, date_str: str) -> dict[str, tuple[str, float, str]]:
+    """Extract the theme's default ``@page`` footer boxes for Word.
+
+    The PDF renders ``@bottom-left/center/right`` margin boxes straight from
+    the theme CSS (org name, running date, "Page N of M") even when no
+    ``footer_*`` config keys are set. Parse those defaults so the Word footer
+    shows the same content. Returns ``{slot: (text, font_size_pt, color_hex)}``.
+    """
+    block = _css_page_block(css_text)
+    if not block:
+        return {}
 
     result: dict[str, tuple[str, float, str]] = {}
     for slot in ("left", "center", "right"):
-        bm = re.search(rf"@bottom-{slot}\s*\{{([^}}]*)\}}", block)
-        if not bm:
+        props = _css_margin_box(block, f"bottom-{slot}")
+        if props is None:
             continue
-        props: dict[str, str] = {}
-        for decl in bm.group(1).split(";"):
-            if ":" in decl:
-                prop, _, val = decl.partition(":")
-                props[prop.strip().lower()] = val.strip()
         text = _css_content_to_text(props.get("content", ""), date_str)
         if not text:
             continue
@@ -4297,16 +4615,21 @@ def _add_footer(
     tabs.add_tab_stop(Emu(text_width_emu // 2), WD_TAB_ALIGNMENT.CENTER)
     tabs.add_tab_stop(Emu(text_width_emu), WD_TAB_ALIGNMENT.RIGHT)
 
-    # Top border (theme @bottom-* boxes: 0.5pt #d5d8dc). The PDF drops the
-    # footer border when a page header bar is enabled — mirror that here.
-    if not config.get("page_header_bar"):
+    # Top border, as the theme's @bottom-* boxes draw it (a theme without
+    # footer boxes keeps the 0.5pt #d5d8dc default). The PDF drops the footer
+    # border when a page header bar is enabled — mirror that here.
+    footer_rule = _css_footer_rule(css_text)
+    if footer_rule is False:
+        footer_rule = (0.5, "d5d8dc")
+    if footer_rule and not config.get("page_header_bar"):
+        width_pt, color_hex = footer_rule  # type: ignore[misc]
         pPr = para._element.get_or_add_pPr()
         pBdr = OxmlElement("w:pBdr")
         top = OxmlElement("w:top")
         top.set(qn("w:val"), "single")
-        top.set(qn("w:sz"), "4")
+        top.set(qn("w:sz"), str(max(2, round(width_pt * 8))))
         top.set(qn("w:space"), "4")
-        top.set(qn("w:color"), "d5d8dc")
+        top.set(qn("w:color"), color_hex)
         pBdr.append(top)
         pPr.append(pBdr)
 
@@ -4323,23 +4646,64 @@ def _add_footer(
             run.font.color.rgb = RGBColor(r, g, b)
 
 
+def _set_bottom_border(para: Any, width_pt: float, color_hex: str, space_pt: int = 0) -> None:
+    pPr = para._element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), str(max(2, round(width_pt * 8))))  # eighths of a point
+    bot.set(qn("w:space"), str(space_pt))
+    bot.set(qn("w:color"), color_hex)
+    pBdr.append(bot)
+    pPr.append(pBdr)
+
+
+def _add_header_rule_only(doc: Document, rule: tuple[float, str, float]) -> None:
+    """A header that is only the theme's rule, placed where the PDF draws it.
+
+    The PDF rule sits *gap* mm above the text block (the top margin). The
+    header paragraph starts at the header distance, so an exact line height of
+    the difference puts its bottom border at the same height.
+    """
+    width_pt, color_hex, gap_mm = rule
+    section = doc.sections[0]
+    section.header.is_linked_to_previous = False
+    header = section.header
+    for para in list(header.paragraphs):
+        para._p.getparent().remove(para._p)
+    para = header.add_paragraph()
+    fmt = para.paragraph_format
+    fmt.space_before = Pt(0)
+    fmt.space_after = Pt(0)
+    height_mm = (section.top_margin - section.header_distance) / 36000 - gap_mm
+    fmt.line_spacing = Pt(max(1.0, height_mm * 72 / 25.4))
+    fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    _set_para_mark_size(para)
+    _set_bottom_border(para, width_pt, color_hex)
+
+
 def _add_plain_header(
     doc: Document,
     config: dict[str, Any],
     doc_path: Path | None,
     repo_root: Path | None,
+    css_text: str | None = None,
 ) -> None:
-    """Add header_text / header_logo to the page header when no header bar is used.
+    """Add header_text / header_logo, and the theme's header rule, to the page header.
 
     Mirrors the PDF ``@top-left``/``@top-right`` margin boxes so a document that
     only sets ``header_text``/``header_logo`` (without ``page_header_bar``) still
-    shows them in Word.
+    shows them in Word. A theme whose ``@top-*`` box draws a ``border-bottom``
+    gets the same rule, the box's ``margin-bottom`` above the text.
     """
     if config.get("page_header_bar"):
         return  # the coloured bar already renders header text/logo
     header_text = config.get("header_text")
     logo_file = config.get("header_logo")
+    rule = _css_header_rule(css_text)
     if not header_text and not logo_file:
+        if rule:
+            _add_header_rule_only(doc, rule)
         return
 
     text_position = str(config.get("header_text_position", "left")).lower()
@@ -4369,17 +4733,10 @@ def _add_plain_header(
     tabs.add_tab_stop(Emu(text_width_emu // 2), WD_TAB_ALIGNMENT.CENTER)
     tabs.add_tab_stop(Emu(text_width_emu), WD_TAB_ALIGNMENT.RIGHT)
 
-    # Hairline under the header content (theme @top-* boxes carry a
-    # border-bottom: 0.5pt solid #d5d8dc in the PDF).
-    pPr = para._element.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bot = OxmlElement("w:bottom")
-    bot.set(qn("w:val"), "single")
-    bot.set(qn("w:sz"), "4")
-    bot.set(qn("w:space"), "3")
-    bot.set(qn("w:color"), "d5d8dc")
-    pBdr.append(bot)
-    pPr.append(pBdr)
+    # Rule under the header content: the theme's @top-* border-bottom, or the
+    # default hairline (0.5pt solid #d5d8dc).
+    width_pt, color_hex = (rule[0], rule[1]) if rule else (0.5, "d5d8dc")
+    _set_bottom_border(para, width_pt, color_hex, space_pt=3)
 
     # Place text and logo into left/center/right slots via tab stops.
     slots: dict[str, list[Any]] = {"left": [], "center": [], "right": []}
@@ -4659,11 +5016,14 @@ def build(
     # defaults for the look-related config keys (YAML always wins).
     if doc_path is not None and repo_root is not None:
         try:
-            from ..docx_theme import find_docx_theme_css
+            from ..docx_theme import _load_css_with_imports, find_docx_theme_css
 
             _word_css = find_docx_theme_css(doc_path, repo_root, config)
             if _word_css is not None:
-                config = apply_theme_config_defaults(config, _word_css.read_text(encoding="utf-8"))
+                # Follow @import: the brand values often sit in a shared _theme.css.
+                config = apply_theme_config_defaults(
+                    config, _load_css_with_imports(_word_css.resolve())
+                )
         except Exception:
             pass
 
@@ -4710,6 +5070,7 @@ def build(
     else:
         body = _strip_form_fields_for_docx(body)
 
+    from ..footnotes import mark_for_word
     from ..math import markdown_html, render_math
     from ..toc import toc_extension_config
 
@@ -4735,6 +5096,9 @@ def build(
     from ..toc import html_toc_to_marker
 
     html = html_toc_to_marker(html)
+    footnote_notes: list[str] = []
+    if coerce_bool(config.get("page_footnotes")) and 'class="footnote-ref"' in html:
+        html, footnote_notes = mark_for_word(html)
 
     # Render mermaid diagrams to embedded PNGs, themed from the same CSS the PDF
     # uses so diagram colours match across formats. Falls back to leaving the
@@ -4821,7 +5185,7 @@ def build(
     }
 
     _add_page_header_bar(doc, config, doc_path, repo_root)
-    _add_plain_header(doc, config, doc_path, repo_root)
+    _add_plain_header(doc, config, doc_path, repo_root, css_text=css_text)
     _add_footer(
         doc,
         config,
@@ -4893,7 +5257,13 @@ def build(
     # Mirror the PDF's "heading + next two blocks stay together" rule so both
     # formats break pages at the same places.
     html = _keep_heading_with_next(_merge_joined_field_boxes(html))
-    builder.feed(html)
+    footnotes_token = _FOOTNOTES.set(
+        _WordFootnotes(doc, footnote_notes, theme) if footnote_notes else None
+    )
+    try:
+        builder.feed(html)
+    finally:
+        _FOOTNOTES.reset(footnotes_token)
     builder.apply_change_bars()
     from ..toc import insert_word_caption_lists, insert_word_toc_fields
 

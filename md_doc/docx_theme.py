@@ -229,6 +229,7 @@ def parse_css_for_word(css_path: Path) -> dict[str, Any]:
     - ``font_body``              — body font name (str)
     - ``font_size_body``         — body font size in pt (float)
     - ``font_code``              — monospace font name (str)
+    - ``font_table``             — table cell font name (str), from td or table
     - ``color_h1``               — H1 colour hex (str, ``#rrggbb``)
     - ``font_size_h1``           — H1 font size in pt (float)
     - ``color_h2``               — H2 colour hex
@@ -349,6 +350,73 @@ def _parse_form_css(
         }
     if flex:
         theme["flex_rows"] = flex
+
+
+# A paragraph class rule Word can turn into a paragraph style: ``p.name``,
+# optionally under the PDF's ``.report-body`` wrapper.
+_PARA_CLASS_SELECTOR = re.compile(r"(?:\.report-body\s+)?p\.([A-Za-z][\w-]*)")
+# The body-paragraph indent rule: ``p + p``, optionally under ``.report-body``.
+_PARA_INDENT_SELECTOR = re.compile(r"(?:\.report-body\s+)?p\s*\+\s*p")
+
+
+def _parse_paragraph_rules(
+    theme: dict[str, Any], blocks: dict[str, dict[str, str]], first_font: Any, first_color: Any
+) -> None:
+    """Paragraph classes and the book-style first-line indent.
+
+    * ``para_classes``: ``{class: {...}}`` for each ``p.class`` rule
+      with text properties. The Word builder gives ``<p class="…">`` a paragraph
+      style of the same name built from it (font, size, weight, style, colour,
+      margins, indent, line height, alignment).
+    * ``para_indent_pt``: first-line indent from ``p + p { text-indent }``,
+      applied to a body paragraph that directly follows another one.
+    """
+    classes: dict[str, dict[str, Any]] = {}
+    for selector, props in blocks.items():
+        selector = " ".join(selector.split())
+        if _PARA_INDENT_SELECTOR.fullmatch(selector):
+            indent = _parse_pt(props.get("text-indent", ""))
+            if indent is not None:
+                theme["para_indent_pt"] = indent
+            continue
+        match = _PARA_CLASS_SELECTOR.fullmatch(selector)
+        if not match:
+            continue
+        rule: dict[str, Any] = classes.get(match.group(1), {})
+        if "font-family" in props:
+            rule["font"] = first_font(props["font-family"])
+            rule["font_stack"] = props["font-family"]
+        size = _parse_pt(props.get("font-size", ""))
+        if size is not None:
+            rule["size"] = size
+        weight = props.get("font-weight", "").strip().lower()
+        if weight:
+            rule["bold"] = weight == "bold" or (weight.isdigit() and int(weight) >= 600)
+        if props.get("font-style", "").strip().lower() in ("italic", "oblique"):
+            rule["italic"] = True
+        if "color" in props:
+            color = first_color(props["color"])
+            if color:
+                rule["color"] = color
+        margins = _parse_margin(props["margin"]) if "margin" in props else {}
+        for side, css_prop in (("top", "margin-top"), ("bottom", "margin-bottom")):
+            value = _parse_pt(props[css_prop]) if css_prop in props else margins.get(side)
+            if value is not None:
+                rule[f"space_{side}"] = value
+        if "text-indent" in props:
+            indent = 0.0 if props["text-indent"].strip() == "0" else _parse_pt(props["text-indent"])
+            if indent is not None:
+                rule["indent"] = indent
+        line_height = props.get("line-height", "").strip()
+        if re.fullmatch(r"[\d.]+", line_height):
+            rule["line_height"] = float(line_height)
+        align = props.get("text-align", "").strip().lower()
+        if align:
+            rule["align"] = align
+        if rule:
+            classes[match.group(1)] = rule
+    if classes:
+        theme["para_classes"] = classes
 
 
 def _do_parse(css_path: Path) -> dict[str, Any]:
@@ -563,6 +631,16 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
                 theme[theme_key] = pt
 
     _parse_form_css(theme, blocks, _first_color)
+    _parse_paragraph_rules(theme, blocks, _first_font, _first_color)
+
+    # Page footnotes — .md-footnote sets the Word footnote text style.
+    note_props = blocks.get(".md-footnote", {})
+    if "font-family" in note_props:
+        theme["font_footnote"] = _first_font(note_props["font-family"])
+        theme["font_stack_footnote"] = note_props["font-family"]
+    note_size = _parse_pt(note_props.get("font-size", ""))
+    if note_size is not None:
+        theme["font_size_footnote"] = note_size
 
     # a — hyperlink colour
     a_props = blocks.get("a", {})
@@ -571,8 +649,14 @@ def _do_parse(css_path: Path) -> dict[str, Any]:
         if col:
             theme["color_link"] = col
 
-    # table — font size
+    # table — font family (td wins over table, as td inherits from table)
     table_props = blocks.get("table", {})
+    table_family = blocks.get("td", {}).get("font-family") or table_props.get("font-family")
+    if table_family:
+        theme["font_table"] = _first_font(table_family)
+        theme["font_stack_table"] = table_family
+
+    # table — font size
     if "font-size" in table_props:
         pt = _parse_pt(table_props["font-size"])
         if pt is not None:
@@ -826,6 +910,11 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
         except KeyError:
             pass
 
+    # Paragraph class styles — one Word paragraph style per ``p.class`` rule,
+    # named after the class (``caption`` reuses Word's built-in Caption).
+    for name, rule in (theme.get("para_classes") or {}).items():
+        _apply_para_class_style(doc, name, rule, font_size_body, _ALIGN_MAP)
+
     # Heading styles H1–H4
     for level in range(1, 5):
         style_name = f"Heading {level}"
@@ -877,6 +966,50 @@ def apply_theme_to_doc(doc: Any, theme: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Public: set_cell_shading
 # ---------------------------------------------------------------------------
+
+
+def _apply_para_class_style(
+    doc: Any,
+    name: str,
+    rule: dict[str, Any],
+    font_size_body: float | None,
+    align_map: dict[str, Any],
+) -> None:
+    """Create or update the paragraph style *name* from a parsed class rule."""
+    from docx.enum.style import WD_STYLE_TYPE
+
+    try:
+        style = doc.styles[name]
+    except KeyError:
+        style = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+        style.base_style = doc.styles["Normal"]
+    style.quick_style = True
+    font = style.font
+    if rule.get("font"):
+        _apply_font_name(font, rule["font"])
+    size = rule.get("size") or font_size_body
+    if rule.get("size"):
+        font.size = Pt(rule["size"])
+    if "bold" in rule:
+        font.bold = rule["bold"]
+    # Built-in styles such as Caption are italic by default; follow the CSS.
+    font.italic = bool(rule.get("italic"))
+    if rule.get("color"):
+        r, g, b = _hex_to_rgb(rule["color"])
+        font.color.rgb = RGBColor(r, g, b)
+    fmt = style.paragraph_format
+    if "space_top" in rule:
+        fmt.space_before = Pt(rule["space_top"])
+    if "space_bottom" in rule:
+        fmt.space_after = Pt(rule["space_bottom"])
+    if "indent" in rule:
+        fmt.first_line_indent = Pt(rule["indent"])
+    if "line_height" in rule:
+        fmt.line_spacing = Pt((size or 11) * rule["line_height"])
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    align = align_map.get(rule.get("align", ""))
+    if align is not None:
+        fmt.alignment = align
 
 
 def find_docx_theme_css(
@@ -1004,6 +1137,11 @@ def resolve_docx_theme(
             family = _resolve_font_stack(stack)
             if family:
                 theme[key.replace("font_stack_", "font_", 1)] = family
+    for rule in (theme.get("para_classes") or {}).values():
+        if rule.get("font_stack"):
+            family = _resolve_font_stack(rule["font_stack"])
+            if family:
+                rule["font"] = family
     return theme
 
 

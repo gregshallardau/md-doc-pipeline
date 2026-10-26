@@ -171,6 +171,9 @@ KNOWN_KEYS: frozenset[str] = frozenset(
         "cover_stripe",
         "cover_stripe_height",
         "cover_stripe_width",
+        "cover_stripe_color",
+        "cover_stripe_text",
+        "cover_meta_detail",
         # headers & footers
         "header_logo",
         "header_logo_position",

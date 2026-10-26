@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Real Word footnotes.** With `page_footnotes: true`, DOCX/DOTX output now gets real Word
+  footnotes at the foot of the page, as the PDF does; the theme's `.md-footnote` rule sets their
+  font and size.
+- Cover keys `cover_meta_detail` (lines between author and date), `cover_stripe_text` (text
+  running up the stripe) and `cover_stripe_color` (also `--mddoc-cover-stripe-color`), in PDF
+  and Word. An empty `cover_meta_label` no longer leaves a stray label in Word.
+- Word reads more of the theme: `p.class` rules become Word paragraph styles for
+  `{: .class }` paragraphs; `p + p { text-indent }` gives book-style first-line indents;
+  `table`/`td { font-family }` sets the table font; an `@top-*` `border-bottom` draws the same
+  rule in the Word header; and the rule above the Word footer follows the `@bottom-*` boxes'
+  `border-top` (none when the theme's footer boxes have no border).
 - **Backslash line breaks.** A backslash at the end of a line is now a hard line break in PDF,
   Word, `.dotx` and slides, as in CommonMark, GitHub and Pandoc (it printed a literal `\`
   before). Code, display maths, table rows, an escaped `\\` and a paragraph-ending backslash are
@@ -88,6 +99,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ICC profiles) that cannot be found.
 
 ### Fixed
+- `\bar`, `\vec`, `\overbrace` and other stretchy accents no longer fail the Word build
+  (mathml2omml writes a malformed `m:groupChrPr`, now repaired).
+- A page footnote that fits is no longer moved to the next page when `@footnote` uses
+  fractional border, padding or margin values (a WeasyPrint rounding error, now tolerated).
+- Word now finds `--mddoc-*` defaults in a shared `_theme.css` that `_docx-theme.css` imports.
 - Contents page numbers (`toc_page_numbers`, list of figures/tables) were hidden by the default
   theme's `a[href^="#"]::after { content: "" }` rule; the contents selectors are now specific
   enough to win.

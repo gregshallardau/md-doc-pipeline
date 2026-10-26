@@ -36,6 +36,18 @@ def markdown_html(
     ).convert(body)
 
 
+# mathml2omml closes an over/under group's properties with the wrong tag
+# (``<m:groupChrPr>…</m:groupChr>``), which is invalid XML. It hits \bar,
+# \vec, \overbrace and other stretchy accents. The properties hold only
+# empty elements, so the first close tag after them is the one to fix.
+_BROKEN_GROUP_CHR_PR = re.compile(r"(<m:groupChrPr>(?:<m:[A-Za-z]+\b[^>]*/>)*)</m:groupChr>")
+
+
+def _repair_omml(omml: str) -> str:
+    """Fix the malformed ``m:groupChrPr`` close tag mathml2omml produces."""
+    return _BROKEN_GROUP_CHR_PR.sub(r"\1</m:groupChrPr>", omml)
+
+
 def _complete_radicals(equation: Any) -> None:
     """Give every ``<m:rad>`` the ``<m:deg>`` the Office Math schema requires.
 
@@ -81,8 +93,8 @@ def render_math(html: str, *, word: bool = False) -> tuple[str, list[Any]]:
                 from docx.oxml import parse_xml, OxmlElement
                 from docx.oxml.ns import nsdecls
 
-                omml = mathml2omml.convert(
-                    convert(source, display="block" if display else "inline")
+                omml = _repair_omml(
+                    mathml2omml.convert(convert(source, display="block" if display else "inline"))
                 )
                 equation = parse_xml(f'<root {nsdecls("m", "w")}>{omml}</root>')[0]
                 _complete_radicals(equation)

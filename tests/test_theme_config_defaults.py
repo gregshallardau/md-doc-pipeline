@@ -82,6 +82,29 @@ class TestPdf:
         html = self._html(tmp_repo, {"page_header_bar": True, "page_header_bar_color": "#ff0000"})
         assert "background: #ff0000" in html
 
+    def test_defaults_read_through_import(self, tmp_repo):
+        # --mddoc-* values in a shared _theme.css that _pdf-theme.css imports.
+        pytest.importorskip("weasyprint")
+        from md_doc.builders.pdf import build
+
+        (tmp_repo / "_theme.css").write_text(THEME, encoding="utf-8")
+        (tmp_repo / "_pdf-theme.css").write_text(
+            "@import '_theme.css';\nbody {}\n", encoding="utf-8"
+        )
+        doc = tmp_repo / "d.md"
+        doc.write_text("# T\n\nBody.\n", encoding="utf-8")
+        with patch("md_doc.builders.pdf.weasyprint") as wp:
+            wp.HTML.return_value = MagicMock()
+            build(
+                "# T\n\nBody.\n",
+                {"title": "T", "page_header_bar": True},
+                tmp_repo / "d.pdf",
+                doc_path=doc,
+                repo_root=tmp_repo,
+            )
+            html = wp.HTML.call_args.kwargs["string"]
+        assert "background: #002a5b" in html
+
 
 class TestDocx:
     def test_bar_brand_from_theme(self, tmp_repo):
@@ -106,3 +129,29 @@ class TestDocx:
         assert 'w:fill="002A5B"' in hdr or 'w:fill="002a5b"' in hdr
         top = int(re.search(r'w:top="(\d+)"', body).group(1))
         assert round(top / 56.7) == 32  # 24mm bar + 8mm padding from the theme
+
+
+def test_docx_defaults_read_through_import(tmp_repo):
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    from md_doc.builders.docx import build
+
+    (tmp_repo / "_theme.css").write_text(
+        ":root { --mddoc-cover-stripe-color: #1e4632; }\n", encoding="utf-8"
+    )
+    (tmp_repo / "_docx-theme.css").write_text("@import '_theme.css';\n", encoding="utf-8")
+    doc = tmp_repo / "d.md"
+    md = "---\ntitle: T\n---\n\n# T\n\nBody.\n"
+    doc.write_text(md, encoding="utf-8")
+    out = tmp_repo / "d.docx"
+    build(
+        md,
+        {"title": "T", "cover_page": True, "cover_bar": False, "cover_stripe": True},
+        out,
+        output_format="docx",
+        doc_path=doc,
+        repo_root=tmp_repo,
+    )
+    cell = Document(str(out)).tables[0].rows[0].cells[0]
+    assert cell._tc.tcPr.find(qn("w:shd")).get(qn("w:fill")).upper() == "1E4632"

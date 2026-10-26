@@ -207,6 +207,12 @@ def test_footnotes_render_superscript_with_working_links(tmp_repo):
     assert 'w:anchor="fn_1"' in xml
 
 
+def test_page_footnotes_are_real_word_footnotes(tmp_repo):
+    out = _build(tmp_repo, "Fact.[^1]\n\n[^1]: The footnote text.\n", {"page_footnotes": True})
+    assert '<w:footnoteReference w:id="1"/>' in _part(out, "word/document.xml")
+    assert "The footnote text." in _part(out, "word/footnotes.xml")
+
+
 def test_sup_sub_strike_runs(tmp_repo):
     out = _build(tmp_repo, "x<sup>2</sup> and H<sub>2</sub>O and <del>gone</del>\n", {})
     d = Document(str(out))

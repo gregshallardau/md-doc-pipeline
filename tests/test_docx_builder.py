@@ -338,3 +338,207 @@ class TestCaptionListsInWord:
     def test_each_diagram_is_embedded_as_a_picture(self, tmp_repo, name):
         doc = _build_docx(tmp_repo, f"::: {name}\n:::\n", {})
         assert len(doc.inline_shapes) == 1
+
+
+def test_cover_subtitle_detail_and_stripe_text(tmp_repo):
+    doc = _build_docx(
+        tmp_repo,
+        "# Title\n\nBody.\n",
+        {
+            "cover_page": True,
+            "cover_bar": False,
+            "author": "Jane Author",
+            "cover_meta_label": "",
+            "cover_subtitle": "A study of things",
+            "cover_meta_detail": "Line one\nLine two",
+            "cover_stripe": True,
+            "cover_stripe_text": "Jane Author",
+            "cover_stripe_color": "#1e4632",
+        },
+    )
+    texts = [p.text for p in doc.paragraphs]
+    assert "A study of things" in texts
+    # Empty meta label: the author line has no leading label run.
+    assert "Jane Author" in texts
+    author_i = texts.index("Jane Author")
+    assert texts[author_i + 1 : author_i + 3] == ["Line one", "Line two"]
+
+    stripe = doc.tables[0]
+    cell = stripe.rows[0].cells[0]
+    tc_pr = cell._tc.tcPr
+    assert tc_pr.find(qn("w:textDirection")).get(qn("w:val")) == "btLr"
+    assert tc_pr.find(qn("w:shd")).get(qn("w:fill")).upper() == "1E4632"
+    assert cell.paragraphs[0].text == "Jane Author"
+
+
+def test_table_font_family_from_theme(tmp_repo):
+    from md_doc.builders.docx import build as build_docx
+
+    (tmp_repo / "_theme.css").write_text(
+        "body { font-family: 'DejaVu Serif'; }\ntable { font-family: 'DejaVu Sans', sans-serif; }\n",
+        encoding="utf-8",
+    )
+    doc_path = tmp_repo / "d.md"
+    md = "---\ntitle: T\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"
+    doc_path.write_text(md, encoding="utf-8")
+    out = tmp_repo / "d.docx"
+    build_docx(
+        md,
+        {"title": "T", "cover_page": False},
+        out,
+        output_format="docx",
+        doc_path=doc_path,
+        repo_root=tmp_repo,
+    )
+    doc = Document(str(out))
+    cell_runs = [
+        r for row in doc.tables[0].rows for c in row.cells for p in c.paragraphs for r in p.runs
+    ]
+    assert cell_runs and all(r.font.name == "DejaVu Sans" for r in cell_runs)
+    body = [p for p in doc.paragraphs if p.runs]
+    assert all(r.font.name != "DejaVu Sans" for p in body for r in p.runs)
+
+
+def _build_with_theme(tmp_repo, css: str, body: str) -> Document:
+    from md_doc.builders.docx import build as build_docx
+
+    (tmp_repo / "_theme.css").write_text(css, encoding="utf-8")
+    doc_path = tmp_repo / "d.md"
+    md = f"---\ntitle: T\n---\n\n{body}"
+    doc_path.write_text(md, encoding="utf-8")
+    out = tmp_repo / "d.docx"
+    build_docx(
+        md,
+        {"title": "T", "cover_page": False},
+        out,
+        output_format="docx",
+        doc_path=doc_path,
+        repo_root=tmp_repo,
+    )
+    return Document(str(out))
+
+
+def test_paragraph_class_becomes_word_style(tmp_repo):
+    css = (
+        "body { font-size: 10pt; }\n"
+        ".report-body p.byline { font-family: 'DejaVu Sans'; font-size: 8pt; color: #5c5c58;"
+        " margin: 0 0 9mm 0; }\n"
+        "p.summary { font-weight: 600; }\n"
+        ".cover-title { font-size: 30pt; }\n"
+    )
+    doc = _build_with_theme(
+        tmp_repo, css, "Jane\n{: .byline }\n\nBold summary.\n{: .summary }\n\nPlain.\n"
+    )
+    by_text = {p.text: p for p in doc.paragraphs}
+    byline = by_text["Jane"].style
+    assert byline.name == "byline"
+    assert byline.font.size.pt == 8
+    assert byline.font.name == "DejaVu Sans"
+    assert str(byline.font.color.rgb) == "5C5C58"
+    assert round(byline.paragraph_format.space_after.mm) == 9
+    assert by_text["Bold summary."].style.name == "summary"
+    assert by_text["Bold summary."].style.font.bold is True
+    assert by_text["Plain."].style.name == "Normal"
+    # Only p.class rules become styles.
+    assert "cover-title" not in [s.name for s in doc.styles]
+
+
+def test_book_indent_follows_pdf_rule(tmp_repo):
+    css = "p { margin: 0; }\n.report-body p + p { text-indent: 10pt; }\n"
+    body = "## Heading\n\nFirst.\n\nSecond.\n\n> Quote.\n\nAfter quote.\n\nNext.\n"
+    doc = _build_with_theme(tmp_repo, css, body)
+    indent = {
+        p.text: (
+            p.paragraph_format.first_line_indent.pt if p.paragraph_format.first_line_indent else 0
+        )
+        for p in doc.paragraphs
+    }
+    assert indent["First."] == 0
+    assert indent["Second."] == 10
+    assert indent["Quote."] == 0
+    assert indent["After quote."] == 0
+    assert indent["Next."] == 10
+
+
+def test_no_indent_without_rule(tmp_repo):
+    doc = _build_with_theme(tmp_repo, "p { margin: 0; }\n", "One.\n\nTwo.\n")
+    assert all(p.paragraph_format.first_line_indent is None for p in doc.paragraphs)
+
+
+_RULED_PAGE = """
+@page {
+  size: A4;
+  margin: 33mm 36mm 24mm 36mm;
+  --docx-header-distance: 12mm;
+  @top-left { content: ""; border-bottom: 1pt solid #1e4632; margin-bottom: 9mm; }
+  @bottom-right { content: counter(page); font-size: 7.5pt; color: #5c5c58; }
+}
+"""
+
+
+def test_header_rule_and_footer_border_follow_theme(tmp_repo):
+    doc = _build_with_theme(tmp_repo, _RULED_PAGE, "Body.\n")
+    section = doc.sections[0]
+    header_p = section.header.paragraphs[0]
+    bottom = header_p._p.pPr.find(qn("w:pBdr")).find(qn("w:bottom"))
+    assert bottom.get(qn("w:color")) == "1e4632"
+    assert bottom.get(qn("w:sz")) == "8"
+    # Rule sits 9mm above the 33mm top margin: 33 - 12 (header distance) - 9 = 12mm.
+    assert round(header_p.paragraph_format.line_spacing.mm) == 12
+    # Footer boxes without border-top: no rule above the footer.
+    footer_p = section.footer.paragraphs[0]
+    pbdr = footer_p._p.pPr.find(qn("w:pBdr"))
+    assert pbdr is None or pbdr.find(qn("w:top")) is None
+
+
+def test_footer_keeps_default_hairline_without_theme_boxes(tmp_repo):
+    doc = _build_with_theme(tmp_repo, "body {}\n", "Body.\n")
+    footer = doc.sections[0].footer
+    # No footer content configured → no footer paragraph styling to check;
+    # with footer_right set, the default hairline is kept.
+    from md_doc.builders.docx import build as build_docx
+
+    md = "---\ntitle: T\n---\n\nBody.\n"
+    out = tmp_repo / "f.docx"
+    build_docx(
+        md,
+        {"title": "T", "cover_page": False, "footer_right": "x"},
+        out,
+        output_format="docx",
+        doc_path=tmp_repo / "d.md",
+        repo_root=tmp_repo,
+    )
+    para = Document(str(out)).sections[0].footer.paragraphs[0]
+    top = para._p.pPr.find(qn("w:pBdr")).find(qn("w:top"))
+    assert top.get(qn("w:color")) == "d5d8dc"
+    assert footer is not None
+
+
+def test_page_footnotes_are_real_word_footnotes(tmp_repo):
+    import zipfile
+
+    body = (
+        "Claim one.[^a] Claim *two*.[^b]\n\n| Col |\n|---|\n| In table[^c] |\n\n"
+        "[^a]: First *note*.\n[^b]: Second note.\n[^c]: Table note.\n"
+    )
+    doc = _build_docx(tmp_repo, body, {"page_footnotes": True})
+    out = tmp_repo / "out.docx"
+    with zipfile.ZipFile(out) as z:
+        notes = z.read("word/footnotes.xml").decode()
+        document = z.read("word/document.xml").decode()
+        settings = z.read("word/settings.xml").decode()
+    assert document.count("<w:footnoteReference") == 3
+    for text in ("First ", "note", "Second note.", "Table note."):
+        assert text in notes
+    assert "w:footnotePr" in settings
+    # The end-of-document list is gone.
+    assert not any("Second note." in p.text for p in doc.paragraphs)
+
+
+def test_end_footnotes_keep_the_list(tmp_repo):
+    import zipfile
+
+    doc = _build_docx(tmp_repo, "Claim.[^a]\n\n[^a]: The note.\n", {})
+    with zipfile.ZipFile(tmp_repo / "out.docx") as z:
+        assert "word/footnotes.xml" not in z.namelist()
+    assert any("The note." in p.text for p in doc.paragraphs)

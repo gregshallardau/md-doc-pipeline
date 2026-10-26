@@ -442,7 +442,7 @@ extensions:
 |---------|--------|-------|
 | Tables | pipe tables, `:---`, `:---:`, `---:` alignment | See [Tables](#markdown-tables). |
 | Fenced code | ```` ```lang ```` | Code, inline code and escaped `\$` stay literal; never treated as math. |
-| Footnotes | `text[^1]` and `[^1]: note` | Real footnotes in PDF and Word. |
+| Footnotes | `text[^1]` and `[^1]: note` | Collected at the end of the document; `page_footnotes: true` puts them at the foot of the page in PDF and Word. |
 | Definition lists | `Term` then `: definition` | |
 | Abbreviations | `*[HTML]: Hypertext Markup Language` | |
 | Attribute lists | `{: .class #id }` | Use for CSS hooks in PDF. |
@@ -679,6 +679,10 @@ A statement with a supporting note.[^core-example]
 
 [^core-example]: This is the example footnote.
 ```
+
+Footnotes are collected at the end of the document. With `page_footnotes: true` each one is
+printed at the foot of the page that cites it, in PDF and as real Word footnotes (see
+[Page-bottom footnotes](#pdf-features-footnotes)).
 
 **Rendered example:**
 
@@ -4109,6 +4113,7 @@ content (texts, logo files) stay in YAML.
   --mddoc-cover-bar-bottom-height: 132mm;   /* cover_bar_bottom_height */
   --mddoc-cover-stripe-height: 120mm;       /* cover_stripe_height */
   --mddoc-cover-stripe-width: 6mm;          /* cover_stripe_width */
+  --mddoc-cover-stripe-color: #1e4632;      /* cover_stripe_color */
   --mddoc-cover-footer-color: "#ffffff";    /* cover_footer_color */
   --mddoc-section-bar-color: #2563eb;       /* section_bar_color */
   --mddoc-section-bar-text-color: #ffffff;  /* section_bar_text_color */
@@ -4118,7 +4123,8 @@ content (texts, logo files) stay in YAML.
 ```
 
 They are read from whichever theme file the builder resolves (PDF and Word each use their own
-order above), so put them in the shared `_theme.css` unless the formats should differ.
+order above), including the files it `@import`s, so put them in the shared `_theme.css` unless
+the formats should differ.
 
 <a id="themes-per-document-assets-and-values-css_vars"></a>
 
@@ -4239,12 +4245,26 @@ Word output is built with python-docx, not a browser, so it reads a defined subs
 - **Simple selectors.** `body`, `h1`–`h4`, `a`, `strong`, `em`, `code`, `pre`, `blockquote`
   (and `blockquote p`), `hr`, `li` (also `ul li`, `ol li`), `table`, `th`, `td`,
   `tr:nth-child(even) td`, `tr:last-child td`, `label`, text inputs, `textarea`, `select`,
-  single-class `display: flex` rows, and `@page`. Descendant chains such as `.report-body td`
-  are PDF-only.
-- **Properties:** fonts and sizes, heading colours and sizes, table header colours,
-  cell padding and borders, zebra and last-row rules, code and `pre` box model, blockquote
-  border and background, `hr` margins, list spacing (`li { margin; line-height }`), body
-  `line-height`, and the form-input box (below).
+  single-class `display: flex` rows, `p.class` paragraph styles and `p + p` (both also under
+  `.report-body`), `.md-footnote`, and `@page`. Other descendant chains such as
+  `.report-body td` are PDF-only.
+- **Properties:** fonts and sizes, heading colours and sizes, the table font
+  (`table`/`td { font-family }`), table header colours, cell padding and borders, zebra and
+  last-row rules, code and `pre` box model, blockquote border and background, `hr` margins,
+  list spacing (`li { margin; line-height }`), body `line-height`, and the form-input box
+  (below).
+- **Paragraph classes.** Each `p.name` rule becomes a Word paragraph style called `name`,
+  applied to paragraphs given that class (with an attribute list, `{: .name }`, on the line
+  after the paragraph). Word takes its `font-family`, `font-size`, `font-weight`,
+  `font-style`, `color`, `margin-top`/`margin-bottom`, `text-indent`, unitless
+  `line-height` and `text-align`. `p.caption` updates Word's built-in Caption style.
+- **Book-style indents.** `p + p { text-indent: 1em }`-style rules in absolute units
+  (for example `10pt`) give a body paragraph that directly follows another one a first-line
+  indent, as in the PDF. Paragraphs after headings, lists, quotes and tables are not indented.
+- **Header and footer rules.** A `border-bottom` on an `@top-left`, `@top-center` or
+  `@top-right` box draws the same rule across the Word header, its `margin-bottom` above the
+  text. The rule above the Word footer follows the `border-top` of the `@bottom-*` boxes; a
+  theme with footer boxes but no `border-top` gets no rule.
 
 Cell and list spacing example, applied to both formats:
 
@@ -4372,7 +4392,12 @@ run does not label samples pass or fail; it is a review aid.
   logo differs by about 9pt horizontally.
 - **Tables** that overflow the right margin in the PDF (for example with oversized
   `col-widths`) are clamped to the text width in Word.
-- **`.section-note` and other class-based styles** in a theme are not translated to Word.
+- **Class-based styles** other than `p.class` paragraph styles (for example `.section-note`)
+  are not translated to Word.
+- **Cover styling.** The Word cover follows the cover config keys and the theme's heading
+  colours; it does not read the theme's `.cover-*` CSS, so fonts, sizes and the label style can
+  differ from a custom PDF cover.
+- **Footnote content** in Word keeps bold, italic, code and line breaks; links become plain text.
 - **Renderer artifacts.** LibreOffice keeps heading space-before at automatic page breaks (Word
   and the PDF drop it); this shows up only when checking with LibreOffice.
 - **Review marks.** `review_markup: show` gives real tracked changes and comments in Word but
@@ -4561,7 +4586,10 @@ xref_pages: true       # "see Results (p. 12)"
 ```
 
 Footnotes use the normal Markdown syntax (`text[^1]` … `[^1]: note`); without
-`page_footnotes` they are collected at the end of the document as before.
+`page_footnotes` they are collected at the end of the document as before. Word output gets real
+Word footnotes, numbered by Word; their text keeps bold, italic, code and line breaks, and takes
+its `font-family` and `font-size` from the theme's `.md-footnote` rule. In PDF, style the notes
+with `.md-footnote`, `::footnote-call`, `::footnote-marker` and `@page { @footnote { … } }`.
 
 An internal link with **no text** takes the heading's text: `[](#results)` renders as the
 heading "Results". With `xref_pages`, every internal link outside the contents list is followed
@@ -4740,6 +4768,20 @@ cover_meta: false
 > **What it does:** `cover_subtitle` adds a line under the title (class `.cover-subtitle`); `cover_version` adds a line below the divider (class `.cover-version`). Both are optional, styled by the theme, and appear in PDF and Word. `cover_date: false` removes the "Date" line and `cover_meta: false` removes the whole "Prepared by / Date" block.
 >
 > **Defaults:** no subtitle, no version, `cover_date: true`, `cover_meta: true`
+
+<a id="configuration-cover-meta-detail"></a>
+
+#### Cover detail line
+
+```yaml
+cover_meta_label: ""
+cover_meta_detail: "Submitted in fulfilment of the requirements\nfor the degree of Doctor of Philosophy"
+```
+
+> **What it does:** adds one or more lines between the author and the date (PDF class
+> `.cover-meta-detail`); use `\n` for line breaks. With `cover_meta_label: ""` the author's name
+> shows without a label. Works in PDF and Word, and is hidden with the rest of the block by
+> `cover_meta: false`.
 
 <a id="configuration-text-alignment"></a>
 
@@ -4931,6 +4973,14 @@ cover_stripe_width: 6mm
 | `cover_stripe` | boolean | `false` |
 | `cover_stripe_height` | string | `"120mm"` |
 | `cover_stripe_width` | string | `"6mm"` |
+| `cover_stripe_color` | string | theme accent |
+| `cover_stripe_text` | string | — |
+
+`cover_stripe_color` sets the stripe colour (hex) for PDF and Word; the theme can set it
+with `--mddoc-cover-stripe-color`. `cover_stripe_text` writes text up the stripe, read from
+bottom to top and starting 30mm above the foot of the stripe; style it in PDF with
+`.cover-stripe-text`. A full-height spine is `cover_stripe_height: 297mm` with
+`cover_bar: false`.
 
 ---
 
@@ -5554,6 +5604,9 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `cover_stripe` | boolean | `false` | Vertical accent stripe on the cover. |
 | `cover_stripe_height` | length | `120mm` | Stripe height. |
 | `cover_stripe_width` | length | `6mm` | Stripe width. |
+| `cover_stripe_color` | string | theme accent | Stripe colour (hex). |
+| `cover_stripe_text` | string | — | Text running up the stripe, read bottom to top. |
+| `cover_meta_detail` | string | — | Line(s) between the author and the date on the cover; `\n` for line breaks. |
 | `header_logo` | path | — | Logo in the page header (document folder, ancestors, repo root). |
 | `header_logo_position` | enum | `right` | `left`, `center` or `right`. |
 | `header_logo_height` | length | intrinsic, max 8mm | Exact logo height. |
@@ -5612,7 +5665,7 @@ override shallower ones. Lengths are CSS lengths (`mm`, `pt`, `cm`, `in`, `px`).
 | `numbered_headings` | boolean | `false` | Number headings 1, 1.1, 1.1.1 (and the contents entries). |
 | `numbered_headings_depth` | integer | `3` | Deepest numbered level (1-4). |
 | `heading_number_style` | enum | `decimal` | Top-level style: `decimal`, `decimal-leading-zero`, `upper-roman`, `lower-roman`, `upper-alpha`, `lower-alpha`. |
-| `page_footnotes` | boolean | `false` | Markdown footnotes appear at the foot of the page that cites them. |
+| `page_footnotes` | boolean | `false` | Markdown footnotes appear at the foot of the page that cites them (PDF, and real Word footnotes in DOCX/DOTX). |
 | `xref_pages` | boolean | `false` | Internal links read "(p. N)" after the link text. |
 | `header_layout` | enum | `box` | `box` (margin boxes) or `running` (one flex row with logo, text and live titles). |
 | `footer_layout` | enum | `box` | Same choice for the footer. |
