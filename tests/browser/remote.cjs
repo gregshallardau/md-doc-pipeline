@@ -8,7 +8,11 @@ const net = require("node:net");
 const { spawn, spawnSync } = require("node:child_process");
 const repository = path.resolve(__dirname, "../..");
 const python =
-  process.env.MD_DOC_TEST_PYTHON || path.join(repository, ".venv/bin/python");
+  process.env.MD_DOC_TEST_PYTHON ||
+  path.join(
+    repository,
+    process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python",
+  );
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {

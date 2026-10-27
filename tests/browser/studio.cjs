@@ -7,6 +7,8 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn, spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "../..");
+const venvPython = (base) =>
+  path.join(base, process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let checks = 0;
 function check(condition, message) {
@@ -64,7 +66,7 @@ function check(condition, message) {
   await new Promise((r) => listener.close(r));
   const origin = `http://127.0.0.1:${port}`;
   const server = spawn(
-    process.env.MD_DOC_TEST_PYTHON || path.join(root, ".venv/bin/python"),
+    process.env.MD_DOC_TEST_PYTHON || venvPython(root),
     [
       "-c",
       "import mimetypes; mimetypes.add_type('text/plain', '.js'); mimetypes.add_type('application/octet-stream', '.mjs'); from md_doc_web_editor.cli import main; raise SystemExit(main())",
