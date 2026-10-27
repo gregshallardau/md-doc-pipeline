@@ -57,9 +57,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_serve(args: argparse.Namespace) -> int:
+    allowed_hosts = _allowed_hosts(args.host)
+    if allowed_hosts is None:
+        print(
+            f"warning: listening on {args.host} with no sign-in; anyone who can reach this "
+            "port can read and edit the workspace.",
+            file=sys.stderr,
+        )
     if args.workspace is None:
         project = find_project()
-        app = create_app(project=project)
+        app = create_app(project=project, allowed_hosts=allowed_hosts)
         print(f"md-doc editor: project {project}")
         for ws in discover(project):
             note = "" if ws.available else "  (not available: not mounted?)"
@@ -70,7 +77,7 @@ def _run_serve(args: argparse.Namespace) -> int:
         if not workspace.is_dir():
             print(f"error: workspace path is not a directory: {workspace}", file=sys.stderr)
             return 2
-        app = create_app(workspace)
+        app = create_app(workspace, allowed_hosts=allowed_hosts)
         print(f"md-doc editor: workspace {workspace}")
 
     url = f"http://{args.host}:{args.port}/"
@@ -85,6 +92,13 @@ def _run_serve(args: argparse.Namespace) -> int:
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
+
+
+def _allowed_hosts(host: str) -> list[str] | None:
+    """Host headers to accept. None (any) when bound to all interfaces: names are unknown."""
+    if host in {"0.0.0.0", "::", ""}:
+        return None
+    return sorted({"127.0.0.1", "localhost", host})
 
 
 if __name__ == "__main__":

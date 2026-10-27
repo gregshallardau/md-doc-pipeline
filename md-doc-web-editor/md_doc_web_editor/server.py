@@ -85,14 +85,20 @@ class BuildRequest(BaseModel):
     format: str = "pdf"
 
 
-def create_app(workspace: Path | None = None, *, project: Path | None = None) -> FastAPI:
+def create_app(
+    workspace: Path | None = None,
+    *,
+    project: Path | None = None,
+    allowed_hosts: list[str] | None = None,
+) -> FastAPI:
     """Build a FastAPI app.
 
     With *workspace* the app is rooted at that one directory and API paths are relative to it.
     Without it the app discovers the project's workspaces (local ``workspace/*`` folders and the
     names in ``workspace/remote-workspaces.yml``) on every request; each is a top-level folder and
     the first segment of every API path. *project* is where discovery starts (default: the
-    current directory).
+    current directory). *allowed_hosts* restricts the ``Host`` header (blocks DNS rebinding); the
+    default ``None`` accepts any host.
     """
     fixed: Workspace | None = None
     if workspace is not None:
@@ -162,8 +168,12 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     app.state.builds = builds
     app.state.build_root = build_root
 
+    trusted_hosts = {h.strip("[]").lower() for h in allowed_hosts or []}
+
     @app.middleware("http")
     async def local_resources_only(request, call_next):
+        if trusted_hosts and _host_name(request.headers.get("host", "")) not in trusted_hosts:
+            return JSONResponse({"detail": "Invalid host header"}, status_code=400)
         if request.method in {"POST", "PUT", "DELETE", "PATCH"}:
             origin = request.headers.get("origin")
             if origin and origin != str(request.base_url).rstrip("/"):
@@ -731,6 +741,14 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
 
 
 # ── Module-level helpers (kept top-level so tests can import them) ───────────
+
+
+def _host_name(header: str) -> str:
+    """Host header without its port; handles bracketed IPv6 such as ``[::1]:8765``."""
+    header = header.strip().lower()
+    if header.startswith("["):
+        return header[1:].partition("]")[0]
+    return header.partition(":")[0]
 
 
 def _parse_frontmatter(text: str) -> dict[str, Any]:
