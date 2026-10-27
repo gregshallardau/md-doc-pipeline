@@ -2597,10 +2597,14 @@
     }
   }
   function openDependency(path) {
-    const root = state.workspace.workspace;
+    // The server names files outside the workspace by OS path; Windows uses
+    // backslashes and a drive letter, so compare in one slash style.
+    const slashed = (value) => String(value || "").replace(/\\/g, "/");
+    const root = slashed(state.workspace.workspace);
+    path = slashed(path);
     if (path.startsWith(root + "/")) path = path.slice(root.length + 1);
-    else if (path.startsWith("/")) {
-      const project = state.workspace.projectRoot;
+    else if (path.startsWith("/") || /^[A-Za-z]:\//.test(path)) {
+      const project = slashed(state.workspace.projectRoot);
       if (project && path.startsWith(project + "/"))
         path = "project:" + path.slice(project.length + 1);
       else {
