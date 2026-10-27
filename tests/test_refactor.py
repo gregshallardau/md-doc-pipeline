@@ -123,3 +123,39 @@ def test_template_not_reachable_from_unrelated_folder(tmp_path):
     (tmp_path / "b").mkdir()
     (tmp_path / "b" / "doc.md").write_text(f"# B\n\n{ABOUT}")
     assert find_shared_sections(tmp_path) == []
+
+
+def _link_or_skip(link, target):
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+
+
+def test_documents_linked_from_outside_the_folder_are_ignored(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text(f"# Secret\n\n{ABOUT}\nOnly outside.\n")
+    folder = tmp_path / "project"
+    folder.mkdir()
+    (folder / ".git").mkdir()
+    for name in ("a", "b"):
+        (folder / f"{name}.md").write_text(f"# {name}\n\n{ABOUT}\nEnd {name}.\n")
+    _link_or_skip(folder / "linked.md", outside / "secret.md")
+
+    groups = find_shared_sections(folder, min_docs=2, min_chars=40)
+
+    paths = {o.doc.path.name for g in groups for o in g.occurrences}
+    assert paths == {"a.md", "b.md"}
+
+
+def test_links_that_stay_inside_the_folder_are_kept(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "a.md").write_text(f"# a\n\n{ABOUT}\nEnd a.\n")
+    (tmp_path / "b.md").write_text(f"# b\n\n{ABOUT}\nEnd b.\n")
+    _link_or_skip(tmp_path / "c.md", tmp_path / "real" / "a.md")
+
+    groups = find_shared_sections(tmp_path, min_docs=2, min_chars=40)
+
+    assert {o.doc.path.name for g in groups for o in g.occurrences} == {"a.md", "b.md", "c.md"}
