@@ -124,13 +124,18 @@ def _read_doc(path: Path) -> Doc:
 
 def _discover(root: Path) -> list[Path]:
     found: list[Path] = []
+    base = Path(root).resolve()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(
             d for d in dirnames if d not in _SKIP_DIRS and not d.startswith((".", "_"))
         )
         for name in sorted(filenames):
             if name.endswith(".md") and not name.startswith(("_", ".")):
-                found.append(Path(dirpath) / name)
+                path = Path(dirpath) / name
+                # A link to a file outside the folder is not part of it: reading it
+                # would copy outside text in, and applying would replace the link.
+                if path.resolve().is_relative_to(base):
+                    found.append(path)
     return found
 
 

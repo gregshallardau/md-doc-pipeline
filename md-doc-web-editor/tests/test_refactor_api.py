@@ -190,3 +190,25 @@ def test_ignore_and_restore_persist_across_scans(client, workspace):
         client.post("/api/refactor/ignore", json={"key": "../x", "ignored": True}).status_code
         == 400
     )
+
+
+def test_scan_ignores_documents_linked_from_outside_the_workspace(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text(f"# Secret\n\n{ABOUT}\nOnly outside.\n", encoding="utf-8")
+    workspace = tmp_path / "project"
+    (workspace / ".git").mkdir(parents=True)
+    for name in ("a", "b"):
+        (workspace / f"{name}.md").write_text(
+            f"# {name}\n\n{ABOUT}\nEnd {name}.\n", encoding="utf-8"
+        )
+    try:
+        (workspace / "linked.md").symlink_to(outside / "secret.md")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+
+    with TestClient(create_app(workspace)) as client:
+        data = scan(client)
+
+    paths = {o["path"] for g in data["groups"] for o in g["occurrences"]}
+    assert paths == {"a.md", "b.md"}
