@@ -289,3 +289,11 @@ def test_dotx_build_is_served_with_the_template_media_type(tmp_path, monkeypatch
     token = client.post("/api/build", json={"path": "doc.md", "format": "dotx"}).json()["token"]
     response = client.get(f"/api/build/{token}")
     assert response.headers["content-type"].endswith("wordprocessingml.template")
+
+
+def test_unexpected_host_header_is_rejected(workspace):
+    """A rebound DNS name must not be able to talk to the local editor."""
+    app = create_app(workspace, allowed_hosts=["127.0.0.1", "localhost"])
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        assert client.get("/api/tree").status_code == 200
+        assert client.get("/api/tree", headers={"host": "evil.example:8765"}).status_code == 400

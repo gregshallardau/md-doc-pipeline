@@ -85,14 +85,20 @@ class BuildRequest(BaseModel):
     format: str = "pdf"
 
 
-def create_app(workspace: Path | None = None, *, project: Path | None = None) -> FastAPI:
+def create_app(
+    workspace: Path | None = None,
+    *,
+    project: Path | None = None,
+    allowed_hosts: list[str] | None = None,
+) -> FastAPI:
     """Build a FastAPI app.
 
     With *workspace* the app is rooted at that one directory and API paths are relative to it.
     Without it the app discovers the project's workspaces (local ``workspace/*`` folders and the
     names in ``workspace/remote-workspaces.yml``) on every request; each is a top-level folder and
     the first segment of every API path. *project* is where discovery starts (default: the
-    current directory).
+    current directory). *allowed_hosts* restricts the ``Host`` header (blocks DNS rebinding); the
+    default ``None`` accepts any host.
     """
     fixed: Workspace | None = None
     if workspace is not None:
@@ -161,6 +167,11 @@ def create_app(workspace: Path | None = None, *, project: Path | None = None) ->
     app = FastAPI(title="md-doc editor", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.builds = builds
     app.state.build_root = build_root
+
+    if allowed_hosts:
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
     @app.middleware("http")
     async def local_resources_only(request, call_next):
