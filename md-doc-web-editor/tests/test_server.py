@@ -297,3 +297,10 @@ def test_unexpected_host_header_is_rejected(workspace):
     with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         assert client.get("/api/tree").status_code == 200
         assert client.get("/api/tree", headers={"host": "evil.example:8765"}).status_code == 400
+
+
+def test_host_header_allows_bracketed_ipv6(workspace):
+    app = create_app(workspace, allowed_hosts=["127.0.0.1", "::1"])
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        assert client.get("/api/tree", headers={"host": "[::1]:8765"}).status_code == 200
+        assert client.get("/api/tree", headers={"host": "[::2]:8765"}).status_code == 400

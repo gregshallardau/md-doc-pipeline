@@ -168,13 +168,12 @@ def create_app(
     app.state.builds = builds
     app.state.build_root = build_root
 
-    if allowed_hosts:
-        from starlette.middleware.trustedhost import TrustedHostMiddleware
-
-        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    trusted_hosts = {h.strip("[]").lower() for h in allowed_hosts or []}
 
     @app.middleware("http")
     async def local_resources_only(request, call_next):
+        if trusted_hosts and _host_name(request.headers.get("host", "")) not in trusted_hosts:
+            return JSONResponse({"detail": "Invalid host header"}, status_code=400)
         if request.method in {"POST", "PUT", "DELETE", "PATCH"}:
             origin = request.headers.get("origin")
             if origin and origin != str(request.base_url).rstrip("/"):
@@ -742,6 +741,14 @@ def create_app(
 
 
 # ── Module-level helpers (kept top-level so tests can import them) ───────────
+
+
+def _host_name(header: str) -> str:
+    """Host header without its port; handles bracketed IPv6 such as ``[::1]:8765``."""
+    header = header.strip().lower()
+    if header.startswith("["):
+        return header[1:].partition("]")[0]
+    return header.partition(":")[0]
 
 
 def _parse_frontmatter(text: str) -> dict[str, Any]:
