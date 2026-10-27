@@ -11,6 +11,8 @@ on:
 jobs:
   build-and-sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # commit the updated document register back to the branch
 
     steps:
       - name: Checkout repository
