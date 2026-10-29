@@ -612,6 +612,21 @@ tiers:
 ```
 
 Each tier takes `title`, `subtitle`, `description`, and optional `fill`, `badge` and `accent` colours.
+Text never shrinks below a readable minimum however many tiers there are: a tier grows taller to
+fit a long subtitle or description, the indent narrows as tiers are added, and a tier without a
+`subtitle` has its title centred. Six tiers:
+
+**Rendered example:**
+
+::: tiers
+tiers:
+  - {title: Standard, subtitle: The common foundation, description: Overarching requirements that apply to everyone.}
+  - {title: Core guide, subtitle: Practice for every activity, description: Practical guidance for daily work.}
+  - {title: Topic guides, subtitle: Specific activities, description: Detail for particular tasks and risks.}
+  - {title: Procedures, subtitle: Step by step, description: How each task is done locally.}
+  - {title: Templates, description: Forms and checklists ready to use.}
+  - {title: Records, subtitle: Evidence, description: What is kept to show the work was done.}
+:::
 
 **`::: cards`** — up to four cards in a row, with arrows down to a banner:
 
@@ -624,6 +639,32 @@ cards:
 banner: {title: Profile required, subtitle: Verified by the provider}
 :::
 ```
+
+A card title too long for one line wraps, pushes its subtitle and items down, and every card in
+the row grows to the tallest. Quote any value with a comma in it, as the banner subtitle below
+does (see [Component options](#markdown-component-options)):
+
+```markdown
+::: cards
+title: Why it matters
+cards:
+  - {title: Untraceable knowledge, subtitle: Decisions live in inboxes, items: [Lost context, Repeat work]}
+  - {title: Disconnected systems, subtitle: Each team keeps its own records, items: [Re-keying]}
+  - {title: Handling a complaint, subtitle: Takes weeks and many hand-offs, items: [Delays]}
+banner: {title: One shared record, subtitle: "Context, sources and guardrails"}
+:::
+```
+
+**Rendered example:**
+
+::: cards
+title: Why it matters
+cards:
+  - {title: Untraceable knowledge, subtitle: Decisions live in inboxes, items: [Lost context, Repeat work]}
+  - {title: Disconnected systems, subtitle: Each team keeps its own records, items: [Re-keying]}
+  - {title: Handling a complaint, subtitle: Takes weeks and many hand-offs, items: [Delays]}
+banner: {title: One shared record, subtitle: "Context, sources and guardrails"}
+:::
 
 **`::: matrix`** — a heat-map grid (for example a risk matrix). With no options it draws a 5 by 5 likelihood and consequence matrix. Otherwise give `columns`, `rows`, a `grid` of rating names, `levels` (rating to `fill` and `text`), and optionally `x_label`, `y_label` and `legend: false`.
 
@@ -699,6 +740,20 @@ groups:
   - {label: Industry, nodes: [i1, i2, i3], fill: "#ccfbf1", stroke: "#0f766e", text: "#134e4a"}
 :::
 
+<a id="markdown-component-options"></a>
+
+**Component options.** The options are YAML, so in a `{...}` mapping an unquoted comma starts a
+new key: `banner: {title: X, subtitle: Context, sources and guardrails}` silently drops "sources
+and guardrails" from the subtitle and adds it as a key of its own. Quote such values
+(`subtitle: "Context, sources and guardrails"`). `md-doc lint` warns about any key a component
+does not know, which catches this slip as well as typos:
+
+```
+warn   proposal.md: line 14: '::: cards': unknown option 'sources and guardrails' in cards.banner
+       (a comma inside an unquoted value in {...} starts a new key; quote the value, ...)
+warn   proposal.md: line 31: '::: flow': unknown option 'colour' in flow.nodes[2]
+```
+
 ### Captions and lists
 
 A diagram's `caption:` and any line written as `Table 8.1: Support levels` on its own are captions. They are numbered by you, linked, and styled as captions. Two blocks list them:
@@ -766,7 +821,26 @@ A statement with a supporting note.[^core-example]
 **Column widths.** Put `<!-- col-widths: 30, 70 -->` on the line before a table, or set
 `table_col_widths: [30, 70]` for every table. The counts must match the column count or the
 widths are ignored. PDF, DOCX and DOTX all honour them; without them columns are sized to
-their content, as in PDF.
+their content, as in PDF. A column is never made narrower than its longest word (plus cell
+padding), so no word is broken in the middle: a column that needs more room takes it from the
+others, which keep the proportions you gave. Very long tokens such as URLs may still wrap
+anywhere.
+
+```markdown
+<!-- col-widths: 10, 60, 30 -->
+| Responsibility | Description | Owner |
+|----------------|-------------|-------|
+| Interdepartmental | Coordination of the programme across agencies | Commissioner |
+| Implementation | Delivery and reporting against the plan | Superintendent |
+```
+
+**Rendered example** (the first column widens to fit "Interdepartmental"):
+
+<!-- col-widths: 10, 60, 30 -->
+| Responsibility | Description | Owner |
+|----------------|-------------|-------|
+| Interdepartmental | Coordination of the programme across agencies | Commissioner |
+| Implementation | Delivery and reporting against the plan | Superintendent |
 
 **Grouped striping.** Put `<!-- table-striping: group -->` on the line before a table to
 alternate the row background by group. Each nonblank first cell starts a new group, even
@@ -6104,8 +6178,10 @@ formats; Jinja2 syntax is valid; `{{ variables }}` (body and frontmatter strings
 config cascade (warning); `{% include %}` targets resolve (error); `[[fields]]` exist in the
 `_merge_fields.yml` cascade (warning, when a schema is present); config keys are known and well
 typed; PDF form fields have valid types and unique names; CriticMarkup marks are closed, and a
-`status: final` document has none left (warning). Exits non-zero on errors; warnings do
-not affect the exit code.
+`status: final` document has none left (warning); `::: figure` component options (`cards`,
+`tiers`, `flow`, `rings`, `matrix`, `process`) are valid YAML with known keys (warning, naming
+the component, the key and its line; see [Component options](#markdown-component-options)).
+Exits non-zero on errors; warnings do not affect the exit code.
 
 | Option | Description |
 |--------|-------------|

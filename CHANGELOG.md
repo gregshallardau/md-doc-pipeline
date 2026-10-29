@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mind maps and Venn diagrams, so they can follow a document-wide colour key.
 - Diagram warnings: an unreadable flowchart, sequence, Gantt or pie line is logged with the line
   quoted, a diagram that draws nothing warns, and so does one taller than the page's text area.
+- **Component option lint.** `md-doc lint` warns about unknown keys in `::: cards`, `tiers`,
+  `flow`, `rings`, `matrix` and `process` options (and options that are not valid YAML), naming
+  the component, key and line. This catches an unquoted comma in a `{...}` value, which silently
+  created a junk key and truncated the text.
 - PowerPoint output now draws `::: name` component figures (`flow`, `cards`, `tiers`, `rings`,
   `matrix`, `process`) as pictures; they were previously left as raw text.
 - **Real Word footnotes.** With `page_footnotes: true`, DOCX/DOTX output now gets real Word
@@ -122,6 +126,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ICC profiles) that cannot be found.
 
 ### Fixed
+- `::: cards`: a title that wraps no longer overprints the subtitle; it pushes the subtitle and
+  items down and the card grows to fit.
+- `::: tiers`: text keeps a minimum size with six or more tiers (tiers grow taller to fit
+  instead), and a tier with no `subtitle` has its title centred vertically.
+- Tables with `<!-- col-widths -->` or `table_col_widths` never break a word in the middle: each
+  column is at least as wide as its longest word, in PDF, DOCX and DOTX.
 - Mermaid flowcharts no longer flip from left-to-right to top-down without a way to stop it
   (see `keepDirection` above), and long chains wrap into rows instead.
 - A Mermaid `~~~` link no longer swallows the line it is on (the diagram came out missing its

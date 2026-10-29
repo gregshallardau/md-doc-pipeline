@@ -53,7 +53,12 @@ from docx.shared import Emu, Mm, Pt, RGBColor
 
 from ..config import coerce_bool
 from ..forms import collapse_select_markup
-from ..table_layout import css_code_line_pitch, css_column_weights, css_row_heights
+from ..table_layout import (
+    clamp_to_longest_words,
+    css_code_line_pitch,
+    css_column_weights,
+    css_row_heights,
+)
 from ..docx_theme import (
     _apply_font_name,
     _hex_to_rgb,
@@ -2497,6 +2502,17 @@ class _DocxBuilder(HTMLParser):
         # table > table_col_widths config key > equal distribution.
         col_widths_twips: list[int]
         weights = self._active_table_col_widths or self._table_col_widths
+        if weights and len(weights) == max_cols:
+            # Never narrower than a column's longest word: Word would break it mid-word
+            weights = clamp_to_longest_words(
+                list(weights),
+                [[(cell[0], cell[1]) for cell in row] for row in rows],
+                text_width_twips / 20,
+                float(
+                    self._theme.get("font_size_table") or self._theme.get("font_size_body") or 10
+                ),
+                2 * float(self._theme.get("padding_cell_lr_pt", 9.0)),
+            )
         if not weights:
             declared = [_style_width_percent(cell[3]) for cell in rows[0]]
             if len(declared) == max_cols and all(w is not None for w in declared):

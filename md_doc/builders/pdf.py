@@ -1497,7 +1497,30 @@ def _build_section_bar_style(config: dict[str, Any]) -> str:
 _COL_WIDTHS_COMMENT_RE = re.compile(r"<!--\s*col-widths:\s*([\d.,\s]+?)\s*-->", re.IGNORECASE)
 
 
-def _apply_table_col_widths(html: str, config_weights: list[float] | None = None) -> str:
+def _table_fit(css_path: Path | None, css_text: str | None) -> tuple[float, float, float]:
+    """(text width, table font size, cell left+right padding) in pt, from the theme."""
+    from ._assets import _page_geometry
+
+    geom = _page_geometry(css_text)
+    width_pt = (geom["w"] - geom["left"] - geom["right"]) / 25.4 * 72
+    font_pt, pad_pt = 10.0, 18.0
+    if css_path is not None:
+        try:
+            from ..docx_theme import parse_css_for_word
+
+            word = parse_css_for_word(css_path)
+            font_pt = float(word.get("font_size_table") or word.get("font_size_body") or font_pt)
+            pad_pt = 2 * float(word.get("padding_cell_lr_pt") or pad_pt / 2)
+        except Exception:  # pragma: no cover - a theme that cannot be read keeps defaults
+            pass
+    return width_pt, font_pt, pad_pt
+
+
+def _apply_table_col_widths(
+    html: str,
+    config_weights: list[float] | None = None,
+    fit: tuple[float, float, float] | None = None,
+) -> str:
     """Size table columns like the docx builder: comment > config > untouched.
 
     A ``<!-- col-widths: 30, 70 -->`` comment binds to the next ``<table>``
@@ -1507,6 +1530,10 @@ def _apply_table_col_widths(html: str, config_weights: list[float] | None = None
     fallback as Word. Widths become inline percentage styles on the first-row
     cells under ``table-layout: fixed``. Tables the builder generates with a
     class of their own (``field-box``/``field-row`` form grids) are left alone.
+
+    *fit* is ``(text width, table font size, cell padding)`` in pt: with it, a
+    column narrower than its longest word is widened so no word breaks in the
+    middle (see :func:`table_layout.clamp_to_longest_words`).
     """
     targets: dict[int, list[float]] = {}
     for m in _COL_WIDTHS_COMMENT_RE.finditer(html):
@@ -1542,6 +1569,17 @@ def _apply_table_col_widths(html: str, config_weights: list[float] | None = None
         cells = list(re.finditer(r"<t[hd][^>]*>", row))
         if len(cells) != len(weights):
             continue  # count mismatch — ignored, same as the docx builder
+        if fit:
+            from ..table_layout import clamp_to_longest_words
+
+            table_rows = [
+                [
+                    (tag == "th", body)
+                    for tag, body in re.findall(r"<(t[hd])\b[^>]*>(.*?)</t[hd]>", r, re.S)
+                ]
+                for r in re.findall(r"<tr[^>]*>.*?</tr>", seg, re.DOTALL)
+            ]
+            weights = clamp_to_longest_words(weights, table_rows, *fit)
 
         total = sum(weights)
         parts: list[str] = []
@@ -2060,7 +2098,9 @@ def build(
         isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw_col_widths
     ):
         config_col_weights = [float(v) for v in raw_col_widths]
-    html_body = _apply_table_col_widths(html_body, config_col_weights)
+    html_body = _apply_table_col_widths(
+        html_body, config_col_weights, _table_fit(css_path if css_text else None, css_text)
+    )
 
     # Render Mermaid diagram blocks to inline SVGs, themed from the CSS
     from ..mermaid import diagram_theme, process_html as _process_mermaid

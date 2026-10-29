@@ -350,3 +350,73 @@ def test_default_filter_guards_undefined_variable_warning(tmp_path):
     messages = [i.message for i in lint_file(doc, repo_root=tmp_path)]
     assert not any("support_email" in m for m in messages)
     assert any("other_missing" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# ::: figure component options
+# ---------------------------------------------------------------------------
+
+
+class TestComponentOptions:
+    def test_comma_in_an_unquoted_flow_mapping_value_is_flagged(self, tmp_repo):
+        doc = tmp_repo / "doc.md"
+        make_doc(
+            doc,
+            body=(
+                "# Doc\n\n::: cards\ncards:\n  - {title: A, items: [x]}\n"
+                "banner: {title: X, subtitle: Context, sources and guardrails}\n:::\n"
+            ),
+        )
+        issues = [i for i in lint_file(doc, tmp_repo) if "':::" in i.message]
+        assert len(issues) == 1
+        msg = issues[0].message
+        assert msg.startswith("line 11: '::: cards'")  # the banner's line in the file
+        assert "'sources and guardrails'" in msg and "cards.banner" in msg and "quote" in msg
+        assert issues[0].severity == "warning"
+
+    def test_unknown_keys_in_each_component_are_named(self, tmp_repo):
+        doc = tmp_repo / "doc.md"
+        make_doc(
+            doc,
+            body=(
+                "::: flow\nnodes:\n  - {id: a, label: A, at: [0, 0], colour: red}\n"
+                "groups:\n  - {label: G, nodes: [a], fil: '#fff'}\nedges: [[a, a]]\n:::\n\n"
+                "::: tiers\ntiers:\n  - {title: T, sub: x}\n:::\n\n"
+                "::: matrix\nlevels:\n  Low: {fill: '#fff', txt: '#000'}\n:::\n\n"
+                "::: rings\ncentre: {label: C, colour: red}\n:::\n\n"
+                "::: process\nsteps: [a]\nfooter_text: x\n:::\n"
+            ),
+        )
+        found = {
+            i.message.split(": ", 1)[1] for i in lint_file(doc, tmp_repo) if "':::" in i.message
+        }
+        assert found == {
+            "'::: flow': unknown option 'colour' in flow.nodes[0]",
+            "'::: flow': unknown option 'fil' in flow.groups[0]",
+            "'::: tiers': unknown option 'sub' in tiers.tiers[0]",
+            "'::: matrix': unknown option 'txt' in matrix.levels.Low",
+            "'::: rings': unknown option 'colour' in rings.centre",
+            "'::: process': unknown option 'footer_text' in process",
+        }
+
+    def test_valid_options_and_fenced_examples_are_quiet(self, tmp_repo):
+        doc = tmp_repo / "doc.md"
+        make_doc(
+            doc,
+            body=(
+                "```markdown\n::: cards\nbogus: 1\n:::\n```\n\n"
+                "::: flow\ncaption: 'Figure 1: Flow'\ncol_width: 230\n"
+                "nodes:\n  - {id: a, label: A, at: [0, 0], shape: pill}\n"
+                "edges:\n  - {from: a, to: a, via: right}\n"
+                "groups:\n  - {label: G, nodes: [a], fill: '#dbeafe', stroke: '#1d4ed8', text: '#000'}\n"
+                ":::\n"
+            ),
+        )
+        assert not [i for i in lint_file(doc, tmp_repo) if "':::" in i.message]
+
+    def test_broken_yaml_names_the_line(self, tmp_repo):
+        doc = tmp_repo / "doc.md"
+        make_doc(doc, body="# Doc\n\n::: tiers\ntiers:\n  - {title: [unclosed\n:::\n")
+        issues = [i for i in lint_file(doc, tmp_repo) if "':::" in i.message]
+        assert len(issues) == 1 and "not valid YAML" in issues[0].message
+        assert issues[0].message.startswith("line ")

@@ -200,3 +200,79 @@ def test_flow_groups_draw_labelled_frames_behind_nodes_and_edges() -> None:
 def test_flow_without_groups_is_unchanged() -> None:
     opts = {"nodes": [{"id": "a", "label": "A", "at": [0, 0]}], "edges": []}
     assert diagrams.flow_svg(opts) == diagrams.flow_svg({**opts, "groups": []})
+
+
+def _text_rows(svg: str) -> dict[str, float]:
+    """First y of each text line (tspan) in the SVG, keyed by its text."""
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    return {(t.text or ""): float(t.get("y")) for t in root.iter(f"{ns}tspan")}
+
+
+def test_card_title_that_wraps_pushes_the_subtitle_down() -> None:
+    opts = {
+        "cards": [
+            {
+                "title": "Untraceable knowledge",
+                "subtitle": "Decisions live in inboxes",
+                "items": ["Lost context"],
+            },
+            {"title": "Disconnected systems", "subtitle": "Own records", "items": ["Re-keying"]},
+            {"title": "Handling a complaint", "subtitle": "Weeks", "items": ["Delays"]},
+            {"title": "Short", "subtitle": "Sub", "items": ["One"]},
+        ]
+    }
+    svg = diagrams.cards_svg(opts)
+    ys = _text_rows(svg)
+    lead = 11 * 1.25
+    assert ys["knowledge"] > ys["Untraceable"]  # the title wrapped
+    # The subtitle starts below the last title line, never on top of it
+    subtitle = next(y for text, y in ys.items() if text.startswith("Decisions"))
+    assert subtitle - ys["knowledge"] >= lead
+    assert ys["Lost context"] > subtitle
+    # The cards grew to fit the longest
+    root = ET.fromstring(svg)
+    heights = {
+        float(r.get("height"))
+        for r in root.iter("{http://www.w3.org/2000/svg}rect")
+        if r.get("rx") == "10"
+    }
+    single = diagrams.cards_svg(
+        {"cards": [{"title": "A", "subtitle": "Decisions live in inboxes", "items": ["x"]}]}
+    )
+    single_h = {
+        float(r.get("height"))
+        for r in ET.fromstring(single).iter("{http://www.w3.org/2000/svg}rect")
+        if r.get("rx") == "10"
+    }
+    assert len(heights) == 1 and heights.pop() > single_h.pop()
+
+
+def test_six_tiers_keep_a_minimum_font_and_grow_instead() -> None:
+    tiers = [
+        {"title": f"Tier {i}", "subtitle": f"Level {i}", "description": "Short text."}
+        for i in range(6)
+    ]
+    tiers[2]["description"] = " ".join(["A long description that wraps over several lines."] * 3)
+    tiers[4]["subtitle"] = ""
+    svg = diagrams.tiers_svg({"tiers": tiers})
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    sizes = [float(t.get("font-size")) for t in root.iter(f"{ns}text")]
+    assert min(sizes) >= diagrams.TIERS_MIN_FONT
+    bands = [r for r in root.iter(f"{ns}rect") if r.get("rx") == "14"]
+    assert len(bands) == 6
+    heights = [float(r.get("height")) for r in bands]
+    assert heights[2] > heights[0]  # the long description made its tier taller
+    # Every description line sits inside its tier
+    band = bands[2]
+    top, bottom = float(band.get("y")), float(band.get("y")) + float(band.get("height"))
+    desc = [t for t in root.iter(f"{ns}text") if "wraps" in "".join(t.itertext())]
+    for span in desc[0].iter(f"{ns}tspan"):
+        assert top < float(span.get("y")) < bottom
+    # The last tier keeps a usable width
+    assert float(bands[-1].get("width")) > 500
+    # No subtitle: the title is centred on its tier
+    t4 = bands[4]
+    centre = float(t4.get("y")) + float(t4.get("height")) / 2
+    assert abs(_text_rows(svg)["TIER 4"] - centre) < 1

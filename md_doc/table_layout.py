@@ -208,3 +208,70 @@ def css_row_heights(html: str, css_path: Path | None, width_pt: float) -> list[f
         return None
     heights = _row_heights(html, str(css_path), css_path.stat().st_mtime, round(width_pt, 2))
     return list(heights) if heights else None
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _cell_words(html: str) -> list[str]:
+    import html as html_lib
+
+    text = html_lib.unescape(_TAG_RE.sub(" ", html))
+    # Long tokens (URLs, hashes) are allowed to break anywhere; they never set a minimum
+    return [w for w in text.split() if not _LONG_TOKEN_RE.fullmatch(w)]
+
+
+def clamp_to_longest_words(
+    weights: list[float],
+    rows: list[list[tuple[bool, str]]],
+    width_pt: float,
+    font_pt: float = 10.0,
+    pad_pt: float = 12.0,
+) -> list[float]:
+    """Widen columns that are narrower than their longest word.
+
+    ``weights`` are the author's relative widths (``<!-- col-widths -->`` or
+    ``table_col_widths``) and ``rows`` the table's ``(is_header, cell_html)``
+    cells. A fixed-layout column narrower than a word breaks that word in the
+    middle, so each column gets at least its longest word plus its horizontal
+    padding (``pad_pt``), and the rest of the width is shared by the other
+    columns in the proportions the author gave. If even the minimums do not fit,
+    the columns are sized to their minimums' proportions. Returns new weights
+    summing to 100, or ``weights`` unchanged when no column needed widening.
+    """
+    from .mermaid import _text_w
+
+    n = len(weights)
+    total = sum(weights)
+    if n == 0 or total <= 0 or width_pt <= 0:
+        return weights
+    need = [0.0] * n
+    for row in rows:
+        if len(row) != n:
+            continue  # rows with spans cannot be matched to columns
+        for i, (is_header, cell) in enumerate(row):
+            for word in _cell_words(cell):
+                if is_header:  # themes often set th in capitals: measure the wider form
+                    word = word.upper()
+                w = _text_w(word, font_pt, 700 if is_header else 400) * 1.06 + pad_pt
+                need[i] = max(need[i], w / width_pt)
+    share = [w / total for w in weights]
+    if all(s >= m for s, m in zip(share, need)):
+        return weights
+    if sum(need) >= 1:
+        return [m / sum(need) * 100 for m in need]
+    fixed: set[int] = set()
+    result = list(share)
+    while True:
+        free = 1 - sum(need[i] for i in fixed)
+        flex = [i for i in range(n) if i not in fixed]
+        flex_total = sum(share[i] for i in flex) or 1.0
+        for i in flex:
+            result[i] = share[i] / flex_total * free
+        short = [i for i in flex if result[i] < need[i]]
+        if not short:
+            break
+        for i in short:
+            fixed.add(i)
+            result[i] = need[i]
+    return [r * 100 for r in result]

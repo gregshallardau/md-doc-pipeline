@@ -348,3 +348,155 @@ def expand_components(markdown: str, fmt: str = "pdf") -> str:
     if ":::" not in markdown:
         return markdown
     return transform_outside_code(markdown, lambda body: _expand(body, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Option schema (for ``md-doc lint``)
+# ---------------------------------------------------------------------------
+
+#: Allowed keys per figure component: ``keys`` at this level, ``items`` for the
+#: mappings inside a list option, ``maps`` for a mapping option, and ``values``
+#: for an open mapping whose every value is a mapping (``levels`` in matrix).
+_Schema = dict[str, Any]
+
+
+def _component_schemas() -> dict[str, _Schema]:
+    from .diagrams import (
+        CARDS_DEFAULTS,
+        FLOW_DEFAULTS,
+        MATRIX_DEFAULTS,
+        PROCESS_DEFAULTS,
+        TIERS_DEFAULTS,
+    )
+
+    colours = {"keys": {"fill", "border", "accent"}}
+    return {
+        "rings": {
+            "keys": {*_RINGS_DEFAULTS, "caption"},
+            "items": {"rings": {"keys": {"label", "fill", "text"}}},
+            "maps": {"centre": {"keys": {"label", "fill", "text"}}},
+        },
+        "tiers": {
+            "keys": {*TIERS_DEFAULTS, "caption"},
+            "items": {
+                "tiers": {"keys": {"title", "subtitle", "description", "fill", "badge", "accent"}}
+            },
+        },
+        "cards": {
+            "keys": {*CARDS_DEFAULTS, "caption"},
+            "items": {
+                "cards": {
+                    "keys": {"title", "subtitle", "items", "colors"},
+                    "maps": {"colors": colours},
+                },
+                "card_colors": colours,
+            },
+            "maps": {"banner": {"keys": {"title", "subtitle", "fill", "text"}}},
+        },
+        "matrix": {
+            "keys": {*MATRIX_DEFAULTS, "caption"},
+            "values": {"levels": {"keys": {"fill", "text"}}},
+        },
+        "process": {"keys": {*PROCESS_DEFAULTS, "caption"}},
+        "flow": {
+            "keys": {*FLOW_DEFAULTS, "caption", "groups"},
+            "items": {
+                "nodes": {
+                    "keys": {"id", "label", "at", "shape", "span", "fill", "text", "stroke"}
+                    | {"width", "bold"}
+                },
+                "edges": {"keys": {"from", "to", "label", "exit", "enter", "via"}},
+                "groups": {"keys": {"label", "nodes", "fill", "stroke", "text"}},
+            },
+        },
+    }
+
+
+def _unknown_keys(data: dict[str, Any], schema: _Schema, where: str) -> list[tuple[str, str, Any]]:
+    """(key, location, value) for every key the schema does not allow."""
+    found: list[tuple[str, str, Any]] = []
+    for key, value in data.items():
+        name = str(key)
+        if name not in schema.get("keys", set()):
+            found.append((name, where, value))
+            continue
+        sub = schema.get("maps", {}).get(name)
+        if sub and isinstance(value, dict):
+            found += _unknown_keys(value, sub, f"{where}.{name}")
+        sub = schema.get("items", {}).get(name)
+        if sub and isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, dict):
+                    found += _unknown_keys(item, sub, f"{where}.{name}[{i}]")
+        sub = schema.get("values", {}).get(name)
+        if sub and isinstance(value, dict):
+            for vkey, vval in value.items():
+                if isinstance(vval, dict):
+                    found += _unknown_keys(vval, sub, f"{where}.{name}.{vkey}")
+    return found
+
+
+def component_problems(markdown: str, first_line: int = 1) -> list[tuple[int, str]]:
+    """``(line, message)`` for unreadable or unknown options in ``::: figure`` blocks.
+
+    Catches the classic YAML slip of a comma inside an unquoted flow-mapping
+    value -- ``{title: X, subtitle: Context, sources and guardrails}`` -- which
+    silently turns "sources and guardrails" into a key and truncates the text.
+    Blocks inside code fences are skipped. ``first_line`` is the file line of
+    the first line of ``markdown``.
+    """
+    schemas = _component_schemas()
+    lines = markdown.split("\n")
+    problems: list[tuple[int, str]] = []
+    fence = ""
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+        marker = re.match(r"^(`{3,}|~{3,})", stripped)
+        if marker:
+            if not fence:
+                fence = marker.group(1)[0] * 3
+            elif stripped.startswith(fence):
+                fence = ""
+            i += 1
+            continue
+        opened = None if fence else _FENCE_OPEN_RE.match(lines[i])
+        name = opened.group(1).lower() if opened else ""
+        if name not in schemas:
+            i += 1
+            continue
+        end = next(
+            (j for j in range(i + 1, len(lines)) if _FENCE_CLOSE_RE.match(lines[j])), len(lines)
+        )
+        body_lines = lines[i + 1 : end]
+        here = first_line + i
+
+        def line_of(key: str, body_lines: list[str] = body_lines, here: int = here) -> int:
+            pattern = re.compile(rf"(^|[\s{{,]){re.escape(key)}\s*(:|,|\}}|$)")
+            return next(
+                (here + 1 + k for k, text in enumerate(body_lines) if pattern.search(text)), here
+            )
+
+        try:
+            data = yaml.safe_load("\n".join(body_lines)) if "".join(body_lines).strip() else {}
+        except yaml.YAMLError as exc:
+            mark = getattr(exc, "problem_mark", None)
+            at = here + 1 + mark.line if mark is not None else here
+            problems.append((at, f"'::: {name}' options are not valid YAML: {exc}"))
+            i = end + 1
+            continue
+        if data is not None and not isinstance(data, dict):
+            problems.append((here, f"'::: {name}' options must be 'key: value' lines"))
+            data = {}
+        for key, where, value in _unknown_keys(data or {}, schemas[name], name):
+            hint = ""
+            if value is None:  # ``{a: x, y z}`` leaves "y z" as a key with no value
+                hint = (
+                    " (a comma inside an unquoted value in {...} starts a new key; "
+                    'quote the value, e.g. subtitle: "a, b and c")'
+                )
+            problems.append(
+                (line_of(key), f"'::: {name}': unknown option '{key}' in {where}{hint}")
+            )
+        i = end + 1
+    return problems
