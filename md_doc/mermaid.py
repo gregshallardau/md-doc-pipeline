@@ -89,6 +89,7 @@ class Edge:
     # ``src``/``dst`` then hold a stand-in member for layouts that need a node.
     src_group: str = ""
     dst_group: str = ""
+    invisible: bool = False  # ``A ~~~ B``: shapes the layout, never drawn
 
 
 @dataclass
@@ -127,6 +128,8 @@ class Flowchart:
     crossings_unordered: int = 0  # same, before ordering (for comparison)
     end_marker_space: float = 0.0  # extra gap per edge end for wide markers (crow's feet)
     clusters: _ClusterRouting | None = None  # set when groups are laid out as blocks
+    # edge index -> fixed corner points (a chain wrapped into rows draws its row breaks so)
+    fixed_routes: dict[int, list[tuple[float, float]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -159,6 +162,15 @@ class SeqBlock:
 
 
 @dataclass
+class SeqBox:
+    """``box <colour> <label> ... end``: a tinted band behind a group of lifelines."""
+
+    label: str = ""
+    color: str = ""  # empty: transparent, outlined
+    members: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SeqActivation:
     participant: str
     on: bool
@@ -172,6 +184,7 @@ class SequenceDiagram:
     actors: set[str] = field(default_factory=set)
     events: list[SeqMessage | SeqNote | SeqBlock | SeqActivation] = field(default_factory=list)
     autonumber: bool = False
+    boxes: list[SeqBox] = field(default_factory=list)
 
 
 @dataclass
@@ -1109,6 +1122,7 @@ _NODE_PATTERNS = [
 #   plain      -->  ---  --o  --x  ==>  ===  -.->  -.-   (any extra length)
 #   text       -- text -->   == text ==>   -. text .->
 #   both ways  <-->  o--o  x--x
+#   invisible  ~~~   (layout only, never drawn)
 # optionally followed by a pipe label:  -->|label|
 _EDGE_RE = re.compile(
     r"""
@@ -1119,7 +1133,7 @@ _EDGE_RE = re.compile(
                  |\.-+>|\.-+(?![>\w])|\.-[ox](?=\s|$))
       |
         (?P<plain>-{2,}>|-{3,}|-{2,}[ox](?=\s|$|\|)|={2,}>|={3,}|={2,}[ox](?=\s|$|\|)
-                 |-\.+-?>|-\.+-(?![>\w]))
+                 |-\.+-?>|-\.+-(?![>\w])|~{3,})
     )
     (?:\|(?P<pipe>[^|]*)\|)?
     [ \t]*
@@ -1318,8 +1332,8 @@ def parse(source: str) -> Flowchart:
         before = set(fc.nodes)
         if any(True for _ in _EDGE_RE.finditer(_mask(line))):
             _parse_edge_line(fc, line)
-        else:
-            _ensure_node(fc, line)
+        elif _ensure_node(fc, line) not in fc.nodes:
+            logger.warning("Mermaid flowchart: could not read line %r; it is left out", line)
         # Mermaid scopes a node to the group where it is first mentioned.
         if subgraph_stack:
             for nid in fc.nodes:
@@ -1421,7 +1435,9 @@ def _parse_edge_line(fc: Flowchart, line: str) -> None:
             if m.group("lhead")
             else {"o": "circle", "x": "cross"}.get(m.group("lmark") or "", "none")
         )
-        ops.append(Edge("", "", label, style, _end_marker(op), tail))
+        edge = Edge("", "", label, style, _end_marker(op), tail)
+        edge.invisible = op.startswith("~")
+        ops.append(edge)
     spans.append((pos, len(line)))
 
     groups: list[list[str]] = []
@@ -1432,13 +1448,25 @@ def _parse_edge_line(fc: Flowchart, line: str) -> None:
         for cut in [*cuts, len(chunk)]:
             pieces.append(chunk[last:cut])
             last = cut + 1
-        ids = [nid for nid in (_ensure_node(fc, piece) for piece in pieces) if nid in fc.nodes]
+        ids = []
+        for piece in pieces:
+            nid = _ensure_node(fc, piece)
+            if nid in fc.nodes:
+                ids.append(nid)
+            else:
+                logger.warning(
+                    "Mermaid flowchart: could not read %r in line %r; it is left out",
+                    piece.strip(),
+                    line,
+                )
         groups.append(ids)
 
     for i, op in enumerate(ops):
         for src in groups[i]:
             for dst in groups[i + 1]:
-                fc.edges.append(Edge(src, dst, op.label, op.style, op.head, op.tail))
+                edge = Edge(src, dst, op.label, op.style, op.head, op.tail)
+                edge.invisible = op.invisible
+                fc.edges.append(edge)
 
 
 # ---------------------------------------------------------------------------
@@ -1472,6 +1500,8 @@ def parse_pie(source: str) -> PieChart:
         slice_m = re.match(r'^"([^"]+)"\s*:\s*([\d.]+)\s*$', line)
         if slice_m:
             pc.slices.append((slice_m.group(1), float(slice_m.group(2))))
+        elif not line.startswith(("accTitle", "accDescr")):
+            logger.warning("Mermaid pie: could not read line %r; it is left out", line)
 
     return pc
 
@@ -1500,14 +1530,28 @@ def parse_sequence(source: str) -> SequenceDiagram:
         if actor:
             sd.actors.add(pid)
 
+    box: SeqBox | None = None
     for raw_line in source.strip().splitlines():
         line = raw_line.strip().rstrip(";")
         if not line or line.startswith("%%") or line.lower().startswith("sequencediagram"):
             continue
 
-        m = re.match(r"^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$", line, re.IGNORECASE)
+        m = re.match(r"^box\b\s*(.*)$", line, re.IGNORECASE)
+        if m:
+            color, label = _split_leading_color(m.group(1).strip())
+            box = SeqBox(label=label, color=color)
+            sd.boxes.append(box)
+            continue
+        if box is not None and line.lower() == "end":
+            box = None
+            continue
+        m = re.match(
+            r"^(?:create\s+)?(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$", line, re.IGNORECASE
+        )
         if m:
             add(m.group(2).strip(), (m.group(3) or "").strip(), m.group(1).lower() == "actor")
+            if box is not None and m.group(2).strip() not in box.members:
+                box.members.append(m.group(2).strip())
             continue
         if re.match(r"^autonumber\b", line, re.IGNORECASE):
             sd.autonumber = True
@@ -1541,8 +1585,33 @@ def parse_sequence(source: str) -> SequenceDiagram:
             msg = SeqMessage(src=src, dst=dst, label=label.strip(), arrow=arrow, activate=act)
             sd.messages.append(msg)
             sd.events.append(msg)
+            continue
+        if not re.match(
+            r"^(title|accTitle|accDescr|destroy|links?|properties|details)\b", line, re.IGNORECASE
+        ):
+            logger.warning("Mermaid sequence: could not read line %r; it is left out", line)
 
     return sd
+
+
+_CSS_FUNC_COLOR_RE = re.compile(r"^((?:rgba?|hsla?)\([^)]*\))\s*(.*)$", re.IGNORECASE)
+
+
+def _split_leading_color(text: str) -> tuple[str, str]:
+    """``rgb(1,2,3) Label`` / ``#abc Label`` / ``Aqua Label`` -> (colour, label).
+
+    The first word counts as a colour only when it reads as one, so ``box Team``
+    is a label with no colour.
+    """
+    m = _CSS_FUNC_COLOR_RE.match(text)
+    if m:
+        return m.group(1), m.group(2).strip()
+    first, _, rest = text.partition(" ")
+    if first.lower() == "transparent":
+        return "", rest.strip()
+    if first and css_color_to_hex(first):
+        return first, rest.strip()
+    return "", text
 
 
 # ---------------------------------------------------------------------------
@@ -1710,7 +1779,8 @@ def parse_gantt(source: str) -> GanttChart:
             continue
 
         if re.match(
-            r"^(axisFormat|excludes|includes|todayMarker|tickInterval|weekday)\b",
+            r"^(axisFormat|excludes|includes|todayMarker|tickInterval|weekday|inclusiveEndDates"
+            r"|topAxis|displayMode|accTitle|accDescr|click)\b",
             line,
             re.IGNORECASE,
         ):
@@ -1740,6 +1810,8 @@ def parse_gantt(source: str) -> GanttChart:
                 else:
                     task.duration = p
             gc.tasks.append(task)
+            continue
+        logger.warning("Mermaid gantt: could not read line %r; it is left out", line)
 
     return gc
 
@@ -2177,6 +2249,7 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     if not fc.nodes:
         return
     fc.clusters = None
+    fc.fixed_routes = {}
     if fc.subgraphs and _wants_clusters(fc):
         _layout_clusters(fc, theme)
         return
@@ -2223,8 +2296,11 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             node.w = max(max(_text_w(line, font_size, 500) for line in lines) + 12, 56)
             node.h = 50 + num_lines * font_size * 1.3
 
-    # Assign levels
+    # Assign levels. Without any links, left-to-right nodes form a row, as they
+    # already do top-down, instead of stacking in one column.
     levels = _compute_levels(fc)
+    if not fc.edges and fc.direction in ("LR", "RL"):
+        levels = {nid: i for i, nid in enumerate(fc.nodes)}
 
     # Edges spanning several levels (and back edges) get a chain of invisible
     # lane nodes so they reserve space and route around the real nodes.
@@ -2523,6 +2599,7 @@ def _layout_clusters(fc: Flowchart, theme: dict[str, str] | None) -> None:
                 continue
             e = fc.edges[idx]
             sub.edges.append(Edge(key(rs), key(rd), e.label, e.style, e.head, e.tail))
+            sub.edges[-1].invisible = e.invisible
             sub_to_fc.append(idx)
             if rs == s_item and rd == d_item:
                 routing.direction[idx] = direction
@@ -2878,15 +2955,23 @@ def _wrap_label(label: str, max_w: float, weight: int = 500) -> str:
 def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
     """Keep a laid-out diagram within the text column instead of shrinking its text.
 
-    Too wide: wrap long node labels; still too wide, try the other flow direction
-    (left-to-right <-> top-down) and keep it if it fits or is clearly narrower.
-    Opt out per diagram with ``%%{init: {"flowchart": {"autoFit": false}}}%%``.
+    Too wide: a single chain (or unlinked nodes) wraps into rows that keep the
+    declared direction. Otherwise wrap long node labels; still too wide, try the
+    other flow direction (left-to-right <-> top-down) and keep it if it fits or
+    is clearly narrower -- unless the diagram asks to keep its direction with
+    ``%%{init: {"flowchart": {"keepDirection": true}}}%%`` (or the
+    ``%%{ mddoc: { keep_direction: true } }%%`` directive).
+    Opt out entirely with ``%%{init: {"flowchart": {"autoFit": false}}}%%``.
     """
     if t.get("auto_fit") == "0" or not fc.nodes:
         return
     column = float(t.get("column_px") or 640)
     width = _flow_extent(fc)[2]
     if width <= column:
+        return
+    order = _chain_order(fc)
+    if order is not None:
+        _wrap_rows(fc, order, column)
         return
     if wrap:
         for node in fc.nodes.values():
@@ -2896,6 +2981,8 @@ def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
         width = _flow_extent(fc)[2]
         if width <= column:
             return
+    if t.get("keep_direction") == "1":
+        return
     original = fc.direction
     fc.direction = "TD" if original in ("LR", "RL") else "LR"
     layout(fc, t)
@@ -2906,6 +2993,85 @@ def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
     layout(fc, t)
 
 
+def _chain_order(fc: Flowchart) -> list[str] | None:
+    """Nodes in order when the diagram can wrap into rows like text, else None.
+
+    That is a left-to-right single chain ``A --> B --> C`` (any link style,
+    ``~~~`` included), or nodes with no links at all in either direction.
+    """
+    if fc.subgraphs or fc.clusters is not None:
+        return None
+    if not fc.edges:
+        return list(fc.nodes)
+    if fc.direction != "LR" or len(fc.edges) != len(fc.nodes) - 1:
+        return None
+    nxt: dict[str, str] = {}
+    has_in: set[str] = set()
+    for e in fc.edges:
+        if e.src in nxt or e.dst in has_in or e.src == e.dst:
+            return None
+        nxt[e.src] = e.dst
+        has_in.add(e.dst)
+    starts = [n for n in fc.nodes if n not in has_in]
+    if len(starts) != 1:
+        return None
+    order = [starts[0]]
+    while order[-1] in nxt and len(order) <= len(fc.nodes):
+        order.append(nxt[order[-1]])
+    return order if len(order) == len(fc.nodes) else None
+
+
+def _wrap_rows(fc: Flowchart, order: list[str], column: float) -> None:
+    """Place ``order`` left to right in rows no wider than ``column``.
+
+    A link from the end of one row to the start of the next drops into the gap
+    below the row, runs back to the left and enters the next row's first node
+    from above, so the chain still reads left to right, row after row.
+    """
+    pad, gap = 30.0, 48.0
+    row_gap = 56.0 if fc.edges else 30.0  # room for the line that joins two rows
+    label = {(e.src, e.dst): e.label for e in fc.edges if not e.invisible}
+
+    def gap_before(a: str, b: str) -> float:
+        text = label.get((a, b), "")
+        return max(gap, _text_w(text, _FS_SM) + 28) if text else gap
+
+    rows: list[list[str]] = [[]]
+    used = 0.0
+    for nid in order:
+        row = rows[-1]
+        step = gap_before(row[-1], nid) if row else 0.0
+        if row and used + step + fc.nodes[nid].w > column - 2 * pad:
+            rows.append([])
+            row, used, step = rows[-1], 0.0, 0.0
+        row.append(nid)
+        used += step + fc.nodes[nid].w
+    y = pad
+    for row in rows:
+        h = max(fc.nodes[n].h for n in row)
+        x = pad
+        for i, nid in enumerate(row):
+            node = fc.nodes[nid]
+            if i:
+                x += gap_before(row[i - 1], nid)
+            node.x, node.y = x, y + (h - node.h) / 2
+            x += node.w
+        y += h + row_gap
+    fc.waypoints = {}
+    fc.fixed_routes = {}
+    breaks = {(a[-1], b[0]) for a, b in zip(rows, rows[1:])}
+    for i, e in enumerate(fc.edges):
+        if (e.src, e.dst) in breaks:
+            a, b = fc.nodes[e.src], fc.nodes[e.dst]
+            mid = (max(fc.nodes[n].y + fc.nodes[n].h for n in _row_of(rows, e.src)) + b.y) / 2
+            ax, bx = a.x + a.w / 2, b.x + b.w / 2
+            fc.fixed_routes[i] = [(ax, a.y + a.h), (ax, mid), (bx, mid), (bx, b.y)]
+
+
+def _row_of(rows: list[list[str]], nid: str) -> list[str]:
+    return next(row for row in rows if nid in row)
+
+
 def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     """Render a laid-out Flowchart to an SVG string."""
     t = _tokens(theme)
@@ -2913,6 +3079,7 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     _fit_to_column(fc, t)
 
     if not fc.nodes:
+        logger.warning("Mermaid flowchart has no nodes to draw; check the diagram source")
         return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
 
     parts: list[str] = []
@@ -2920,8 +3087,10 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     clusters = fc.clusters
     ports = clusters.ports if clusters else _assign_ports(fc)
     ends: dict[int, tuple[Node, Node, str]] = {}
-    routes: dict[int, list[tuple[float, float]]] = {}
+    routes: dict[int, list[tuple[float, float]]] = dict(fc.fixed_routes)
     for edge_idx, edge in enumerate(fc.edges):
+        if edge.invisible:
+            continue
         src = fc.nodes.get(edge.src)
         dst = fc.nodes.get(edge.dst)
         if clusters:  # an edge to a group meets its frame
@@ -3302,6 +3471,8 @@ def _assign_ports(fc: Flowchart) -> dict[tuple[int, str], _Port]:
     for i, e in enumerate(fc.edges):
         src, dst = fc.nodes.get(e.src), fc.nodes.get(e.dst)
         if not src or not dst or abs(major(src) - major(dst)) < 1:
+            continue
+        if e.invisible or i in fc.fixed_routes:
             continue
         via = fc.waypoints.get(i)
         src_c = (src.x + src.w / 2, src.y + src.h / 2)
@@ -4016,12 +4187,17 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
         fx1 = xs[max(who)] + margin + 22
         tag = f["kind"]
         tag_w = _text_w(tag, 10) + 16
-        fx1 = max(fx1, fx0 + tag_w + _text_w(f"[{f['label']}]", _FS_SM) + 24)
+        if tag != "rect":  # a rect's "label" is its colour, never drawn
+            fx1 = max(fx1, fx0 + tag_w + _text_w(f"[{f['label']}]", _FS_SM) + 24)
         fy0, fy1 = f["y0"] + 2, f["y1"] + 4
         fill = _tint(t["primary"], 0.97, t) if tag == "rect" else "none"
+        stroke = frame_color
+        if tag == "rect" and f["label"] and css_color_to_hex(f["label"]):
+            # ``rect rgb(219, 234, 254)``: a highlight in that colour, no border (as Mermaid)
+            fill, stroke = _escape(f["label"]), "none"
         parts.append(
             f'<rect x="{fx0:g}" y="{fy0:g}" width="{fx1 - fx0:g}" height="{fy1 - fy0:g}" rx="4" '
-            f'fill="{fill}" stroke="{frame_color}" stroke-width="1"/>'
+            f'fill="{fill}" stroke="{stroke}" stroke-width="1"/>'
         )
         if tag != "rect":
             parts.append(
@@ -4041,6 +4217,38 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
             )
             if dlabel:
                 parts.append(_svg_text(fx0 + 8, dy + 14, f"[{dlabel}]", t, _FS_SM, t["ink2"]))
+
+    # Participant boxes behind everything else; the drawing moves down to make
+    # room for their titles
+    box_top = 0.0
+    if sd.boxes:
+        box_top = 22.0 if any(sb.label for sb in sd.boxes) else 8.0
+        bands: list[str] = []
+        for band in sd.boxes:
+            members = [index[m] for m in band.members if m in index]
+            if not members:
+                continue
+            bx0 = min(xs[i] - box_w[i] / 2 for i in members) - 10
+            bx1 = max(xs[i] + box_w[i] / 2 for i in members) + 10
+            hex_fill = css_color_to_hex(band.color) if band.color else None
+            fill = _escape(band.color) if hex_fill else "none"
+            stroke = "none" if hex_fill else frame_color
+            bands.append(
+                f'<rect x="{bx0:g}" y="{-box_top + 2:g}" width="{bx1 - bx0:g}" '
+                f'height="{total_h + box_top - 4:g}" rx="6" fill="{fill}" stroke="{stroke}" '
+                f'stroke-width="1"/>'
+            )
+            if band.label:
+                ink = _text_on(hex_fill, t) if hex_fill else t["ink"]
+                bands.append(
+                    _svg_text(
+                        (bx0 + bx1) / 2, -box_top + 16, band.label, t, _FS_SM, ink, 600, "middle"
+                    )
+                )
+        parts[parts.index("</defs>") + 1 : parts.index("</defs>") + 1] = [
+            f'<g transform="translate(0,{box_top:g})">',
+            *bands,
+        ]
 
     # Lifelines
     for p in sd.participants:
@@ -4087,7 +4295,9 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
                     )
                 )
 
-    return _svg_root(width, total_h, parts, t["font"])
+    if sd.boxes:
+        parts.append("</g>")
+    return _svg_root(width, total_h + box_top, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -7792,6 +8002,14 @@ def _diagram_config(source: str) -> dict:
                 merge(config, data["config"])
             if data.get("title"):
                 config["title"] = str(data["title"])
+    for m in re.finditer(r"%%\{\s*mddoc\s*:\s*(\{.*?\})\s*\}%%", text, re.DOTALL):
+        try:  # md-doc's own options, in YAML flow style: {keep_direction: true}
+            data = yaml.safe_load(m.group(1))
+        except yaml.YAMLError:
+            logger.warning("Mermaid: could not read the mddoc directive %r", m.group(0))
+            continue
+        if isinstance(data, dict):
+            merge(config, {"mddoc": data})
     for m in re.finditer(r"%%\{\s*(?:init|initialize)\s*:\s*(\{.*?\})\s*\}%%", text, re.DOTALL):
         raw = m.group(1)
         for candidate in (raw, raw.replace("'", '"')):
@@ -7829,6 +8047,11 @@ def _config_theme(config: dict) -> dict[str, str]:
     flow = config.get("flowchart")
     if isinstance(flow, dict) and flow.get("autoFit") is False:
         out["auto_fit"] = "0"
+    mddoc = config.get("mddoc")
+    if (isinstance(flow, dict) and flow.get("keepDirection") is True) or (
+        isinstance(mddoc, dict) and mddoc.get("keep_direction") is True
+    ):
+        out["keep_direction"] = "1"
     return out
 
 
@@ -8164,7 +8387,12 @@ def render_swimlanes_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> 
         parts.append(_render_node(node, t))
     width, height = (major_end, lane_total) if horizontal else (lane_total, major_end)
     column = float(t.get("column_px") or 640)
-    if horizontal and width > column and t.get("auto_fit") != "0":
+    if (
+        horizontal
+        and width > column
+        and t.get("auto_fit") != "0"
+        and t.get("keep_direction") != "1"
+    ):
         # Too wide for the page: lanes become columns and the flow runs downwards
         fc.direction = "TD"
         return render_swimlanes_svg(fc, theme)
