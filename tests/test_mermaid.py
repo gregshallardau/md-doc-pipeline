@@ -1160,3 +1160,198 @@ def test_subgraph_frames_never_overlap(seed: int):
     for child, up in parent.items():
         c, p = by_id[child], by_id[up]
         assert p.x <= c.x and c.x + c.w <= p.x + p.w and p.y <= c.y and c.y + c.h <= p.y + p.h
+
+
+# ---------------------------------------------------------------------------
+# Renderer behaviour: direction, invisible links, rows, warnings
+# ---------------------------------------------------------------------------
+
+_SIX_STEPS = (
+    "flowchart LR\n  A[Receive the complaint] --> B[Log it in the register] --> "
+    "C[Assign an investigator] --> D[Investigate the issue] --> E[Agree on the remedy] --> "
+    "F[Close and report back]"
+)
+_BRANCHING = (
+    "flowchart LR\n  A[Receive] --> B{Valid?}\n  B -->|yes| C[Assign an investigator]\n"
+    "  B -->|no| X[Reject the complaint]\n"
+    "  C --> D[Investigate the issue] --> E[Agree on the remedy] --> F[Close and report back]"
+)
+
+
+def _boxes(svg: str) -> list[tuple[float, float]]:
+    """(x, y) of every node rectangle (the ones with a soft shadow beneath)."""
+    return [
+        (float(x), float(y))
+        for x, y in re.findall(r'<rect x="([\d.-]+)" y="([\d.-]+)"[^>]*rx="6" fill="#', svg)
+    ]
+
+
+def test_long_linear_chain_wraps_into_rows_instead_of_flipping():
+    fc = m.parse(_SIX_STEPS)
+    m.render_svg(fc, {"column_px": "640"})
+    assert fc.direction == "LR"
+    order = [fc.nodes[n] for n in "ABCDEF"]
+    rows: dict[float, list[m.Node]] = {}
+    for node in order:
+        rows.setdefault(round(node.y + node.h / 2), []).append(node)
+    assert len(rows) >= 2
+    for row in rows.values():  # each row reads left to right
+        assert [n.x for n in row] == sorted(n.x for n in row)
+    tops = list(rows)
+    assert tops == sorted(tops)  # rows run top to bottom, in chain order
+    assert m._flow_extent(fc)[2] <= 640
+    assert len(fc.fixed_routes) == len(rows) - 1  # one line joins each pair of rows
+
+
+@pytest.mark.parametrize(
+    "directive",
+    [
+        '%%{init: {"flowchart": {"keepDirection": true}}}%%',
+        "%%{ mddoc: { keep_direction: true } }%%",
+    ],
+)
+def test_keep_direction_stops_the_flip(directive: str):
+    svg = m.render_to_svg(f"{directive}\n{_BRANCHING}", {"column_px": "640"})
+    fc = m.parse(_BRANCHING)
+    m.render_svg(fc, {"column_px": "640", "keep_direction": "1"})
+    assert fc.direction == "LR"
+    xs = [fc.nodes[n].x for n in "ABCDEF"]
+    assert xs == sorted(xs)
+    # without it the same diagram flips to top-down
+    flipped = m.parse(_BRANCHING)
+    m.render_svg(flipped, {"column_px": "640"})
+    assert flipped.direction == "TD"
+    assert m._config_theme(m._diagram_config(f"{directive}\nflowchart LR"))["keep_direction"] == "1"
+    assert svg.count("<text") >= 7
+
+
+def test_invisible_links_shape_the_layout_but_are_not_drawn():
+    fc = m.parse("flowchart LR\n  A[Alpha] ~~~ B[Beta]\n  B --> C[Gamma]")
+    assert [(e.src, e.dst, e.invisible) for e in fc.edges] == [
+        ("A", "B", True),
+        ("B", "C", False),
+    ]
+    svg = m.render_svg(fc)
+    assert "Alpha" in svg and "Beta" in svg and "Gamma" in svg
+    assert fc.nodes["A"].x < fc.nodes["B"].x < fc.nodes["C"].x  # A ranks before B
+    assert len(re.findall(r'marker-end="url\(#arr\)"', svg)) == 1  # only B --> C
+
+
+@pytest.fixture
+def mermaid_logs(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch):
+    """caplog for md_doc.mermaid, even after a CLI test stopped md_doc logs propagating."""
+    import logging
+
+    monkeypatch.setattr(logging.getLogger("md_doc"), "propagate", True)
+    with caplog.at_level("WARNING", logger="md_doc.mermaid"):
+        yield caplog
+
+
+def test_unreadable_lines_warn_and_name_the_line(mermaid_logs: pytest.LogCaptureFixture):
+    m.render_to_svg("flowchart LR\n  A --> B\n  this is ((not valid")
+    m.render_to_svg("sequenceDiagram\n  Alice->>Bob: Hi\n  Alice wobbles")
+    m.render_to_svg("gantt\n  section S\n  Task A : a1, 2024-01-01, 3d\n  nonsense here")
+    m.render_to_svg('pie\n  "A" : 30\n  B 70')
+    text = mermaid_logs.text
+    for line in ("this is ((not valid", "Alice wobbles", "nonsense here", "B 70"):
+        assert repr(line) in text
+
+
+def test_a_diagram_with_nothing_to_draw_warns(mermaid_logs: pytest.LogCaptureFixture):
+    m.render_to_svg("flowchart LR\n  ((( )))")
+    assert "no nodes" in mermaid_logs.text
+
+
+def test_edgeless_left_to_right_nodes_form_a_row_and_wrap():
+    fc = m.parse("flowchart LR\n  A[Policy]\n  B[Process]\n  C[People]\n  D[Platform]")
+    m.render_svg(fc)
+    ys = {round(fc.nodes[n].y) for n in "ABCD"}
+    assert len(ys) == 1
+    assert [fc.nodes[n].x for n in "ABCD"] == sorted(fc.nodes[n].x for n in "ABCD")
+    many = m.parse("flowchart LR\n" + "\n".join(f"  N{i}[Label number {i}]" for i in range(9)))
+    m.render_svg(many, {"column_px": "640"})
+    assert len({round(n.y) for n in many.nodes.values()}) >= 2
+    assert m._flow_extent(many)[2] <= 640
+
+
+def test_diagram_taller_than_a_page_warns(mermaid_logs: pytest.LogCaptureFixture):
+    chain = "flowchart TD\n" + "\n".join(f"  s{i} --> s{i + 1}" for i in range(30))
+    m.render_to_svg(chain, {"column_px": "640", "page_px": "945"})
+    assert "tall but a page holds 945px" in mermaid_logs.text
+    mermaid_logs.clear()
+    m.render_to_svg("flowchart TD\n  a --> b", {"column_px": "640", "page_px": "945"})
+    assert not mermaid_logs.text
+    assert "page_px" in m.diagram_theme(None)
+
+
+# ---------------------------------------------------------------------------
+# Colour: sequence boxes and rects, Gantt, mind map, Venn
+# ---------------------------------------------------------------------------
+
+
+def test_sequence_boxes_and_coloured_rect_regions():
+    sd = m.parse_sequence(
+        "sequenceDiagram\n box rgb(219, 234, 254) Government\n participant M as Minister\n"
+        " participant D\n end\n box Team\n participant O\n end\n participant P\n"
+        " M->>D: Set\n rect rgb(254, 243, 199)\n D->>O: Issue\n end\n O->>P: Serve"
+    )
+    assert [(b.label, b.color, b.members) for b in sd.boxes] == [
+        ("Government", "rgb(219, 234, 254)", ["M", "D"]),
+        ("Team", "", ["O"]),  # a first word that is no colour is part of the label
+    ]
+    assert sd.participants == ["M", "D", "O", "P"]
+    svg = m.render_sequence_svg(sd)
+    assert re.search(r'fill="rgb\(219, 234, 254\)" stroke="none"', svg)  # the box band
+    assert re.search(r'fill="rgb\(254, 243, 199\)" stroke="none"', svg)  # the rect region
+    assert ">Government</text>" in svg and ">Team</text>" in svg
+    assert "[rgb(" not in svg  # a rect's colour is never printed as a label
+    assert 'transform="translate(0,22)"' in svg
+
+
+def test_gantt_section_and_task_colours():
+    gc = m.parse_gantt(
+        "gantt\n dateFormat YYYY-MM-DD\n classDef gov fill:#1d4ed8\n classDef ind fill:#0f766e\n"
+        " classDef risk fill:#b45309,stroke:#78350f\n section Government:::gov\n"
+        " Draft :p1, 2026-01-05, 20d\n Consult :crit, p2, after p1, 15d\n section Industry\n"
+        " Prepare :i1, 2026-01-20, 25d\n Pilot:::risk :i2, after i1, 10d\n class Industry ind"
+    )
+    assert gc.section_classes == {"Government": ["gov"], "Industry": ["ind"]}
+    assert [t.name for t in gc.tasks] == ["Draft", "Consult", "Prepare", "Pilot"]
+    assert gc.tasks[3].classes == ["risk"]
+    svg = m.render_gantt_svg(gc)
+    fills = re.findall(
+        r'<rect x="[\d.]+" y="[\d.]+" width="[\d.]+" height="12" rx="3" fill="([^"]+)"', svg
+    )
+    assert fills == ["#1d4ed8", m._CRITICAL, "#0f766e", "#b45309"]  # crit beats its section
+    assert 'fill="#b45309" stroke="#78350f"' in svg
+
+
+def test_mindmap_classes_and_styles_colour_nodes_and_branches():
+    root = m.parse_mindmap(
+        "mindmap\n  root((Regulation))\n    gov[Government]:::gov\n      Policy\n"
+        "    ind[Industry]\n      Operators\n    Public\n    :::gov\n"
+        "  classDef gov fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a\n"
+        "  classDef ind fill:#ccfbf1,stroke:#0f766e\n  class ind ind\n  style root fill:#1f2937"
+    )
+    by_label = {c.label: c for c in root.children}
+    assert by_label["Government"].css["fill"] == "#dbeafe"
+    assert by_label["Industry"].css["stroke"] == "#0f766e"
+    assert by_label["Public"].classes == ["gov"]  # Mermaid's ``:::`` on the next line
+    assert root.css == {"fill": "#1f2937"}
+    svg = m.render_mindmap_svg(root)
+    assert 'fill="#dbeafe" stroke="#1d4ed8"' in svg and 'fill="#1e3a8a">Government<' in svg
+    assert 'fill="#1f2937"' in svg and 'fill="#ffffff">Regulation<' in svg
+    # Policy sits on the Government branch: its border is a tint of the class stroke
+    assert m._tint("#1d4ed8", 0.6, m._tokens()) in svg
+
+
+def test_venn_class_and_inline_class():
+    data = m.parse_venn(
+        'venn-beta\n set GOV["Government"]:::gov\n set IND["Industry"]\n'
+        ' union GOV,IND["Both"]\n classDef gov fill:#1d4ed8\n classDef ind fill:#0f766e\n'
+        " class IND ind\n style IND stroke:#000000"
+    )
+    assert data["styles"]["GOV"] == {"fill": "#1d4ed8"}
+    assert data["styles"]["IND"] == {"fill": "#0f766e", "stroke": "#000000"}
+    svg = m.render_venn_svg(data)
+    assert 'fill="#1d4ed8"' in svg and 'fill="#0f766e"' in svg and 'stroke="#000000"' in svg

@@ -1423,6 +1423,7 @@ drawing is supported:
 | `A -- text --> B`, `A -->\|text\| B`, `A -. text .-> B`, `A == text ==> B` | labelled edges, quoted or not |
 | `A --o B`, `A --x B`, `A <--> B`, `A o--o B` | circle and cross ends, two-way arrows |
 | `A --> B & C`, `B & C --> D` | fan out and in |
+| `A ~~~ B` | invisible link: places `B` after `A` in the layout without drawing a line |
 | `A([x])`, `A((x))`, `A[(x)]`, `A{{x}}`, `A[[x]]`, `A>x]`, `A[/x/]`, `A[\x\]`, `A[/x\]`, `A[\x/]` | stadium, circle, cylinder, hexagon, subroutine, flag, parallelograms, trapezoids |
 | `classDef name fill:#d4edda,stroke:#28a745,color:#14532d`, `A:::name`, `class A,B name`, `style A fill:#fff` | per-node overrides (`fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`) |
 | `linkStyle 0,2 stroke:#dc3545,stroke-width:2px`, `linkStyle default ...` | per-edge overrides, numbered in the order edges appear |
@@ -1447,10 +1448,23 @@ move apart rather than overprint each other. See the
 read as a set:
 
 - *Size.* A diagram renders at its natural size, with 12px labels that sit beside body text.
-  When a flowchart, state, ER or class diagram would be wider than the text column, long node
-  labels wrap, and if it is still too wide it is laid out in the other direction (left-to-right
-  becomes top-down) instead of shrinking its text. Turn that off for one diagram with
+  When a flowchart, state, ER or class diagram would be wider than the text column, it is fitted
+  without shrinking its text:
+  - a single left-to-right chain (`A --> B --> C ...`), or nodes with no links at all, wraps into
+    rows that still read left to right, like a line of text
+    ([example](#markdown-gallery-wrapped-rows));
+  - otherwise long node labels wrap, and if it is still too wide it is laid out in the other
+    direction (left-to-right becomes top-down).
+
+  Keep the declared direction for one diagram with
+  `%%{init: {"flowchart": {"keepDirection": true}}}%%`, or the equivalent
+  `%%{ mddoc: { keep_direction: true } }%%`; the diagram then stays as written and shrinks to
+  the column instead. Turn fitting off altogether with
   `%%{init: {"flowchart": {"autoFit": false}}}%%`. Word and PowerPoint use the same sizes.
+- *Checks.* A line md-doc cannot read in a flowchart, sequence, Gantt or pie diagram is left out
+  with a warning that quotes it, a diagram that would draw nothing warns instead of leaving a
+  blank space, and a diagram taller than the page's text area warns that the PDF and Word output
+  will cut it off (split such a diagram into smaller ones).
 - *Fonts.* Diagrams use the theme's `body` font. Boxes are sized by measuring text with the font
   file that will actually draw it, so wide faces such as DejaVu Sans never overflow. Fonts added
   with the [`fonts`](#configuration) key are used in diagrams too, including the images embedded
@@ -1473,14 +1487,14 @@ read as a set:
 
 | Diagram | Supported beyond the basics |
 |---------|------------------------------|
-| Sequence | `participant A as Alice`, `actor`, `autonumber`, `Note left of / right of / over A,B`, `loop` / `alt` / `else` / `opt` / `par` / `and` / `critical` / `break` / `rect` blocks, `activate` / `deactivate` and `->>+` / `-->>-`, arrows `->>` `-->>` `->` `-->` `-x` `--x` `-)` `--)` `<<->>` |
+| Sequence | `participant A as Alice`, `actor`, `autonumber`, `Note left of / right of / over A,B`, `loop` / `alt` / `else` / `opt` / `par` / `and` / `critical` / `break` blocks, `rect rgb(...) ... end` highlight regions in that colour, `box <colour> <Label> ... end` around participant declarations (a tinted band behind their lifelines; `box Label` alone is outlined), `activate` / `deactivate` and `->>+` / `-->>-`, arrows `->>` `-->>` `->` `-->` `-x` `--x` `-)` `--)` `<<->>` |
 | Pie / donut | `pie showData title …` on the first line; legend with percentages (and values with `showData`) |
 | Bar | `xychart-beta`, `title`, `x-axis "Title" [..]`, `y-axis "Title" 0 --> 200`, several `bar [..]` and `line [..]` series, `horizontal` |
 | Gauge | `title`, `value`, `min`, `max`, `label`, written as `value 72` or `value: 72` |
-| Gantt | `done`, `active`, `crit` and `milestone` tags, `after id`, durations or end dates; bars coloured by section on a calendar-aligned axis |
+| Gantt | `done`, `active`, `crit` and `milestone` tags, `after id`, durations or end dates; bars coloured by section on a calendar-aligned axis; `classDef name fill:#hex,stroke:#hex,color:#hex` with `section Name:::name`, `Task:::name : ...` or `class taskId,Section name` to set the colours (a task's class beats `crit`, which beats its section's) |
 | ER | attribute keys (`int id PK`, `string ref FK`, `PK,FK`), identifying `--` and non-identifying `..` links, crow's-foot ends for every cardinality |
 | Timeline | `title`, `section`, several events per period (`2022 : A : B`, or a line starting with `:`) |
-| Mind map | node shapes `((x))`, `(x)`, `[x]`, `{{x}}`, `))x((`; branches balanced either side of the root, one colour per branch |
+| Mind map | node shapes `((x))`, `(x)`, `[x]`, `{{x}}`, `))x((`; branches balanced either side of the root, one colour per branch; `classDef name fill:...,stroke:...,color:...` with `id[Label]:::name`, a `:::name` line under a node, `class id name` or `style id fill:...` (by id or label); a styled node's colour carries on to its branch's links and child borders |
 | Class | `class X { ... }` bodies or `X : +member`, visibility `+ - # ~`, static `$` (underlined), abstract `*` (italic), generics `List~int~`, `<<interface>>` and other stereotypes, `direction`, `namespace`, `note for X "..."`, relationships `<\|--` `*--` `o--` `-->` `--` `..>` `..\|>` `..` (either way round) with cardinalities `"1" --> "*"` and `: labels` |
 | User journey | `title`, `section`, `Task: score: Actor, Actor` (score 1-5 drawn as a satisfaction curve in good-to-bad status colours, actors as dots with a legend) |
 | Git graph | `commit` (`id`, `tag`, `type: HIGHLIGHT \| REVERSE`, `msg`), `branch` (`order`), `checkout` / `switch`, `merge` (`id`, `tag`), `cherry-pick id: "..."`, `gitGraph TB:` for a vertical graph |
@@ -1499,7 +1513,7 @@ read as a set:
 | Agent flow | `agentflow-beta TB \| LR`, `flow id["Agent"] ... end` groups, `global ... end`, typed shapes `@{ shape: task \| tool \| input \| decision \| refdoc \| action }`, `id@{ view: collapsed }` folds a flow into one node, `--x` failure edges in red |
 | Tree view | indented lines or pasted `tree` output (`├──`, `└──`); names ending `/` are folders, `## note` adds a description, `:::highlight` marks a row, `icon(...)`; config `treeView.showIcons` |
 | Ishikawa | first line is the effect; indented categories alternate above and below the spine, with causes and sub-causes nested under them |
-| Venn | `title`, `set Id["Label"]:size`, `union A,B["Label"]:size` (two or more sets), indented `text Id["Label"]` items, `style Id fill:...,color:...,stroke:...,fill-opacity:...` |
+| Venn | `title`, `set Id["Label"]:size`, `union A,B["Label"]:size` (two or more sets), indented `text Id["Label"]` items, `style Id fill:...,color:...,stroke:...,fill-opacity:...`, `classDef name ...` with `set Id:::name`, `union A,B:::name` or `class A,B name` (a `style` on the same set still wins) |
 | Cynefin | `title`, `complex` / `complicated` / `clear` / `chaotic` / `confusion` blocks of quoted items, transitions `complex --> complicated : "Label"`; config `cynefin.showDomainDescriptions`, `cynefin.boundaryAmplitude` |
 | Wardley map | `title`, `size [w, h]`, `evolution A -> B -> C` (with `@0.3` widths and `Label / Sub` pairs), `anchor` and `component Name [visibility, evolution]` with `label [dx, dy]` and `(inertia)`, `(build)`, `(buy)`, `(outsource)`, `(market)`; links `->`, `-.->`, `+>`, `+<`, `+<>`, `+'label'>`, `A -> B; label`; `evolve`, `pipeline X { ... }`, `note`, `annotations` / `annotation N,[v, e] "text"`, `accelerator`, `deaccelerator` |
 | Railroad | EBNF (`=` or `::=`, `\|`, `,`, `[ ]`, `{ }`, `?`, `*`, `+`, `A - B`, `? special ?`, comments), ABNF (`/`, `*A`, `1*A`, `2*4A`, `%x41-5A`, `;` comments), PEG (`<-`, `/`, `&A`, `!A`, `.`, `#` comments) and IR constructors (`sequence`, `choice`, `optional`, `zeroOrMore`, `oneOrMore`, `terminal`, `nonterminal`, `special`); long rules wrap onto several rows |
@@ -1659,6 +1673,46 @@ flowchart LR
     style IND fill:#ccfbf1,stroke:#0f766e
 ```
 
+<a id="markdown-gallery-wrapped-rows"></a>
+
+##### Flowchart that wraps into rows
+
+`flowchart LR` with a chain too long for one line. It wraps into rows that still read left to right, instead of turning top-down.
+
+````markdown
+```mermaid
+flowchart LR
+    A[Receive the complaint] --> B[Log it in the register] --> C[Assign an investigator]
+    C --> D[Investigate the issue] --> E[Agree on the remedy] --> F[Close and report back]
+```
+````
+
+```mermaid
+flowchart LR
+    A[Receive the complaint] --> B[Log it in the register] --> C[Assign an investigator]
+    C --> D[Investigate the issue] --> E[Agree on the remedy] --> F[Close and report back]
+```
+
+<a id="markdown-gallery-invisible-links"></a>
+
+##### Flowchart with invisible links
+
+`A ~~~ B` orders nodes without drawing a line, here to set out three themes in a row before the one link that matters.
+
+````markdown
+```mermaid
+flowchart LR
+    P[Policy] ~~~ Q[Process] ~~~ R[People]
+    R --> S[Outcomes]
+```
+````
+
+```mermaid
+flowchart LR
+    P[Policy] ~~~ Q[Process] ~~~ R[People]
+    R --> S[Outcomes]
+```
+
 ##### Sequence
 
 `sequenceDiagram`. Participants, messages, notes and `alt` / `loop` blocks.
@@ -1705,6 +1759,50 @@ sequenceDiagram
     end
     Note over W,P: All calls are idempotent
     W-->>-C: Order confirmed
+```
+
+<a id="markdown-gallery-sequence-boxes"></a>
+
+##### Sequence with boxes and highlights
+
+`box <colour> <Label> ... end` groups participants on a tinted band; `rect <colour> ... end` highlights a run of messages.
+
+````markdown
+```mermaid
+sequenceDiagram
+    box rgb(219, 234, 254) Government
+        participant M as Minister
+        participant D as Department
+    end
+    box rgb(204, 251, 241) Industry
+        participant O as Operator
+    end
+    participant P as Public
+    M->>D: Set policy
+    rect rgb(254, 243, 199)
+        D->>O: Issue licence
+        O-->>D: Report
+    end
+    O->>P: Provide service
+```
+````
+
+```mermaid
+sequenceDiagram
+    box rgb(219, 234, 254) Government
+        participant M as Minister
+        participant D as Department
+    end
+    box rgb(204, 251, 241) Industry
+        participant O as Operator
+    end
+    participant P as Public
+    M->>D: Set policy
+    rect rgb(254, 243, 199)
+        D->>O: Issue licence
+        O-->>D: Report
+    end
+    O->>P: Provide service
 ```
 
 ##### State
@@ -1815,6 +1913,42 @@ mindmap
       Training
 ```
 
+<a id="markdown-gallery-mindmap-colours"></a>
+
+##### Mind map with a colour key
+
+`classDef` and `:::name` give branches a shared colour key; each class colours its node and the links and borders of its branch.
+
+````markdown
+```mermaid
+mindmap
+  root((Regulation))
+    gov[Government]:::gov
+      Policy
+      Funding
+    ind[Industry]:::ind
+      Operators
+      Suppliers
+    Public
+  classDef gov fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+  classDef ind fill:#ccfbf1,stroke:#0f766e,color:#134e4a
+```
+````
+
+```mermaid
+mindmap
+  root((Regulation))
+    gov[Government]:::gov
+      Policy
+      Funding
+    ind[Industry]:::ind
+      Operators
+      Suppliers
+    Public
+  classDef gov fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+  classDef ind fill:#ccfbf1,stroke:#0f766e,color:#134e4a
+```
+
 ##### Timeline
 
 `timeline`. Periods with one or more events.
@@ -1873,6 +2007,44 @@ gantt
     Backend    :b1, 2026-01-26, 30d
     Frontend   :crit, 2026-02-09, 25d
     Launch     :milestone, 2026-03-10, 0d
+```
+
+<a id="markdown-gallery-gantt-colours"></a>
+
+##### Gantt with a colour key
+
+`classDef` with `section Name:::name` colours a whole section; `Task:::name` colours one task.
+
+````markdown
+```mermaid
+gantt
+    dateFormat YYYY-MM-DD
+    classDef gov fill:#1d4ed8
+    classDef ind fill:#0f766e
+    classDef risk fill:#b45309,stroke:#78350f
+    section Government:::gov
+    Draft policy    :p1, 2026-01-05, 20d
+    Consult         :p2, after p1, 15d
+    section Industry:::ind
+    Prepare systems :i1, 2026-01-20, 25d
+    Pilot:::risk    :i2, after i1, 10d
+    Go live         :milestone, i3, after i2, 0d
+```
+````
+
+```mermaid
+gantt
+    dateFormat YYYY-MM-DD
+    classDef gov fill:#1d4ed8
+    classDef ind fill:#0f766e
+    classDef risk fill:#b45309,stroke:#78350f
+    section Government:::gov
+    Draft policy    :p1, 2026-01-05, 20d
+    Consult         :p2, after p1, 15d
+    section Industry:::ind
+    Prepare systems :i1, 2026-01-20, 25d
+    Pilot:::risk    :i2, after i1, 10d
+    Go live         :milestone, i3, after i2, 0d
 ```
 
 ##### Pie
@@ -2815,6 +2987,34 @@ venn-beta
   union Feasible,Viable["Sustainable"]
   union Desirable,Viable["Marketable"]
   union Desirable,Feasible,Viable["Ship it"]
+```
+
+<a id="markdown-gallery-venn-colours"></a>
+
+##### Venn with a colour key
+
+`classDef` with `set Id:::name` (or `class Id name`) colours the sets from the same key as the other diagrams.
+
+````markdown
+```mermaid
+venn-beta
+  title Shared responsibility
+  set GOV["Government"]:::gov
+  set IND["Industry"]:::ind
+  union GOV,IND["Co-regulation"]
+  classDef gov fill:#1d4ed8,stroke:#1d4ed8
+  classDef ind fill:#0f766e,stroke:#0f766e
+```
+````
+
+```mermaid
+venn-beta
+  title Shared responsibility
+  set GOV["Government"]:::gov
+  set IND["Industry"]:::ind
+  union GOV,IND["Co-regulation"]
+  classDef gov fill:#1d4ed8,stroke:#1d4ed8
+  classDef ind fill:#0f766e,stroke:#0f766e
 ```
 
 ##### Cynefin

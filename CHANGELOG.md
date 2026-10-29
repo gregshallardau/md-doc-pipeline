@@ -16,6 +16,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`GOV --> IND`) meet the frame instead of an inner node; sibling frames never overlap; edges that
   leave their group are routed at right angles around frames in the way (and off other lines and
   frame titles); and edge labels move apart instead of overprinting.
+- **Flowcharts keep their direction.** A left-to-right chain, or a set of unlinked nodes, too
+  wide for the column now wraps into rows that still read left to right instead of flipping to
+  top-down. `%%{init: {"flowchart": {"keepDirection": true}}}%%` (or
+  `%%{ mddoc: { keep_direction: true } }%%`) keeps any diagram's declared direction.
+- **Invisible links.** `A ~~~ B` places nodes in the layout without drawing a line.
+- **Sequence `box` groups and coloured `rect` regions.** `box <colour> <Label> ... end` draws a
+  tinted band behind a group of lifelines; `rect rgb(...) ... end` now fills in that colour.
+- **Colour keys for Gantt, mind map and Venn.** `classDef` with `class` and `:::name` (and
+  `style` in mind maps) set section and task colours in Gantt charts and node and set colours in
+  mind maps and Venn diagrams, so they can follow a document-wide colour key.
+- Diagram warnings: an unreadable flowchart, sequence, Gantt or pie line is logged with the line
+  quoted, a diagram that draws nothing warns, and so does one taller than the page's text area.
 - PowerPoint output now draws `::: name` component figures (`flow`, `cards`, `tiers`, `rings`,
   `matrix`, `process`) as pictures; they were previously left as raw text.
 - **Real Word footnotes.** With `page_footnotes: true`, DOCX/DOTX output now gets real Word
@@ -110,6 +122,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ICC profiles) that cannot be found.
 
 ### Fixed
+- Mermaid flowcharts no longer flip from left-to-right to top-down without a way to stop it
+  (see `keepDirection` above), and long chains wrap into rows instead.
+- A Mermaid `~~~` link no longer swallows the line it is on (the diagram came out missing its
+  nodes, with no warning).
+- A `flowchart LR` with nodes but no links lays them out in a row instead of a column.
+- A sequence `rect rgb(...)` block is filled in its colour instead of a fixed tint.
+- A straight flowchart edge that leaves a node off-centre has its label on the line, not beside it.
 - `\bar`, `\vec`, `\overbrace` and other stretchy accents no longer fail the Word build
   (mathml2omml writes a malformed `m:groupChrPr`, now repaired).
 - A page footnote that fits is no longer moved to the next page when `@footnote` uses

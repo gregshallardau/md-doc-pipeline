@@ -230,6 +230,7 @@ class GanttTask:
     duration: str = ""
     section: str = ""
     tags: set[str] = field(default_factory=set)  # done | active | crit | milestone
+    classes: list[str] = field(default_factory=list)  # ``Task:::name`` / ``class id name``
 
 
 @dataclass
@@ -237,6 +238,8 @@ class GanttChart:
     title: str = ""
     date_format: str = "YYYY-MM-DD"
     tasks: list[GanttTask] = field(default_factory=list)
+    class_defs: dict[str, dict[str, str]] = field(default_factory=dict)
+    section_classes: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -245,6 +248,9 @@ class MindNode:
     children: list["MindNode"] = field(default_factory=list)
     x: float = 0.0
     y: float = 0.0
+    node_id: str = ""  # ``id[Label]``; style / class statements name a node by id or label
+    classes: list[str] = field(default_factory=list)
+    css: dict[str, str] = field(default_factory=dict)  # resolved fill / stroke / color
 
 
 @dataclass
@@ -1761,6 +1767,7 @@ def parse_gantt(source: str) -> GanttChart:
     """Parse a Mermaid gantt chart definition."""
     gc = GanttChart()
     current_section = ""
+    assigned: list[tuple[list[str], str]] = []
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("%%"):
@@ -1786,17 +1793,31 @@ def parse_gantt(source: str) -> GanttChart:
         ):
             continue
 
-        sec_m = re.match(r"^section\s+(.+)$", line, re.IGNORECASE)
-        if sec_m:
-            current_section = sec_m.group(1).strip()
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            for name in m.group(1).split(","):
+                gc.class_defs.setdefault(name.strip(), {}).update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^class\s+(.+?)\s+([\w-]+)$", line)
+        if m:
+            assigned.append(([x.strip() for x in m.group(1).split(",")], m.group(2)))
             continue
 
-        # Task line: "Task name :[tags,] [id,] [start,] duration"
-        task_m = re.match(r"^(.+?)\s*:\s*(.+)$", line)
+        sec_m = re.match(r"^section\s+(.+?)(?:\s*:::\s*([\w-]+))?$", line, re.IGNORECASE)
+        if sec_m:
+            current_section = sec_m.group(1).strip()
+            if sec_m.group(2):
+                gc.section_classes.setdefault(current_section, []).append(sec_m.group(2))
+            continue
+
+        # Task line: "Task name[:::class] :[tags,] [id,] [start,] duration"
+        task_m = re.match(r"^(.+?)(?:\s*:::\s*([\w-]+))?\s*:(?!::)\s*(.+)$", line)
         if task_m:
             name = task_m.group(1).strip()
-            params = [p.strip() for p in task_m.group(2).split(",")]
+            params = [p.strip() for p in task_m.group(3).split(",")]
             task = GanttTask(name=name, section=current_section)
+            if task_m.group(2):
+                task.classes.append(task_m.group(2))
             for p in params:
                 if p.lower() in _GANTT_TAGS:
                     task.tags.add(p.lower())
@@ -1813,6 +1834,20 @@ def parse_gantt(source: str) -> GanttChart:
             continue
         logger.warning("Mermaid gantt: could not read line %r; it is left out", line)
 
+    # ``class a1,a2 name`` names task ids or whole sections
+    sections = {task.section for task in gc.tasks}
+    for ids, name in assigned:
+        for ident in ids:
+            ident = ident.strip('"')
+            hits = [task for task in gc.tasks if task.task_id == ident]
+            for task in hits:
+                task.classes.append(name)
+            if ident in sections:
+                gc.section_classes.setdefault(ident, []).append(name)
+            elif not hits:
+                logger.warning(
+                    "Mermaid gantt: 'class' names %r, which is no task or section", ident
+                )
     return gc
 
 
@@ -1825,6 +1860,10 @@ def parse_mindmap(source: str) -> MindNode:
     """Parse a Mermaid mindmap definition into a tree."""
     root = MindNode(label="Root")
     stack: list[tuple[int, MindNode]] = []  # (indent_level, node)
+    class_defs: dict[str, dict[str, str]] = {}
+    styles: dict[str, dict[str, str]] = defaultdict(dict)
+    assigned: dict[str, list[str]] = defaultdict(list)
+    nodes: list[MindNode] = []
 
     for raw_line in source.strip().splitlines():
         if not raw_line.strip() or raw_line.strip().startswith("%%"):
@@ -1832,21 +1871,41 @@ def parse_mindmap(source: str) -> MindNode:
         if re.match(r"^\s*mindmap\b", raw_line, re.IGNORECASE):
             continue
         stripped = raw_line.lstrip()
-        if stripped.startswith("::icon(") or stripped.startswith(":::"):
+        m = re.match(r"^(classDef|style)\s+(\S+)\s+(\S*:.+)$", stripped)
+        if m:
+            target = class_defs if m.group(1) == "classDef" else styles
+            for name in m.group(2).split(","):
+                target.setdefault(name.strip(), {}).update(_parse_css(m.group(3)))
+            continue
+        m = re.match(r"^class\s+(\S+)\s+([\w-]+(?:\s*,\s*[\w-]+)*)$", stripped)
+        if m:
+            for nid in m.group(1).split(","):
+                assigned[nid.strip()] += [c.strip() for c in m.group(2).split(",")]
+            continue
+        if stripped.startswith(":::"):  # Mermaid's own form: classes for the node above
+            if stack:
+                stack[-1][1].classes += stripped[3:].split()
+            continue
+        if stripped.startswith("::icon("):
             continue
         indent = len(raw_line) - len(stripped)
 
-        label = re.sub(r"\s*:::.*$", "", stripped.strip())
+        cm = re.search(r"\s*:::\s*(.*)$", stripped.strip())
+        classes = cm.group(1).split() if cm else []
+        label = stripped.strip()[: cm.start()] if cm else stripped.strip()
         # Shape decorations around the label: id((x)), (x), [x], {{x}}, ))x((, )x(
         shape_m = re.match(
-            r"^[\w-]*\s*(\(\((.+)\)\)|\(\[(.+)\]\)|\{\{(.+)\}\}|\)\)(.+)\(\(|\)(.+)\(|\((.+)\)|\[(.+)\])$",
+            r"^([\w-]*)\s*(\(\((.+)\)\)|\(\[(.+)\]\)|\{\{(.+)\}\}|\)\)(.+)\(\(|\)(.+)\(|\((.+)\)|\[(.+)\])$",
             label,
         )
+        node_id = ""
         if shape_m:
-            label = next(g for g in shape_m.groups()[1:] if g is not None)
+            node_id = shape_m.group(1)
+            label = next(g for g in shape_m.groups()[2:] if g is not None)
         label = label.strip().strip('"')
 
-        node = MindNode(label=label)
+        node = MindNode(label=label, node_id=node_id or label, classes=classes)
+        nodes.append(node)
         if not stack:
             root = node
             stack.append((indent, node))
@@ -1859,7 +1918,25 @@ def parse_mindmap(source: str) -> MindNode:
                 root.children.append(node)
             stack.append((indent, node))
 
+    for node in nodes:
+        css: dict[str, str] = {}
+        for name in [*node.classes, *assigned.get(node.node_id, []), *assigned.get(node.label, [])]:
+            css.update(class_defs.get(name, {}))
+        css.update(styles.get(node.node_id, {}))
+        css.update(styles.get(node.label, {}) if node.label != node.node_id else {})
+        node.css = css
     return root
+
+
+def _mind_base(node: MindNode) -> str | None:
+    """The colour a styled mind-map node hands to its branch (links, child borders)."""
+    stroke = css_color_to_hex(node.css.get("stroke", ""))
+    if stroke:
+        return stroke
+    fill = css_color_to_hex(node.css.get("fill", ""))
+    if fill and _luminance(fill) > 0.45:  # a pale fill: use a deeper shade for lines
+        return _mix(fill, "#000000", 0.45)
+    return fill
 
 
 # ---------------------------------------------------------------------------
@@ -4049,7 +4126,7 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
                 open_frames.append(
                     {"kind": ev.kind, "label": ev.label, "y0": y, "who": set(), "dividers": []}
                 )
-                y += 30
+                y += 14 if ev.kind == "rect" else 30  # a rect has no tag to make room for
             continue
         if isinstance(ev, SeqActivation):
             if ev.on:
@@ -4712,6 +4789,17 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             sections.append(task.section)
     sec_color = {s: _palette(t)[i % 8] for i, s in enumerate(sections)}
 
+    def class_css(names: list[str]) -> dict[str, str]:
+        css: dict[str, str] = {}
+        for name in names:
+            css.update(gc.class_defs.get(name, {}))
+        return css
+
+    for sec in sections:  # a section class recolours its whole section
+        fill = css_color_to_hex(class_css(gc.section_classes.get(sec, [])).get("fill", ""))
+        if fill:
+            sec_color[sec] = fill
+
     parts, top = _chart_title(gc.title, t)
     label_w = min(
         max([_text_w(task.name, 11) for task in gc.tasks] + [_text_w(s, 11) for s in sections])
@@ -4773,7 +4861,13 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
         task = gc.tasks[idx]
         first = False
         a, b = timeline[idx]
-        color = _CRITICAL if "crit" in task.tags else sec_color[task.section]
+        task_css = class_css(task.classes)
+        own = css_color_to_hex(task_css.get("fill", ""))
+        # A task's own class wins over `crit`, which wins over its section's colour
+        color = own or (_CRITICAL if "crit" in task.tags else sec_color[task.section])
+        on_bar = css_color_to_hex(task_css.get("color", "")) or _text_on(color, t)
+        edge = css_color_to_hex(task_css.get("stroke", ""))
+        outline = f' stroke="{edge}" stroke-width="1"' if edge else ""
         parts.append(
             _svg_text(12 if task.section else 0, y + row_h / 2 + 4, task.name, t, 11, t["ink2"])
         )
@@ -4782,7 +4876,7 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             mx, s = sx(a), 6.5
             parts.append(
                 f'<path d="M {mx:.1f},{cy - s:.1f} L {mx + s:.1f},{cy:.1f} L {mx:.1f},{cy + s:.1f} '
-                f'L {mx - s:.1f},{cy:.1f} Z" fill="{color}"/>'
+                f'L {mx - s:.1f},{cy:.1f} Z" fill="{color}"{outline}/>'
             )
             parts.append(
                 _svg_text(
@@ -4800,13 +4894,11 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             opacity = ' fill-opacity="0.4"' if "done" in task.tags else ""
             parts.append(
                 f'<rect x="{bx:.1f}" y="{cy - bar_h / 2:g}" width="{bw:.1f}" height="{bar_h:g}" '
-                f'rx="3" fill="{color}"{opacity}/>'
+                f'rx="3" fill="{color}"{opacity}{outline}/>'
             )
             dur = task.duration if _gantt_days(task.duration) else f"{b - a:g}d"
             if bw >= _text_w(dur, 9.5) + 12 and "done" not in task.tags:
-                parts.append(
-                    _svg_text(bx + bw / 2, cy + 3.5, dur, t, 9.5, _text_on(color, t), 600, "middle")
-                )
+                parts.append(_svg_text(bx + bw / 2, cy + 3.5, dur, t, 9.5, on_bar, 600, "middle"))
             else:
                 parts.append(_svg_text(bx + bw + 5, cy + 3.5, dur, t, 9.5, t["ink2"]))
         y += row_h
@@ -4870,6 +4962,7 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
         node: MindNode, depth: int, side: int, offsets: list[float], y: float, color: str
     ) -> tuple[float, float]:
         """Lay out a subtree; return (centre y, next free y)."""
+        color = _mind_base(node) or color  # a styled node recolours its branch
         w, h = size(node, depth)
         if node.children:
             cys = []
@@ -4956,24 +5049,35 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
             f'fill="none" stroke="{_tint(color, 0.25 if depth == 1 else 0.45, t)}" '
             f'stroke-width="{2 if depth == 1 else 1.5}" stroke-linecap="round"/>'
         )
+    root_fill = css_color_to_hex(root.css.get("fill", "")) or t["term_fill"]
+    root_ink = css_color_to_hex(root.css.get("color", "")) or (
+        _text_on(root_fill, t) if "fill" in root.css else t["term_text"]
+    )
+    root_stroke = css_color_to_hex(root.css.get("stroke", ""))
     parts.append(
         f'<rect x="{-rw / 2:g}" y="{root_cy - lw / 2:g}" width="{rw:g}" height="{lw:g}" '
-        f'rx="{lw / 2:g}" fill="{t["term_fill"]}"/>'
+        f'rx="{lw / 2:g}" fill="{root_fill}"'
+        + (f' stroke="{root_stroke}" stroke-width="1.25"' if root_stroke else "")
+        + "/>"
     )
-    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, t["term_text"], 600, "middle"))
+    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, root_ink, 600, "middle"))
     for node, depth, x, by, w, h, color in boxes:
         if depth == 1:
             fill, stroke, fs, weight = _tint(color, 0.86, t), _tint(color, 0.35, t), _FS, 500
         else:
             fill, stroke, fs, weight = t["card"], _tint(color, 0.6, t), 11.5, 400
+        own_fill = css_color_to_hex(node.css.get("fill", ""))
+        fill = own_fill or fill
+        stroke = css_color_to_hex(node.css.get("stroke", "")) or stroke
+        ink = css_color_to_hex(node.css.get("color", "")) or (
+            _text_on(own_fill, t) if own_fill else t["ink"]
+        )
         parts.append(
             f'<rect x="{x:g}" y="{by:g}" width="{w:g}" height="{h:g}" rx="{h / 2:g}" '
             f'fill="{fill}" stroke="{stroke}" stroke-width="1.25"/>'
         )
         parts.append(
-            _svg_text(
-                x + w / 2, by + h / 2 + fs * 0.35, node.label, t, fs, weight=weight, anchor="middle"
-            )
+            _svg_text(x + w / 2, by + h / 2 + fs * 0.35, node.label, t, fs, ink, weight, "middle")
         )
     parts.append("</g>")
     return _svg_root(max(xe) - ox + pad, max(ye) - oy + pad, parts, t["font"])
@@ -8651,6 +8755,8 @@ def parse_venn(source: str) -> dict:
     sets: list[dict] = []
     unions: list[dict] = []
     styles: dict[str, dict[str, str]] = {}
+    class_defs: dict[str, dict[str, str]] = {}
+    assigned: list[tuple[str, str]] = []  # (set or union id, class name)
     last: dict | None = None
     for raw_line in source.splitlines():
         line = raw_line.strip()
@@ -8658,6 +8764,22 @@ def parse_venn(source: str) -> dict:
             continue
         if line.startswith(("accTitle", "accDescr")):
             continue
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            for name in m.group(1).split(","):
+                class_defs.setdefault(name.strip(), {}).update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^class\s+(\S+)\s+([\w-]+)$", line)
+        if m:  # ``class A,B name`` styles the sets A and B
+            assigned += [(_unquote(i.strip()), m.group(2)) for i in m.group(1).split(",")]
+            continue
+        cm = re.search(r"\s*:::\s*([\w-]+)\s*$", line)
+        if cm and re.match(r"^(set|union)\s", line):
+            line = line[: cm.start()]
+            head = re.match(r"^(?:set|union)\s+([^\[:]+)", line)
+            if head:
+                key = ",".join(_unquote(p.strip()) for p in head.group(1).split(","))
+                assigned.append((key, cm.group(1)))
         m = re.match(r"^title\s+(.+)$", line)
         if m:
             title = _unquote(m.group(1).strip())
@@ -8694,6 +8816,8 @@ def parse_venn(source: str) -> dict:
                 if ":" in decl:
                     k, v = decl.split(":", 1)
                     css[k.strip()] = v.strip()
+    for key, name in assigned:  # a class is the base; ``style`` on the same set still wins
+        styles[key] = {**class_defs.get(name, {}), **styles.get(key, {})}
     return {"title": title, "sets": sets, "unions": unions, "styles": styles}
 
 
@@ -10299,7 +10423,36 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
     svg = _render_by_type(diagram_type, source, theme)
     if config.get("title"):
         svg = _with_title(svg, config["title"], _tokens(theme))
+    _check_fits(svg, diagram_type, source, theme)
     return svg
+
+
+#: Elements that put ink on the page; an SVG without any of them is blank.
+_DRAWN_RE = re.compile(r"<(?:rect|path|circle|ellipse|line|polyline|polygon|text|image)\b")
+
+
+def _check_fits(svg: str, diagram_type: str, source: str, theme: dict[str, str]) -> None:
+    """Warn about a blank diagram, or one taller than a page (it would be cut off)."""
+    first = next((ln.strip() for ln in source.splitlines() if ln.strip()), diagram_type)
+    if not _DRAWN_RE.search(svg):
+        logger.warning("Mermaid %s diagram %r draws nothing; check its source", diagram_type, first)
+        return
+    m = re.search(r'viewBox="[\d.\-]+ [\d.\-]+ ([\d.]+) ([\d.]+)"', svg)
+    page = float(theme.get("page_px") or 0)
+    if not m or not page:
+        return
+    width, height = float(m.group(1)), float(m.group(2))
+    column = float(theme.get("column_px") or width)
+    shown = height * min(1.0, column / width) if width else height
+    if shown > page:
+        logger.warning(
+            "Mermaid %s diagram %r is %.0fpx tall but a page holds %.0fpx; the PDF and Word "
+            "output will cut it off. Split it into smaller diagrams.",
+            diagram_type,
+            first,
+            shown,
+            page,
+        )
 
 
 def _render_by_type(diagram_type: str, source: str, theme: dict[str, str]) -> str:
@@ -10415,6 +10568,8 @@ def diagram_theme(
 
             geom = _page_geometry(css_text)
             column_px = (geom["w"] - geom["left"] - geom["right"]) / 25.4 * 96
+            # the text area's height, to flag diagrams too tall for one page
+            theme["page_px"] = f"{(geom['h'] - geom['top'] - geom['bottom']) / 25.4 * 96:.0f}"
         except Exception:
             column_px = None
     if column_px:

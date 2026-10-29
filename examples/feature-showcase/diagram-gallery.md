@@ -62,6 +62,22 @@ flowchart LR
 
 <!-- pagebreak -->
 
+## Flowchart that wraps into rows
+
+```mermaid
+flowchart LR
+    A[Receive the complaint] --> B[Log it in the register] --> C[Assign an investigator]
+    C --> D[Investigate the issue] --> E[Agree on the remedy] --> F[Close and report back]
+```
+
+## Flowchart with invisible links
+
+```mermaid
+flowchart LR
+    P[Policy] ~~~ Q[Process] ~~~ R[People]
+    R --> S[Outcomes]
+```
+
 ## Sequence
 
 ```mermaid
@@ -83,6 +99,26 @@ sequenceDiagram
     end
     Note over W,P: All calls are idempotent
     W-->>-C: Order confirmed
+```
+
+## Sequence with boxes and highlights
+
+```mermaid
+sequenceDiagram
+    box rgb(219, 234, 254) Government
+        participant M as Minister
+        participant D as Department
+    end
+    box rgb(204, 251, 241) Industry
+        participant O as Operator
+    end
+    participant P as Public
+    M->>D: Set policy
+    rect rgb(254, 243, 199)
+        D->>O: Issue licence
+        O-->>D: Report
+    end
+    O->>P: Provide service
 ```
 
 ## State
@@ -140,6 +176,22 @@ mindmap
 
 <!-- pagebreak -->
 
+## Mind map with a colour key
+
+```mermaid
+mindmap
+  root((Regulation))
+    gov[Government]:::gov
+      Policy
+      Funding
+    ind[Industry]:::ind
+      Operators
+      Suppliers
+    Public
+  classDef gov fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+  classDef ind fill:#ccfbf1,stroke:#0f766e,color:#134e4a
+```
+
 ## Timeline
 
 ```mermaid
@@ -169,6 +221,23 @@ gantt
 ```
 
 <!-- pagebreak -->
+
+## Gantt with a colour key
+
+```mermaid
+gantt
+    dateFormat YYYY-MM-DD
+    classDef gov fill:#1d4ed8
+    classDef ind fill:#0f766e
+    classDef risk fill:#b45309,stroke:#78350f
+    section Government:::gov
+    Draft policy    :p1, 2026-01-05, 20d
+    Consult         :p2, after p1, 15d
+    section Industry:::ind
+    Prepare systems :i1, 2026-01-20, 25d
+    Pilot:::risk    :i2, after i1, 10d
+    Go live         :milestone, i3, after i2, 0d
+```
 
 ## Pie
 
@@ -637,6 +706,18 @@ venn-beta
 ```
 
 <!-- pagebreak -->
+
+## Venn with a colour key
+
+```mermaid
+venn-beta
+  title Shared responsibility
+  set GOV["Government"]:::gov
+  set IND["Industry"]:::ind
+  union GOV,IND["Co-regulation"]
+  classDef gov fill:#1d4ed8,stroke:#1d4ed8
+  classDef ind fill:#0f766e,stroke:#0f766e
+```
 
 ## Cynefin
 
