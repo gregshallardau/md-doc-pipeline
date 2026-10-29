@@ -561,6 +561,37 @@ def _flow_node_box(node: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]
     return {"lines": lines, "w": width, "h": height, "size": size, "shape": shape, "span": span}
 
 
+_GROUP_PAD = 10.0  # frame padding around a group's nodes
+_GROUP_LABEL_H = 18.0  # band above the nodes that holds the group label
+
+GROUP_DEFAULTS: dict[str, str] = {"fill": "#eef2f7", "stroke": "#64748b", "text": "#1f2937"}
+
+
+def _flow_group_frames(
+    groups: list[dict[str, Any]], boxes: dict[str, dict[str, Any]], opts: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Rounded, tinted frames (with a label) around each group's nodes."""
+    frames: list[dict[str, Any]] = []
+    for group in groups:
+        members = [boxes[str(n)] for n in group.get("nodes") or [] if str(n) in boxes]
+        if not members:
+            continue
+        g = {**GROUP_DEFAULTS, **{k: v for k, v in group.items() if v is not None}}
+        x0 = min(b["cx"] - b["w"] / 2 for b in members) - _GROUP_PAD
+        x1 = max(b["cx"] + b["w"] / 2 for b in members) + _GROUP_PAD
+        y0 = min(b["cy"] - b["h"] / 2 for b in members) - _GROUP_PAD - _GROUP_LABEL_H
+        y1 = max(b["cy"] + b["h"] / 2 for b in members) + _GROUP_PAD
+        svg = (
+            f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{x1 - x0:.1f}" height="{y1 - y0:.1f}" '
+            f'rx="10" fill="{_attr(g["fill"])}" stroke="{_attr(g["stroke"])}" stroke-width="1.2"/>'
+        )
+        label = str(group.get("label") or "")
+        if label:
+            svg += text_block(x0 + 10, y0 + 12, [label], 10, _attr(g["text"]), 700)
+        frames.append({"svg": svg, "x0": x0, "y0": y0, "x1": x1, "y1": y1})
+    return frames
+
+
 def flow_svg(options: dict[str, Any] | None = None) -> str:
     """Flowchart with nodes on a ``[column, row]`` grid and orthogonal arrows.
 
@@ -569,6 +600,8 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
     Edges: ``[from, to, label?]`` or ``{from, to, label, exit, enter, via}``
     where ``exit``/``enter`` pick a side (top, bottom, left, right) and ``via``
     (left or right) sends the arrow round the outside of the diagram.
+    Groups: ``{label, nodes: [ids], fill, stroke, text}`` draw a tinted, labelled
+    frame behind the listed nodes (under the arrows, so no arrow is hidden).
     """
     opts = {**FLOW_DEFAULTS, **(options or {})}
     nodes_in: list[dict[str, Any]] = list(opts["nodes"] or FLOW_DEFAULTS["nodes"])
@@ -582,7 +615,8 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
     lanes_r = sum(1 for e in edges_in if isinstance(e, dict) and e.get("via") == "right")
     left_pad = margin + 34 * lanes_l
     title = str(opts.get("title") or "")
-    top = margin + (30 if title else 0)
+    groups = [g for g in (opts.get("groups") or []) if isinstance(g, dict)]
+    top = margin + (30 if title else 0) + (_GROUP_LABEL_H if groups else 0)
 
     rows = sorted({b["at"][1] for b in boxes.values()})
     row_h = {r: max(b["h"] for b in boxes.values() if b["at"][1] == r) for r in rows}
@@ -609,6 +643,12 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
     parts: list[str] = []
     if title:
         parts.append(text_block(width / 2, margin + 8, [title], 15, opts["text"], 700, "middle"))
+    frames = _flow_group_frames(groups, boxes, opts)
+    for frame in frames:
+        parts.append(frame["svg"])
+    if frames:
+        width = max(width, max(f["x1"] for f in frames) + margin / 2)
+        total_h = max(total_h, max(f["y1"] for f in frames) + margin / 2)
     arrow = opts["arrow"]
     for b in boxes.values():
         x, yy, w, h = b["cx"] - b["w"] / 2, b["cy"] - b["h"] / 2, b["w"], b["h"]

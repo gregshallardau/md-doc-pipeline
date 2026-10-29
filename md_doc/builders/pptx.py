@@ -948,7 +948,11 @@ def build(
 
     from ..critic import prepare as prepare_review_markup
 
+    from ..components import expand_components
+
     body = prepare_review_markup(_strip_frontmatter(rendered_md), config, "pptx")
+    # ``::: name`` figures become embedded pictures, as in Word
+    body = expand_components(body, "docx")
     title = config.get("title") or _extract_title(body) or out_path.stem
     author = str(config.get("author", ""))
     date = str(config.get("date", ""))
@@ -983,6 +987,9 @@ def build(
     except Exception:
         mermaid_theme = None
     html, images = _render_mermaid_to_images(html, mermaid_theme)
+    from .docx import _render_component_svgs
+
+    html = _render_component_svgs(html, images)
     from ..charts import render_to_images as _render_charts_to_images
 
     html = _render_charts_to_images(

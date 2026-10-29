@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`::: flow` groups.** A new `groups` option draws a tinted, rounded, labelled frame behind a
+  set of nodes (`label`, `nodes`, `fill`, `stroke`, `text`), under the arrows so no edge is
+  hidden. Works in PDF, Word and PowerPoint.
+- **Mermaid subgraphs laid out as blocks.** `direction TB|LR|RL|BT` inside a `subgraph` now
+  sets that group's own flow, independently of the parent; `style <groupId> fill:…,stroke:…,color:…`
+  and `class <groupId> <classDef>` colour the group's frame; edges to and from a group id
+  (`GOV --> IND`) meet the frame instead of an inner node; sibling frames never overlap; edges that
+  leave their group are routed at right angles around frames in the way (and off other lines and
+  frame titles); and edge labels move apart instead of overprinting.
+- PowerPoint output now draws `::: name` component figures (`flow`, `cards`, `tiers`, `rings`,
+  `matrix`, `process`) as pictures; they were previously left as raw text.
 - **Real Word footnotes.** With `page_footnotes: true`, DOCX/DOTX output now gets real Word
   footnotes at the foot of the page, as the PDF does; the theme's `.md-footnote` rule sets their
   font and size.

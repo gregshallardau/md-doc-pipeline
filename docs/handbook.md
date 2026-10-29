@@ -648,6 +648,57 @@ edges:
 
 Nodes take `id`, `label`, `at: [column, row]` (fractions are allowed), and optionally `shape` (`box`, `pill` or `diamond`), `span` (columns wide), `fill` and `text`. An edge is `[from, to, label]` or a mapping with `exit` and `enter` sides (`top`, `bottom`, `left`, `right`) and `via: left | right` to route round the outside.
 
+`groups` draws a tinted, rounded frame with a label behind a set of nodes, sized to their
+bounding box plus padding. Each group takes `label`, `nodes` (a list of node ids) and optional
+`fill`, `stroke` and `text` (label colour). Frames sit underneath the arrows, so no edge is
+hidden, and they work the same in PDF, Word and PowerPoint:
+
+```markdown
+::: flow
+col_width: 230
+nodes:
+  - {id: g1, label: Policy, at: [0, 0]}
+  - {id: g2, label: Regulation, at: [0, 1]}
+  - {id: g3, label: Enforcement, at: [0, 2]}
+  - {id: i1, label: Standards, at: [1, 0]}
+  - {id: i2, label: Compliance, at: [1, 1]}
+  - {id: i3, label: Reporting, at: [1, 2]}
+edges:
+  - [g1, g2]
+  - [g2, g3]
+  - [i1, i2]
+  - [i2, i3]
+  - [g2, i2, regulates]
+  - {from: i3, to: i1, via: right}
+groups:
+  - {label: Government, nodes: [g1, g2, g3], fill: "#dbeafe", stroke: "#1d4ed8", text: "#1e3a8a"}
+  - {label: Industry, nodes: [i1, i2, i3], fill: "#ccfbf1", stroke: "#0f766e", text: "#134e4a"}
+:::
+```
+
+**Rendered example:**
+
+::: flow
+col_width: 230
+nodes:
+  - {id: g1, label: Policy, at: [0, 0]}
+  - {id: g2, label: Regulation, at: [0, 1]}
+  - {id: g3, label: Enforcement, at: [0, 2]}
+  - {id: i1, label: Standards, at: [1, 0]}
+  - {id: i2, label: Compliance, at: [1, 1]}
+  - {id: i3, label: Reporting, at: [1, 2]}
+edges:
+  - [g1, g2]
+  - [g2, g3]
+  - [i1, i2]
+  - [i2, i3]
+  - [g2, i2, regulates]
+  - {from: i3, to: i1, via: right}
+groups:
+  - {label: Government, nodes: [g1, g2, g3], fill: "#dbeafe", stroke: "#1d4ed8", text: "#1e3a8a"}
+  - {label: Industry, nodes: [i1, i2, i3], fill: "#ccfbf1", stroke: "#0f766e", text: "#134e4a"}
+:::
+
 ### Captions and lists
 
 A diagram's `caption:` and any line written as `Table 8.1: Support levels` on its own are captions. They are numbered by you, linked, and styled as captions. Two blocks list them:
@@ -1376,12 +1427,21 @@ drawing is supported:
 | `classDef name fill:#d4edda,stroke:#28a745,color:#14532d`, `A:::name`, `class A,B name`, `style A fill:#fff` | per-node overrides (`fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`) |
 | `linkStyle 0,2 stroke:#dc3545,stroke-width:2px`, `linkStyle default ...` | per-edge overrides, numbered in the order edges appear |
 | `subgraph id [Title]`, `subgraph "Title"`, nested `subgraph` | framed groups |
+| `direction TB` (or `LR`, `RL`, `BT`) inside a `subgraph` | that group flows its own way, whatever the parent's direction |
+| `style GroupId fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a`, `class GroupId name` | colour a group's frame (`fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `fill-opacity`; `color` sets the title, which otherwise picks dark or white to read on the fill) |
 | `A@{ shape: doc, label: "Spec" }` | Mermaid 11 shape names and aliases (`rect`, `rounded`, `stadium`, `diam`, `hex`, `cyl`, `doc`, `circle`, `lean-r`, `subproc`, ...) |
-| `A --> Group`, `Group --> B` | edges to and from a subgraph attach to its first or last member |
+| `A --> Group`, `Group --> B`, `GroupA --> GroupB` | edges to and from a subgraph meet its frame, not a node inside it |
 
 Nodes are laid out in ranks with crossings minimised, long and looping edges run in their own
 lanes, and edges leaving one node fan out instead of sharing a line. Override individual nodes
 with `classDef` or `style`.
+
+When a group sets its own `direction`, or an edge starts or ends on a group, every group is laid
+out as one block: its contents are arranged in the group's direction and the block takes its
+place in the parent's flow, so frames never overlap. An edge that leaves its group is routed at
+right angles around any frame in its way (and off other lines and frame titles), and edge labels
+move apart rather than overprint each other. See the
+[coloured groups example](#markdown-gallery-coloured-groups).
 
 **How diagrams look.** Every diagram type shares one design system, so a document's diagrams
 read as a set:
@@ -1543,6 +1603,60 @@ flowchart TD
     end
     C --> D[Release]
     D --> E([Done])
+```
+
+<a id="markdown-gallery-coloured-groups"></a>
+
+##### Flowchart with coloured groups
+
+`flowchart` with `subgraph`, `direction` and `style`. Each group is a coloured column that runs
+top to bottom inside a left-to-right flow. `GOV --> REG` joins the frames themselves, and the
+dotted `consults` link from one group to another goes round the frame between them.
+
+````markdown
+```mermaid
+flowchart LR
+    subgraph GOV["Government"]
+        direction TB
+        G1[Minister] --> G2[Department] --> G3[Agency]
+    end
+    subgraph REG["Regulator"]
+        direction TB
+        R1[Board] --> R2[Inspectors]
+    end
+    subgraph IND["Industry"]
+        direction TB
+        I1[Operators] --> I2[Suppliers] --> I3[Customers]
+    end
+    GOV -->|funds| REG
+    REG -->|licenses| IND
+    G2 -.->|consults| I2
+    style GOV fill:#dbeafe,stroke:#1d4ed8
+    style REG fill:#fef3c7,stroke:#b45309
+    style IND fill:#ccfbf1,stroke:#0f766e
+```
+````
+
+```mermaid
+flowchart LR
+    subgraph GOV["Government"]
+        direction TB
+        G1[Minister] --> G2[Department] --> G3[Agency]
+    end
+    subgraph REG["Regulator"]
+        direction TB
+        R1[Board] --> R2[Inspectors]
+    end
+    subgraph IND["Industry"]
+        direction TB
+        I1[Operators] --> I2[Suppliers] --> I3[Customers]
+    end
+    GOV -->|funds| REG
+    REG -->|licenses| IND
+    G2 -.->|consults| I2
+    style GOV fill:#dbeafe,stroke:#1d4ed8
+    style REG fill:#fef3c7,stroke:#b45309
+    style IND fill:#ccfbf1,stroke:#0f766e
 ```
 
 ##### Sequence

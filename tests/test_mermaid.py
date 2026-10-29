@@ -1013,3 +1013,150 @@ def test_c4_labelled_neighbours_get_room_and_relations_avoid_cards():
     )
     svg = m.render_c4_svg(cd)
     assert " Q " in svg  # a to c bends around b
+
+
+# ---------------------------------------------------------------------------
+# Subgraphs laid out as blocks: own direction, colours, frame edges, routing
+# ---------------------------------------------------------------------------
+
+_TWO_COLUMNS = """flowchart LR
+  subgraph GOV["Government"]
+    direction TB
+    G1 --> G2 --> G3
+  end
+  subgraph IND["Industry"]
+    direction TB
+    I1 --> I2 --> I3
+  end
+  G2 -.->|regulates| I2
+  style GOV fill:#dbeafe,stroke:#1d4ed8
+  style IND fill:#ccfbf1,stroke:#0f766e
+"""
+
+
+def _path_points(d: str) -> list[tuple[float, float]]:
+    nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?(?:e-?\d+)?", d)]
+    return list(zip(nums[0::2], nums[1::2]))
+
+
+def _overlap(a: m.Subgraph, b: m.Subgraph) -> bool:
+    return a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h
+
+
+def test_subgraph_direction_and_style_make_two_coloured_columns():
+    fc = m.parse(_TWO_COLUMNS)
+    gov, ind = fc.subgraphs
+    assert gov.direction == ind.direction == "TB" and fc.direction == "LR"
+    assert gov.css == {"fill": "#dbeafe", "stroke": "#1d4ed8"}
+    svg = m.render_svg(fc)
+    # Each column runs top to bottom, the columns sit side by side
+    for ids in (["G1", "G2", "G3"], ["I1", "I2", "I3"]):
+        col = [fc.nodes[n] for n in ids]
+        assert len({round(n.x) for n in col}) == 1
+        assert col[0].y < col[1].y < col[2].y
+    assert gov.x + gov.w < ind.x and abs(gov.y - ind.y) < 1
+    assert 'fill="#dbeafe" stroke="#1d4ed8"' in svg and 'fill="#ccfbf1" stroke="#0f766e"' in svg
+    # One dotted link, straight across between the middle nodes
+    dotted = re.findall(r'<path d="([^"]+)"[^>]*stroke-dasharray="5 3"', svg)
+    assert len(dotted) == 1
+    pts = _path_points(dotted[0])
+    g2, i2 = fc.nodes["G2"], fc.nodes["I2"]
+    assert len({round(y) for _, y in pts}) == 1
+    assert abs(pts[0][0] - (g2.x + g2.w)) < 1 and abs(pts[-1][0] - i2.x) < 1
+
+
+def test_subgraph_class_and_label_colour():
+    fc = m.parse(
+        "flowchart LR\n subgraph A[Dark]\n x\n end\n"
+        " classDef navy fill:#1e3a8a,stroke:#0f172a,stroke-dasharray:4 2\n class A navy"
+    )
+    svg = m.render_svg(fc)
+    assert fc.subgraphs[0].css["fill"] == "#1e3a8a"
+    assert 'stroke-dasharray="4 2"' in svg
+    assert re.search(r'fill="#ffffff">Dark</text>', svg)  # light title on a dark frame
+
+
+def test_edges_to_a_subgraph_meet_its_frame_and_labels_do_not_collide():
+    fc = m.parse(
+        "flowchart LR\n subgraph GOV[Government]\n direction TB\n A --> B\n end\n"
+        " subgraph IND[Industry]\n direction TB\n C --> D\n end\n"
+        " GOV -->|funds| IND\n GOV -->|appoints| IND"
+    )
+    assert [(e.src_group, e.dst_group) for e in fc.edges[-2:]] == [("GOV", "IND")] * 2
+    svg = m.render_svg(fc)
+    gov, ind = fc.subgraphs
+    frame_paths = [
+        _path_points(d)
+        for d in re.findall(r'<path d="([^"]+)" stroke=[^>]*marker-end', svg)
+        if (pts := _path_points(d)) and abs(pts[0][0] - (gov.x + gov.w)) < 1
+    ]
+    assert len(frame_paths) == 2
+    for pts in frame_paths:
+        assert abs(pts[-1][0] - ind.x) < 1  # ends on the Industry frame, not a node in it
+    pills = [
+        (float(x), float(y), float(x) + float(w), float(y) + 15)
+        for x, y, w in re.findall(
+            r'<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="15"', svg
+        )
+    ]
+    assert len(pills) == 2
+    a, b = pills
+    assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
+
+
+def test_cross_group_edge_routes_around_a_frame_in_between():
+    fc = m.parse(
+        "flowchart LR\n subgraph GOV[Government]\n direction TB\n G1 --> G2\n end\n"
+        " subgraph MID[Regulator]\n direction TB\n M1 --> M2\n end\n"
+        " subgraph IND[Industry]\n direction TB\n I1 --> I2\n end\n"
+        " GOV --> MID\n MID --> IND\n G1 -.->|consults| I1"
+    )
+    svg = m.render_svg(fc)
+    mid = next(sg for sg in fc.subgraphs if sg.id == "MID")
+    dotted = re.findall(r'<path d="([^"]+)"[^>]*stroke-dasharray="5 3"', svg)
+    assert len(dotted) == 1
+    pts = _path_points(dotted[0])
+    frame = (mid.x, mid.y, mid.x + mid.w, mid.y + mid.h)
+    assert not m._polyline_hits(pts, [frame])
+    # ... and starts on G1 and ends on I1
+    g1, i1 = fc.nodes["G1"], fc.nodes["I1"]
+    assert g1.x - 1 <= pts[0][0] <= g1.x + g1.w + 1 and g1.y - 1 <= pts[0][1] <= g1.y + g1.h + 1
+    assert i1.x - 1 <= pts[-1][0] <= i1.x + i1.w + 1 and i1.y - 1 <= pts[-1][1] <= i1.y + i1.h + 1
+    # The detour fits inside the drawing
+    vb = [float(v) for v in re.search(r'viewBox="([^"]+)"', svg).group(1).split()]
+    ox, oy = (float(v) for v in re.search(r"translate\(([-\d.]+),([-\d.]+)\)", svg).groups())
+    assert all(0 <= x + ox <= vb[2] and 0 <= y + oy <= vb[3] for x, y in pts)
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_subgraph_frames_never_overlap(seed: int):
+    import random
+
+    rng = random.Random(seed)
+    lines = [f"flowchart {rng.choice(['LR', 'TD'])}"]
+    groups = rng.randint(2, 4)
+    for g in range(groups):
+        lines.append(f" subgraph S{g}[Group {g}]")
+        if rng.random() < 0.7:
+            lines.append(f"  direction {rng.choice(['LR', 'TB'])}")
+        for k in range(rng.randint(1, 3)):
+            lines.append(f"  n{g}_{k}[Node {g}.{k}]")
+        if rng.random() < 0.4:
+            lines += [f"  subgraph S{g}x[Inner {g}]", f"   n{g}_9[Deep {g}]", "  end"]
+        lines.append(" end")
+    nodes = [ln.split("[")[0].strip() for ln in lines if ln.strip().startswith("n")]
+    for _ in range(rng.randint(2, 7)):
+        a, b = rng.sample(nodes, 2)
+        lines.append(f" {a} --> {b}")
+    lines.append(f" S0 --> S{groups - 1}")
+    fc = m.parse("\n".join(lines))
+    m.render_svg(fc)
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+    parent = {c: sg.id for sg in fc.subgraphs for c in sg.children}
+    for a in fc.subgraphs:
+        for b in fc.subgraphs:
+            if a.id < b.id and parent.get(a.id) == parent.get(b.id):
+                assert not _overlap(a, b), (a.id, b.id, "\n".join(lines))
+    for child, up in parent.items():
+        c, p = by_id[child], by_id[up]
+        assert p.x <= c.x and c.x + c.w <= p.x + p.w and p.y <= c.y and c.y + c.h <= p.y + p.h

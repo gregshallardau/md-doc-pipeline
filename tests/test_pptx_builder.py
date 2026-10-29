@@ -338,3 +338,24 @@ def test_background_only_directive_on_content_slide(repo):
     assert slide.background.fill.fore_color.rgb == RGBColor(0x1B, 0x4F, 0x72)
     title_para = slide.shapes.title.text_frame.paragraphs[0]
     assert title_para.font.color.rgb == RGBColor(0xFF, 0xFF, 0xFF)
+
+
+def test_component_figures_are_embedded_as_pictures(tmp_path: Path) -> None:
+    body = (
+        "# Deck\n\n## Groups\n\n::: flow\n"
+        "nodes:\n  - {id: a, label: A, at: [0, 0]}\n  - {id: b, label: B, at: [1, 0]}\n"
+        "edges: [[a, b]]\n"
+        "groups:\n  - {label: Team, nodes: [a, b], fill: '#dbeafe'}\n:::\n"
+    )
+    prs = _build(tmp_path, body, {})
+    pictures = [
+        shape
+        for slide in prs.slides
+        for shape in slide.shapes
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE
+    ]
+    assert len(pictures) == 1
+    texts = [
+        shape.text_frame.text for s in prs.slides for shape in s.shapes if shape.has_text_frame
+    ]
+    assert not any(":::" in t or "nodes:" in t for t in texts)

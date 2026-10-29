@@ -148,3 +148,55 @@ def test_list_of_needs_a_valid_kind() -> None:
 def test_table_caption_inside_a_table_or_code_is_left_alone() -> None:
     source = "```\nTable 1: not a caption\n```\n"
     assert expand_components(source) == source
+
+
+def test_flow_groups_draw_labelled_frames_behind_nodes_and_edges() -> None:
+    svg = diagrams.flow_svg(
+        {
+            "nodes": [
+                {"id": "g1", "label": "Policy", "at": [0, 0]},
+                {"id": "g2", "label": "Regulation", "at": [0, 1]},
+                {"id": "i1", "label": "Compliance", "at": [1, 1]},
+            ],
+            "edges": [["g1", "g2"], ["g2", "i1", "regulates"]],
+            "groups": [
+                {
+                    "label": "Government",
+                    "nodes": ["g1", "g2"],
+                    "fill": "#dbeafe",
+                    "stroke": "#1d4ed8",
+                    "text": "#1e3a8a",
+                },
+                {"label": "Industry", "nodes": ["i1", "missing"]},
+            ],
+        }
+    )
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    rects = root.findall(f"{ns}rect")
+    gov = next(r for r in rects if r.get("fill") == "#dbeafe")
+    assert gov.get("stroke") == "#1d4ed8" and gov.get("rx") == "10"
+    # The frame encloses both of its nodes, with room for the label above them
+    x0, y0 = float(gov.get("x")), float(gov.get("y"))
+    x1, y1 = x0 + float(gov.get("width")), y0 + float(gov.get("height"))
+    nodes = [r for r in rects if r.get("fill") == diagrams.FLOW_DEFAULTS["fill"]]
+    assert len(nodes) == 3
+    for node in nodes[:2]:
+        nx, ny = float(node.get("x")), float(node.get("y"))
+        assert x0 < nx and y0 + 18 < ny
+        assert nx + float(node.get("width")) < x1 and ny + float(node.get("height")) < y1
+    labels = [t for t in root.iter(f"{ns}text") if "".join(t.itertext()) == "Government"]
+    assert labels and labels[0].get("fill") == "#1e3a8a"
+    # Frames first: nodes and arrows are drawn over them, never hidden
+    assert svg.index('fill="#dbeafe"') < svg.index(diagrams.FLOW_DEFAULTS["fill"])
+    assert svg.index('fill="#dbeafe"') < svg.index("<path")
+    # Unknown node ids are skipped; the default group colours apply
+    assert diagrams.GROUP_DEFAULTS["fill"] in svg
+    # Everything fits in the viewBox
+    vb = [float(v) for v in root.get("viewBox").split()]
+    assert y0 >= 0 and y1 <= vb[3] and x1 <= vb[2]
+
+
+def test_flow_without_groups_is_unchanged() -> None:
+    opts = {"nodes": [{"id": "a", "label": "A", "at": [0, 0]}], "edges": []}
+    assert diagrams.flow_svg(opts) == diagrams.flow_svg({**opts, "groups": []})

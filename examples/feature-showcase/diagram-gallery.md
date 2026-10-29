@@ -36,6 +36,30 @@ flowchart TD
     D --> E([Done])
 ```
 
+## Flowchart with coloured groups
+
+```mermaid
+flowchart LR
+    subgraph GOV["Government"]
+        direction TB
+        G1[Minister] --> G2[Department] --> G3[Agency]
+    end
+    subgraph REG["Regulator"]
+        direction TB
+        R1[Board] --> R2[Inspectors]
+    end
+    subgraph IND["Industry"]
+        direction TB
+        I1[Operators] --> I2[Suppliers] --> I3[Customers]
+    end
+    GOV -->|funds| REG
+    REG -->|licenses| IND
+    G2 -.->|consults| I2
+    style GOV fill:#dbeafe,stroke:#1d4ed8
+    style REG fill:#fef3c7,stroke:#b45309
+    style IND fill:#ccfbf1,stroke:#0f766e
+```
+
 <!-- pagebreak -->
 
 ## Sequence

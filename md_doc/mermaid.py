@@ -85,6 +85,10 @@ class Edge:
     head: str = "arrow"  # end marker: arrow | circle | cross | none
     tail: str = "none"  # start marker (bidirectional edges): arrow | circle | cross | none
     css: dict[str, str] = field(default_factory=dict)
+    # Subgraph ids when the edge was written to or from a group (``A --> Group``);
+    # ``src``/``dst`` then hold a stand-in member for layouts that need a node.
+    src_group: str = ""
+    dst_group: str = ""
 
 
 @dataclass
@@ -97,6 +101,18 @@ class Subgraph:
     y: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    direction: str = ""  # ``direction TB`` inside the group; empty inherits the parent's
+    css: dict[str, str] = field(default_factory=dict)  # ``style`` / ``class`` on the group
+
+
+@dataclass
+class _ClusterRouting:
+    """Per-edge routing decided by the cluster layout (groups laid out as blocks)."""
+
+    direction: dict[int, str] = field(default_factory=dict)  # flow direction of the edge's scope
+    ports: dict[tuple[int, str], "_Port"] = field(default_factory=dict)
+    cross: set[int] = field(default_factory=set)  # edges routed around obstacles
+    frames: dict[str, "Node"] = field(default_factory=dict)  # group id -> frame box
 
 
 @dataclass
@@ -110,6 +126,7 @@ class Flowchart:
     crossings: int = 0  # edge crossings between adjacent levels after ordering
     crossings_unordered: int = 0  # same, before ordering (for comparison)
     end_marker_space: float = 0.0  # extra gap per edge end for wide markers (crow's feet)
+    clusters: _ClusterRouting | None = None  # set when groups are laid out as blocks
 
 
 @dataclass
@@ -1243,9 +1260,12 @@ def parse(source: str) -> Flowchart:
             if dir_m.group(1):
                 fc.direction = dir_m.group(1).upper()
             continue
-        if re.match(r"^direction\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE) or line.startswith(
-            ("click ", "accTitle", "accDescr")
-        ):
+        dm = re.match(r"^direction\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE)
+        if dm:
+            if subgraph_stack:  # a group's own flow direction
+                subgraph_stack[-1].direction = dm.group(1).upper()
+            continue
+        if line.startswith(("click ", "accTitle", "accDescr")):
             continue
 
         # Styling statements
@@ -1311,6 +1331,10 @@ def parse(source: str) -> Flowchart:
     return fc
 
 
+#: ``style`` / ``classDef`` properties a subgraph frame honours.
+_FRAME_CSS = ("fill", "stroke", "stroke-width", "stroke-dasharray", "color", "fill-opacity")
+
+
 def _subgraph_members(fc: Flowchart, sg: Subgraph) -> list[str]:
     by_id = {g.id: g for g in fc.subgraphs}
     out = [n for n in sg.node_ids if n in fc.nodes]
@@ -1337,11 +1361,11 @@ def _attach_subgraph_edges(fc: Flowchart) -> None:
         if e.dst in groups and e.dst not in fc.nodes:
             members = _subgraph_members(fc, groups[e.dst])
             if members:
-                e.dst = members[0]
+                e.dst_group, e.dst = e.dst, members[0]
         if e.src in groups and e.src not in fc.nodes:
             members = _subgraph_members(fc, groups[e.src])
             if members:
-                e.src = members[-1]
+                e.src_group, e.src = e.src, members[-1]
     fc.edges = [e for e in fc.edges if e.src in fc.nodes and e.dst in fc.nodes]
 
 
@@ -1363,6 +1387,12 @@ def _apply_styles(
             css.update(class_defs.get(name, {}))
         css.update(node_styles.get(nid, {}))
         node.css = css
+    for sg in fc.subgraphs:
+        css = {}
+        for name in assigned.get(sg.id, []):
+            css.update(class_defs.get(name, {}))
+        css.update(node_styles.get(sg.id, {}))
+        sg.css = {k: v for k, v in css.items() if k in _FRAME_CSS}
     for idxs, css in link_styles:
         for i in range(len(fc.edges)) if idxs is None else idxs:
             if 0 <= i < len(fc.edges):
@@ -2146,6 +2176,10 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     """Position all nodes in the flowchart."""
     if not fc.nodes:
         return
+    fc.clusters = None
+    if fc.subgraphs and _wants_clusters(fc):
+        _layout_clusters(fc, theme)
+        return
 
     font_size = 12
 
@@ -2391,6 +2425,358 @@ def _separate_frames(fc: Flowchart, is_horizontal: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cluster layout: each group laid out as a block in its own direction
+# ---------------------------------------------------------------------------
+
+_SG_PAD = 12.0  # frame padding around a group's contents
+_SG_TITLE = 18.0  # band at the top of a frame that holds its title
+
+_Item = tuple[str, str]  # ("n", node id) or ("g", group id)
+
+
+def _wants_clusters(fc: Flowchart) -> bool:
+    """Groups with their own ``direction``, or edges to a group, need the block layout."""
+    return any(sg.direction for sg in fc.subgraphs) or any(
+        e.src_group or e.dst_group for e in fc.edges
+    )
+
+
+def _edge_items(e: Edge) -> tuple[_Item, _Item]:
+    src: _Item = ("g", e.src_group) if e.src_group else ("n", e.src)
+    dst: _Item = ("g", e.dst_group) if e.dst_group else ("n", e.dst)
+    return src, dst
+
+
+def _layout_clusters(fc: Flowchart, theme: dict[str, str] | None) -> None:
+    """Lay out every group as one block, so frames never overlap.
+
+    Working from the innermost groups out, each group's own nodes and child
+    blocks are laid out in the group's ``direction`` (or the parent's), and
+    the finished block becomes a single fixed-size node one level up. Edges
+    between two items of the same scope are routed there, in that scope's
+    direction; edges that leave a group run around the frames in between
+    (see :func:`_orthogonal_route`).
+    """
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+    parent: dict[_Item, str | None] = {}
+    for sg in fc.subgraphs:
+        parent.setdefault(("g", sg.id), None)
+        for cid in sg.children:
+            if cid in by_id:
+                parent[("g", cid)] = sg.id
+        for nid in sg.node_ids:
+            if nid in fc.nodes:
+                parent.setdefault(("n", nid), sg.id)
+    for nid in fc.nodes:
+        parent.setdefault(("n", nid), None)
+
+    def path(item: _Item) -> list[_Item | None]:
+        out: list[_Item | None] = [item]
+        seen = {item}
+        up = parent.get(item)
+        while up is not None and ("g", up) not in seen:
+            seen.add(("g", up))
+            out.append(("g", up))
+            up = parent.get(("g", up))
+        out.append(None)
+        return out
+
+    def rep(scope: str | None, item: _Item) -> _Item | None:
+        """The item directly inside ``scope`` that holds ``item`` (None if outside it)."""
+        chain = path(item)
+        target = None if scope is None else ("g", scope)
+        if target not in chain[1:]:
+            return None
+        return chain[chain.index(target) - 1]
+
+    def key(item: _Item) -> str:
+        return item[1] if item[0] == "n" else f"\0g:{item[1]}"
+
+    routing = _ClusterRouting()
+    fc.waypoints = {}
+    proxies: dict[str, Node] = {}
+    scope_edges: dict[str | None, list[int]] = defaultdict(list)
+    edge_items = [_edge_items(e) for e in fc.edges]
+
+    def layout_scope(scope: str | None, direction: str) -> tuple[float, float]:
+        items: list[_Item] = []
+        for nid in fc.nodes:
+            r = rep(scope, ("n", nid))
+            if r is not None and r not in items:
+                items.append(r)
+        for sg in fc.subgraphs:  # empty groups still get a frame
+            r = rep(scope, ("g", sg.id))
+            if r is not None and r not in items:
+                items.append(r)
+        sub = Flowchart(direction=direction, end_marker_space=fc.end_marker_space)
+        for item in items:
+            if item[0] == "g":
+                sg = by_id[item[1]]
+                w, h = layout_scope(sg.id, sg.direction or direction)
+                proxies[sg.id] = sub.nodes[key(item)] = Node(key(item), "", "fixed", w=w, h=h)
+            else:
+                sub.nodes[item[1]] = fc.nodes[item[1]]
+        sub_to_fc: list[int] = []
+        for idx, (s_item, d_item) in enumerate(edge_items):
+            rs, rd = rep(scope, s_item), rep(scope, d_item)
+            if rs is None or rd is None or rs == rd:
+                continue
+            e = fc.edges[idx]
+            sub.edges.append(Edge(key(rs), key(rd), e.label, e.style, e.head, e.tail))
+            sub_to_fc.append(idx)
+            if rs == s_item and rd == d_item:
+                routing.direction[idx] = direction
+            else:
+                routing.cross.add(idx)
+        if sub.nodes:
+            layout(sub, theme)
+            for (k, role), port in _assign_ports(sub).items():
+                if sub_to_fc[k] not in routing.cross:
+                    routing.ports[(sub_to_fc[k], role)] = port
+            for k, pts in sub.waypoints.items():
+                if sub_to_fc[k] not in routing.cross:
+                    fc.waypoints[sub_to_fc[k]] = list(pts)
+                    scope_edges[scope].append(sub_to_fc[k])
+        boxes = [(n.x, n.y, n.x + n.w, n.y + n.h) for n in sub.nodes.values()]
+        boxes += [(px, py, px, py) for i in scope_edges[scope] for px, py in fc.waypoints[i]]
+        if scope is None:
+            return 0.0, 0.0
+        label_w = _text_w(by_id[scope].label, _FS_SM, 600) + 2 * _SG_PAD
+        if not boxes:
+            return max(label_w, 96.0), _SG_TITLE + 2 * _SG_PAD + 12
+        x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+        w = max(x1 - x0 + 2 * _SG_PAD, label_w)
+        dx = (w - (x1 - x0)) / 2 - x0
+        dy = _SG_PAD + _SG_TITLE - y0
+        _shift_scope(sub.nodes.values(), [fc.waypoints[i] for i in scope_edges[scope]], dx, dy)
+        return w, y1 - y0 + 2 * _SG_PAD + _SG_TITLE
+
+    layout_scope(None, fc.direction)
+
+    def place(scope: str | None, ox: float, oy: float) -> None:
+        nodes = [fc.nodes[i[1]] for i in parent if i[0] == "n" and parent[i] == scope]
+        _shift_scope(nodes, [fc.waypoints[i] for i in scope_edges[scope]], ox, oy)
+        for item, up in parent.items():
+            if item[0] == "g" and up == scope and item[1] in proxies:
+                sg, box = by_id[item[1]], proxies[item[1]]
+                sg.x, sg.y, sg.w, sg.h = box.x + ox, box.y + oy, box.w, box.h
+                routing.frames[sg.id] = Node(sg.id, "", "fixed", sg.x, sg.y, sg.w, sg.h)
+                place(sg.id, sg.x, sg.y)
+
+    place(None, 0.0, 0.0)
+    fc.clusters = routing
+
+
+def _shift_scope(
+    nodes: Iterable[Node], lanes: list[list[tuple[float, float]]], dx: float, dy: float
+) -> None:
+    for n in nodes:
+        n.x += dx
+        n.y += dy
+    for pts in lanes:
+        pts[:] = [(px + dx, py + dy) for px, py in pts]
+
+
+# ---------------------------------------------------------------------------
+# Obstacle-avoiding orthogonal router
+# ---------------------------------------------------------------------------
+
+_Rect = tuple[float, float, float, float]  # x0, y0, x1, y1
+_SIDES = {"right": (1, 0), "bottom": (0, 1), "left": (-1, 0), "top": (0, -1)}
+_BEND_COST = 28.0
+
+
+def _side_point(n: Node, side: str) -> tuple[float, float]:
+    cx, cy = n.x + n.w / 2, n.y + n.h / 2
+    return {
+        "right": (n.x + n.w, cy),
+        "left": (n.x, cy),
+        "bottom": (cx, n.y + n.h),
+        "top": (cx, n.y),
+    }[side]
+
+
+def _orthogonal_route(
+    a: Node,
+    b: Node,
+    obstacles: list[_Rect],
+    stub: float = 14.0,
+    soft: list[_Rect] | None = None,
+) -> list[tuple[float, float]] | None:
+    """Shortest right-angled path from ``a`` to ``b`` that keeps clear of ``obstacles``.
+
+    Candidate lines run along every obstacle edge, through the gaps between
+    them and out of each side of both ends; Dijkstra over that grid charges
+    for length and for every bend, so routes hug the gaps between frames.
+    ``soft`` areas (other edges' lines) may be crossed but cost extra to run
+    along, so a detour keeps its distance from them.
+    Returns the corner points (side of ``a`` ... side of ``b``) or None.
+    """
+    import heapq
+
+    soft_rects: list[_Rect] = soft or []
+
+    def blocked(x: float, y: float) -> bool:
+        return any(o[0] < x < o[2] and o[1] < y < o[3] for o in obstacles)
+
+    _End = tuple[tuple[float, float], tuple[float, float], tuple[int, int]]
+    starts: list[_End] = []
+    ends: list[_End] = []
+    for side, (dx, dy) in _SIDES.items():
+        for node, found in ((a, starts), (b, ends)):
+            px, py = _side_point(node, side)
+            sx, sy = px + dx * stub, py + dy * stub
+            if not blocked(sx, sy):
+                found.append(((px, py), (sx, sy), (dx, dy)))
+    if not starts or not ends:
+        return None
+    xs_set = {o[0] for o in obstacles + soft_rects} | {o[2] for o in obstacles + soft_rects}
+    ys_set = {o[1] for o in obstacles + soft_rects} | {o[3] for o in obstacles + soft_rects}
+    for _p, (sx, sy), _d in starts + ends:
+        xs_set.add(sx)
+        ys_set.add(sy)
+    lo_x, hi_x = min(xs_set) - 2 * stub, max(xs_set) + 2 * stub
+    lo_y, hi_y = min(ys_set) - 2 * stub, max(ys_set) + 2 * stub
+    xs_sorted = sorted(xs_set | {lo_x, hi_x})
+    ys_sorted = sorted(ys_set | {lo_y, hi_y})
+    xs = sorted(set(xs_sorted) | {(p + q) / 2 for p, q in zip(xs_sorted, xs_sorted[1:])})
+    ys = sorted(set(ys_sorted) | {(p + q) / 2 for p, q in zip(ys_sorted, ys_sorted[1:])})
+    ix = {x: i for i, x in enumerate(xs)}
+    iy = {y: i for i, y in enumerate(ys)}
+    dirs = list(_SIDES.values())
+
+    goal: dict[tuple[int, int], list[tuple[tuple[float, float], tuple[int, int]]]] = defaultdict(
+        list
+    )
+    for port, (sx, sy), (dx, dy) in ends:
+        goal[(ix[sx], iy[sy])].append((port, (-dx, -dy)))
+
+    heap: list[tuple[float, int, int, int, int]] = []
+    prev: dict[tuple[int, int, int], tuple[int, int, int] | None] = {}
+    best: dict[tuple[int, int, int], float] = {}
+    first_port: dict[tuple[int, int, int], tuple[float, float]] = {}
+    for port, (sx, sy), heading in starts:
+        state = (ix[sx], iy[sy], dirs.index(heading))
+        if stub < best.get(state, math.inf):
+            best[state] = stub
+            prev[state] = None
+            first_port[state] = port
+            heapq.heappush(heap, (stub, *state, 0))
+    done: tuple[float, tuple[int, int, int], tuple[float, float]] | None = None
+    while heap:
+        cost, i, j, d, _ = heapq.heappop(heap)
+        if cost > best.get((i, j, d), math.inf) or (done and cost >= done[0]):
+            continue
+        for port, arrive in goal.get((i, j), []):
+            ad = dirs.index(arrive)
+            if (dirs[d][0] + arrive[0], dirs[d][1] + arrive[1]) == (0, 0):
+                continue  # would double back into the stub
+            total = cost + stub + (0 if ad == d else _BEND_COST)
+            if done is None or total < done[0]:
+                done = (total, (i, j, d), port)
+        for nd, (dx, dy) in enumerate(dirs):
+            if (dx + dirs[d][0], dy + dirs[d][1]) == (0, 0):
+                continue
+            ni, nj = i + dx, j + dy
+            if not (0 <= ni < len(xs) and 0 <= nj < len(ys)):
+                continue
+            x0, y0, x1, y1 = xs[i], ys[j], xs[ni], ys[nj]
+            if blocked(x1, y1) or blocked((x0 + x1) / 2, (y0 + y1) / 2):
+                continue
+            step = abs(x1 - x0) + abs(y1 - y0)
+            mx_, my_ = (x0 + x1) / 2, (y0 + y1) / 2
+            if any(o[0] < mx_ < o[2] and o[1] < my_ < o[3] for o in soft_rects):
+                step *= 4
+            step += 0 if nd == d else _BEND_COST
+            state = (ni, nj, nd)
+            if cost + step < best.get(state, math.inf):
+                best[state] = cost + step
+                prev[state] = (i, j, d)
+                heapq.heappush(heap, (cost + step, ni, nj, nd, 0))
+    if done is None:
+        return None
+    _total, state, end_port = done
+    chain: list[tuple[float, float]] = []
+    cur: tuple[int, int, int] | None = state
+    origin = state
+    while cur is not None:
+        chain.append((xs[cur[0]], ys[cur[1]]))
+        origin = cur
+        cur = prev[cur]
+    pts = [first_port[origin], *reversed(chain), end_port]
+    corners = [pts[0]]
+    for p, q in zip(pts[1:], pts[2:]):
+        r = corners[-1]
+        if (abs(r[0] - p[0]) < 0.01 and abs(p[0] - q[0]) < 0.01) or (
+            abs(r[1] - p[1]) < 0.01 and abs(p[1] - q[1]) < 0.01
+        ):
+            continue  # collinear
+        corners.append(p)
+    corners.append(pts[-1])
+    return corners
+
+
+def _route_label_xy(pts: list[tuple[float, float]]) -> tuple[float, float]:
+    """Label position: the middle of the longest run, centred on the line."""
+    p, q = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    return (p[0] + q[0]) / 2, (p[1] + q[1]) / 2 + _FS_SM * 0.35
+
+
+def _frame_contains(fc: Flowchart, sg: Subgraph, nid: str) -> bool:
+    return nid in _subgraph_members(fc, sg)
+
+
+def _route_obstacles(fc: Flowchart, idx: int) -> tuple[list[_Rect], list[_Rect]]:
+    """(nodes, frames) an edge must keep clear of; frames holding its ends are excluded."""
+    e = fc.edges[idx]
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+
+    def holds(sg: Subgraph, group: str, nid: str) -> bool:
+        if group:  # an edge to a group stays outside that frame, but inside its parents
+            return sg.id != group and _group_within(by_id, group, sg.id)
+        return _frame_contains(fc, sg, nid)
+
+    nodes = [(n.x, n.y, n.x + n.w, n.y + n.h) for n in fc.nodes.values() if n.w > 0]
+    frames: list[_Rect] = []
+    for sg in fc.subgraphs:
+        if sg.w <= 0:
+            continue
+        if holds(sg, e.src_group, e.src) or holds(sg, e.dst_group, e.dst):
+            # the edge may cross its own group's frame, but not the title in it
+            if sg.label:
+                title_w = _text_w(sg.label, _FS_SM, 600) + 14
+                nodes.append((sg.x, sg.y, sg.x + min(title_w, sg.w), sg.y + _SG_TITLE))
+            continue
+        frames.append((sg.x, sg.y, sg.x + sg.w, sg.y + sg.h))
+    return nodes, frames
+
+
+def _inflate(rects: list[_Rect], by: float) -> list[_Rect]:
+    return [(x0 - by, y0 - by, x1 + by, y1 + by) for x0, y0, x1, y1 in rects]
+
+
+def _group_within(by_id: dict[str, Subgraph], inner: str, outer: str) -> bool:
+    """True when group ``inner`` is nested (at any depth) inside group ``outer``."""
+    stack = list(by_id[outer].children) if outer in by_id else []
+    while stack:
+        gid = stack.pop()
+        if gid == inner:
+            return True
+        stack.extend(by_id[gid].children if gid in by_id else [])
+    return False
+
+
+def _polyline_hits(pts: list[tuple[float, float]], rects: list[_Rect]) -> bool:
+    """Does the polyline ``pts`` pass through the inside of any of ``rects``?"""
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        lo_x, hi_x, lo_y, hi_y = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        if any(lo_x < r[2] and hi_x > r[0] and lo_y < r[3] and hi_y > r[1] for r in rects):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # SVG renderer — shared helpers
 # ---------------------------------------------------------------------------
 
@@ -2446,12 +2832,22 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
 # ---------------------------------------------------------------------------
 
 
-def _flow_extent(fc: Flowchart, pad: float = 10.0) -> tuple[float, float, float, float]:
-    """(origin x, origin y, width, height) of everything drawn: nodes, frames, lanes, labels."""
+def _flow_extent(
+    fc: Flowchart, pad: float = 10.0, extra: list[tuple[float, float]] | None = None
+) -> tuple[float, float, float, float]:
+    """(origin x, origin y, width, height) of everything drawn: nodes, frames, lanes, labels.
+
+    ``extra`` adds points (detoured edges) that must fit, with room for a label.
+    """
     xs0 = [n.x for n in fc.nodes.values()] + [sg.x for sg in fc.subgraphs if sg.w > 0]
     ys0 = [n.y for n in fc.nodes.values()] + [sg.y for sg in fc.subgraphs if sg.w > 0]
     xs1 = [n.x + n.w for n in fc.nodes.values()] + [sg.x + sg.w for sg in fc.subgraphs if sg.w > 0]
     ys1 = [n.y + n.h for n in fc.nodes.values()] + [sg.y + sg.h for sg in fc.subgraphs if sg.w > 0]
+    for px, py in extra or []:
+        xs0.append(px - 8)
+        xs1.append(px + 8)
+        ys0.append(py - 14)
+        ys1.append(py + 8)
     for pts in fc.waypoints.values():
         xs0 += [px for px, _ in pts]
         xs1 += [px for px, _ in pts]
@@ -2521,7 +2917,59 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
 
     parts: list[str] = []
 
-    ox, oy, width, height = _flow_extent(fc)
+    clusters = fc.clusters
+    ports = clusters.ports if clusters else _assign_ports(fc)
+    ends: dict[int, tuple[Node, Node, str]] = {}
+    routes: dict[int, list[tuple[float, float]]] = {}
+    for edge_idx, edge in enumerate(fc.edges):
+        src = fc.nodes.get(edge.src)
+        dst = fc.nodes.get(edge.dst)
+        if clusters:  # an edge to a group meets its frame
+            src = clusters.frames.get(edge.src_group, src) if edge.src_group else src
+            dst = clusters.frames.get(edge.dst_group, dst) if edge.dst_group else dst
+        if not src or not dst:
+            continue
+        direction = clusters.direction.get(edge_idx, fc.direction) if clusters else fc.direction
+        ends[edge_idx] = (src, dst, direction)
+    if fc.subgraphs:
+        # Edges on their usual paths first; detours then keep their distance from them
+        usual: dict[int, list[tuple[float, float]]] = {}
+        for edge_idx, (src, dst, direction) in ends.items():
+            edge = fc.edges[edge_idx]
+            if not (clusters and edge_idx in clusters.cross):
+                usual[edge_idx] = _route_points(
+                    src,
+                    dst,
+                    fc.waypoints.get(edge_idx) or [],
+                    direction in ("LR", "RL"),
+                    edge.label,
+                    ports.get((edge_idx, "out")),
+                    ports.get((edge_idx, "in")),
+                    _edge_lane(fc, edge),
+                )[0]
+        for edge_idx, (src, dst, direction) in ends.items():
+            soft = [
+                (min(x0, x1) - 8, min(y0, y1) - 8, max(x0, x1) + 8, max(y0, y1) + 8)
+                for k, pts in [*usual.items(), *routes.items()]
+                if k != edge_idx
+                for (x0, y0), (x1, y1) in zip(pts, pts[1:])
+            ]
+            route = _avoid_frames(
+                fc, edge_idx, src, dst, direction, ports, _edge_lane(fc, fc.edges[edge_idx]), soft
+            )
+            if route:
+                routes[edge_idx] = route
+                usual.pop(edge_idx, None)
+    # Detours count as drawn lines: labels keep off them
+    taken: list[tuple[float, float, float, float]] = []
+    own: dict[int, list[tuple[float, float, float, float]]] = defaultdict(list)
+    for edge_idx, route in routes.items():
+        for (x0, y0), (x1, y1) in zip(route, route[1:]):
+            box = (min(x0, x1) - 2, min(y0, y1) - 2, max(x0, x1) + 2, max(y0, y1) + 2)
+            taken.append(box)
+            own[edge_idx].append(box)
+
+    ox, oy, width, height = _flow_extent(fc, extra=[p for r in routes.values() for p in r])
 
     edge_colors = tuple(sorted({e.css["stroke"] for e in fc.edges if "stroke" in e.css}))
     parts.append(_make_arrow_defs(t, colors=edge_colors))
@@ -2532,28 +2980,26 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         parts.append(_render_subgraph(sg, t))
 
     # Draw edges (behind nodes)
-    ports = _assign_ports(fc)
     for edge_idx, edge in enumerate(fc.edges):
-        src = fc.nodes.get(edge.src)
-        dst = fc.nodes.get(edge.dst)
-        if not src or not dst:
+        if edge_idx not in ends:
             continue
-        lane = 0.0
-        if any(o.src == edge.dst and o.dst == edge.src for o in fc.edges):
-            lane = -7.0 if edge.src < edge.dst else 7.0
+        src, dst, direction = ends[edge_idx]
         parts.append(
             _render_edge(
                 src,
                 dst,
                 edge.label,
-                fc.direction,
+                direction,
                 t,
                 edge.style,
-                lane,
+                _edge_lane(fc, edge),
                 fc.waypoints.get(edge_idx),
                 ports.get((edge_idx, "out")),
                 ports.get((edge_idx, "in")),
                 edge,
+                route=routes.get(edge_idx),
+                taken=taken,
+                own=own.get(edge_idx),
             )
         )
 
@@ -2565,22 +3011,100 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     return _svg_root(width, height, parts, t["font"])
 
 
+def _edge_lane(fc: Flowchart, edge: Edge) -> float:
+    """Offset that keeps the two halves of an ``A --> B`` / ``B --> A`` pair apart."""
+    if any(o.src == edge.dst and o.dst == edge.src for o in fc.edges):
+        return -7.0 if edge.src < edge.dst else 7.0
+    return 0.0
+
+
+def _avoid_frames(
+    fc: Flowchart,
+    idx: int,
+    src: Node,
+    dst: Node,
+    direction: str,
+    ports: dict[tuple[int, str], _Port],
+    lane: float,
+    soft: list[_Rect] | None = None,
+) -> list[tuple[float, float]] | None:
+    """A detour for an edge whose usual path would cut through a frame (None if clear).
+
+    Edges that leave their group in the block layout always take the router,
+    since their usual path was laid out for the group as a whole.
+    """
+    nodes, frames = _route_obstacles(fc, idx)
+    cross = fc.clusters is not None and idx in fc.clusters.cross
+    if not cross:
+        if not frames:
+            return None
+        pts, _ = _route_points(
+            src,
+            dst,
+            fc.waypoints.get(idx) or [],
+            direction in ("LR", "RL"),
+            fc.edges[idx].label,
+            ports.get((idx, "out")),
+            ports.get((idx, "in")),
+            lane,
+        )
+        if not _polyline_hits(pts, frames):
+            return None
+    return _orthogonal_route(
+        src, dst, _inflate(nodes, 10) + _inflate(frames, 12), stub=18.0, soft=soft
+    )
+
+
+def _free_label_spot(
+    lx: float,
+    ly: float,
+    w: float,
+    taken: list[tuple[float, float, float, float]],
+    own: list[tuple[float, float, float, float]] | None = None,
+) -> tuple[float, float]:
+    """Nudge a label pill (centred at ``lx``, text baseline ``ly``) off earlier ones."""
+    others = [o for o in taken if o not in (own or [])]
+
+    def box(x: float, y: float) -> tuple[float, float, float, float]:
+        return (x - w / 2 - 2, y - 13, x + w / 2 + 2, y + 6)
+
+    def clear(b: tuple[float, float, float, float]) -> bool:
+        return all(b[2] <= o[0] or o[2] <= b[0] or b[3] <= o[1] or o[3] <= b[1] for o in others)
+
+    for step in (0, 1, -1, 2, -2, 3, -3):
+        for dx, dy in ((0.0, 17.0 * step), (step * (w + 6), 0.0)):
+            if clear(box(lx + dx, ly + dy)):
+                taken.append(box(lx + dx, ly + dy))
+                return lx + dx, ly + dy
+    taken.append(box(lx, ly))
+    return lx, ly
+
+
 def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
     """Render a subgraph frame: a softly tinted panel with its title."""
     if sg.w <= 0 or sg.h <= 0:
         return ""
     font = t.get("font", DEFAULT_THEME["font"])
-    fill = t["subgraph_fill"]
-    stroke = t["subgraph_stroke"]
-    label_color = t["subgraph_label"]
+    css = sg.css
+    fill = css.get("fill", t["subgraph_fill"])
+    stroke = css.get("stroke", t["subgraph_stroke"])
+    # A custom fill keeps the label legible: dark text on light tints, white on dark.
+    fill_hex = css_color_to_hex(fill) if "fill" in css else None
+    label_color = css.get("color") or (_text_on(fill_hex, t) if fill_hex else t["subgraph_label"])
+    extra = "".join(
+        f' {prop}="{_escape(css[prop])}"'
+        for prop in ("stroke-dasharray", "fill-opacity")
+        if prop in css
+    )
+    width = css.get("stroke-width", "1").removesuffix("px")
 
     return "\n".join(
         [
             f'<rect x="{sg.x}" y="{sg.y}" width="{sg.w}" height="{sg.h}" '
-            f'rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1"/>',
+            f'rx="8" fill="{_escape(fill)}" stroke="{_escape(stroke)}" stroke-width="{_escape(width)}"{extra}/>',
             f'<text x="{sg.x + 10}" y="{sg.y + 15}" '
             f'font-family="{font}" font-size="{_FS_SM:g}" font-weight="600" '
-            f'fill="{label_color}">{_escape(sg.label)}</text>',
+            f'fill="{_escape(label_color)}">{_escape(sg.label)}</text>',
         ]
     )
 
@@ -2839,6 +3363,28 @@ def _routed_path(
     the edge is a straight line, so the caller uses the midpoint). The label sits
     on the final segment so it never lands on another edge's trunk.
     """
+    verts, label_xy = _route_points(src, dst, via, horizontal, label, out_port, in_port, lane)
+    ax = 0 if horizontal else 1
+    if (
+        abs((src.x + src.w / 2, src.y + src.h / 2)[ax] - (dst.x + dst.w / 2, dst.y + dst.h / 2)[ax])
+        < 1
+    ):
+        (x0, y0), (x1, y1) = verts  # same rank: side to side
+        return f"M {x0},{y0} L {x1},{y1}", label_xy
+    return _round_polyline(verts), label_xy
+
+
+def _route_points(
+    src: Node,
+    dst: Node,
+    via: list[tuple[float, float]],
+    horizontal: bool,
+    label: str,
+    out_port: _Port | None = None,
+    in_port: _Port | None = None,
+    lane: float = 0.0,
+) -> tuple[list[tuple[float, float]], tuple[float, float] | None]:
+    """The corner points :func:`_routed_path` draws through, and the label position."""
     out_port, in_port = out_port or _Port(), in_port or _Port()
     sc = (src.x + src.w / 2, src.y + src.h / 2)
     dc = (dst.x + dst.w / 2, dst.y + dst.h / 2)
@@ -2855,7 +3401,7 @@ def _routed_path(
         extent_d = dst.h if horizontal else dst.w
         start = pt(sc[ax], sc[mx] + (extent_s / 2 if right else -extent_s / 2))
         end = pt(dc[ax], dc[mx] + (-extent_d / 2 if right else extent_d / 2))
-        return f"M {start[0]},{start[1]} L {end[0]},{end[1]}", None
+        return [start, end], None
 
     fwd = sc[ax] < dc[ax]
     half_s = (src.w if horizontal else src.h) / 2
@@ -2882,16 +3428,15 @@ def _routed_path(
             continue
         straight_only = False
         verts += [pt(mid, p[mx]), pt(mid, q[mx]), q]
-    d = _round_polyline(verts)
 
     if straight_only:
-        return d, None
+        return verts, None
     if horizontal:
         # On the last bend, centred on its vertical run (the label's pill sits over the line)
         label_xy = (mid, (seg_start[1] + end[1]) / 2 + _FS_SM * 0.35)
     else:
         label_xy = (end[0] + len(label) * 2.75 + 8, (mid + end[1]) / 2 + 3)
-    return d, label_xy
+    return verts, label_xy
 
 
 def _render_edge(
@@ -2906,8 +3451,16 @@ def _render_edge(
     out_port: _Port | None = None,
     in_port: _Port | None = None,
     edge: Edge | None = None,
+    route: list[tuple[float, float]] | None = None,
+    taken: list[tuple[float, float, float, float]] | None = None,
+    own: list[tuple[float, float, float, float]] | None = None,
 ) -> str:
-    """Render an edge between two nodes."""
+    """Render an edge between two nodes.
+
+    ``route`` is a precomputed list of corner points (from the obstacle router);
+    ``taken`` collects label pills (and detoured lines) so a label moves off
+    them; ``own`` lists this edge's entries in ``taken``, which it may overlap.
+    """
     font = t.get("font", DEFAULT_THEME["font"])
     parts: list[str] = []
     css = edge.css if edge else {}
@@ -2934,13 +3487,21 @@ def _render_edge(
         marker += f' marker-start="url(#{marker_id(tail, True)})"'
 
     is_h = direction in ("LR", "RL")
-    d, label_xy = _routed_path(src, dst, via or [], is_h, label, out_port, in_port, lane)
+    label_xy: tuple[float, float] | None
+    if route:
+        d, label_xy = _round_polyline(route), _route_label_xy(route)
+    else:
+        d, label_xy = _routed_path(src, dst, via or [], is_h, label, out_port, in_port, lane)
     parts.append(f'<path d="{d}" {stroke_attrs}{marker}/>')
 
     # Edge label
     if label:
         lx = (src.x + src.w / 2 + dst.x + dst.w / 2) / 2
         ly = (src.y + src.h / 2 + dst.y + dst.h / 2) / 2
+        if not label_xy and any(p and p.offset for p in (out_port, in_port)):
+            # A straight edge shifted along the node side: centre on the line itself
+            line = _route_points(src, dst, via or [], is_h, label, out_port, in_port, lane)[0]
+            lx, ly = (line[0][0] + line[1][0]) / 2, (line[0][1] + line[1][1]) / 2
         if label_xy:
             lx, ly = label_xy
         elif is_h:
@@ -2949,6 +3510,8 @@ def _render_edge(
             lx += lane * 2.2 if lane else 10
         # White pill behind the text so it reads over crossing lines
         est_w = _text_w(label, _FS_SM) + 10
+        if taken is not None:
+            lx, ly = _free_label_spot(lx, ly, est_w, taken, own)
         parts.append(
             f'<rect x="{lx - est_w / 2:g}" y="{ly - 11:g}" width="{est_w:g}" height="15" '
             f'rx="3" fill="{t["surface"]}"/>'
