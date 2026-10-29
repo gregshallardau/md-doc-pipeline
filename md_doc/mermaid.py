@@ -3149,16 +3149,65 @@ def _row_of(rows: list[list[str]], nid: str) -> list[str]:
     return next(row for row in rows if nid in row)
 
 
+_EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+
+
 def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     """Render a laid-out Flowchart to an SVG string."""
+    return render_svg_parts(fc, theme, split=False)[0]
+
+
+def render_svg_parts(
+    fc: Flowchart, theme: dict[str, str] | None = None, split: bool = True
+) -> list[str]:
+    """Render a Flowchart as one SVG, or as page-sized parts when it is too tall.
+
+    With ``page_px`` in the theme (the page's text-area height, set by
+    :func:`diagram_theme`), a diagram taller than a page is cut between ranks
+    (or wrapped rows) into parts that each fit one. Extra space is opened at
+    each cut first, and every edge crossing a cut ends in a lettered off-page
+    connector at the bottom of one part and starts from the same letter at the
+    top of the next.
+    """
     t = _tokens(theme)
     layout(fc, t)
     _fit_to_column(fc, t)
 
     if not fc.nodes:
         logger.warning("Mermaid flowchart has no nodes to draw; check the diagram source")
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+        return [_EMPTY_SVG]
+    gaps = _open_page_gaps(fc, t) if split else []
+    drawing = _draw_flowchart(fc, t)
+    if not gaps:
+        return [
+            _svg_root(
+                drawing.width,
+                drawing.height,
+                [drawing.defs, f'<g transform="translate({-drawing.ox:g},{-drawing.oy:g})">']
+                + drawing.body
+                + ["</g>"],
+                t["font"],
+            )
+        ]
+    return _slice_drawing(drawing, gaps, t)
 
+
+@dataclass
+class _Drawing:
+    """A flowchart drawn in layout coordinates, before it is framed in an <svg>."""
+
+    defs: str
+    body: list[str]  # frames, edges, nodes (layout coordinates)
+    ox: float
+    oy: float
+    width: float
+    height: float
+    lines: list[list[tuple[float, float]]]  # every drawn edge's corner points
+    pills: list[tuple[float, float, float, float]]  # edge label boxes
+
+
+def _draw_flowchart(fc: Flowchart, t: dict[str, str]) -> _Drawing:
+    """Route and draw every frame, edge and node of a laid-out flowchart."""
     parts: list[str] = []
 
     clusters = fc.clusters
@@ -3218,8 +3267,8 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     ox, oy, width, height = _flow_extent(fc, extra=[p for r in routes.values() for p in r])
 
     edge_colors = tuple(sorted({e.css["stroke"] for e in fc.edges if "stroke" in e.css}))
-    parts.append(_make_arrow_defs(t, colors=edge_colors))
-    parts.append(f'<g transform="translate({-ox:g},{-oy:g})">')
+    defs = _make_arrow_defs(t, colors=edge_colors)
+    lines: list[list[tuple[float, float]]] = []
 
     # Draw subgraphs (behind everything)
     for sg in fc.subgraphs:
@@ -3230,6 +3279,19 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
         if edge_idx not in ends:
             continue
         src, dst, direction = ends[edge_idx]
+        lines.append(
+            routes.get(edge_idx)
+            or _route_points(
+                src,
+                dst,
+                fc.waypoints.get(edge_idx) or [],
+                direction in ("LR", "RL"),
+                edge.label,
+                ports.get((edge_idx, "out")),
+                ports.get((edge_idx, "in")),
+                _edge_lane(fc, edge),
+            )[0]
+        )
         parts.append(
             _render_edge(
                 src,
@@ -3252,9 +3314,183 @@ def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     # Draw nodes
     for node in fc.nodes.values():
         parts.append(_render_node(node, t))
-    parts.append("</g>")
 
-    return _svg_root(width, height, parts, t["font"])
+    detours = {box for boxes in own.values() for box in boxes}
+    pills = [box for box in taken if box not in detours]
+    return _Drawing(defs, parts, ox, oy, width, height, lines, pills)
+
+
+# ---------------------------------------------------------------------------
+# Splitting a tall flowchart across pages
+# ---------------------------------------------------------------------------
+
+_PAGE_GAP = 64.0  # extra space opened at each cut, for the connectors
+_CONNECTOR_R = 8.0
+
+
+def _flow_bottom(fc: Flowchart) -> float:
+    return max(
+        [n.y + n.h for n in fc.nodes.values()] + [sg.y + sg.h for sg in fc.subgraphs if sg.w > 0]
+    )
+
+
+def _open_page_gaps(fc: Flowchart, t: dict[str, str]) -> list[tuple[float, float]]:
+    """Open space at the cuts a too-tall diagram needs; return each widened gap.
+
+    Cuts go in node-free bands between ranks (or wrapped rows), as low as each
+    page allows. A diagram with no such band within a page (a single huge
+    node, or interleaved left-to-right columns) is left whole.
+    """
+    page = float(t.get("page_px") or 0)
+    if not page:
+        return []
+    ox, oy, width, height = _flow_extent(fc)
+    column = float(t.get("column_px") or width)
+    scale = min(1.0, column / width) if width else 1.0
+    limit = page / scale * 0.9  # leave room for the space around a figure
+    if height <= limit:
+        return []
+    gaps: list[tuple[float, float]] = []
+    top = oy
+    while _flow_bottom(fc) + 10 - top > limit:
+        spans = sorted((n.y - 4, n.y + n.h + 4) for n in fc.nodes.values() if n.h > 0)
+        merged: list[list[float]] = []
+        for lo, hi in spans:
+            if merged and lo <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        free = [(a[1], b[0]) for a, b in zip(merged, merged[1:]) if b[0] - a[1] >= 20]
+        fits = [g for g in free if g[0] > top + 40 and (g[0] + g[1]) / 2 + _PAGE_GAP <= top + limit]
+        if not fits:
+            break  # nothing left to cut at: the rest stays whole (and warns)
+        lo, hi = fits[-1]
+        at = (lo + hi) / 2
+        _insert_space(fc, at, _PAGE_GAP)
+        gaps.append((lo, hi + _PAGE_GAP))
+        top = at + _PAGE_GAP / 2
+    return gaps
+
+
+def _insert_space(fc: Flowchart, at: float, gap: float) -> None:
+    """Move everything below ``at`` down by ``gap`` (frames across it grow)."""
+    for node in fc.nodes.values():
+        if node.y > at:
+            node.y += gap
+    for sg in fc.subgraphs:
+        if sg.y > at:
+            sg.y += gap
+        elif sg.y + sg.h > at:
+            sg.h += gap
+    if fc.clusters:
+        for frame in fc.clusters.frames.values():
+            if frame.y > at:
+                frame.y += gap
+            elif frame.y + frame.h > at:
+                frame.h += gap
+    for pts in [*fc.waypoints.values(), *fc.fixed_routes.values()]:
+        # a row break's run sits at the middle of its gap: it moves with the lower part
+        pts[:] = [(x, y + gap if y >= at - 0.5 else y) for x, y in pts]
+
+
+def _best_cut(lo: float, hi: float, drawing: _Drawing) -> float:
+    """The line across a widened gap that keeps furthest from runs, labels and nodes."""
+    runs = [
+        p[1]
+        for pts in drawing.lines
+        for p, q in zip(pts, pts[1:])
+        if abs(p[1] - q[1]) < 0.5 and lo < p[1] < hi
+    ]
+    best, best_score = (lo + hi) / 2, -math.inf
+    room = 2 * _CONNECTOR_R + 6  # a connector on each side of the cut
+    y = lo + room
+    while y <= hi - room:
+        score = min(y - lo, hi - y, *(abs(y - r) for r in runs), math.inf)
+        for b in drawing.pills:
+            if b[1] - 2 <= y <= b[3] + 2:
+                score = min(score, 0.0)
+            else:
+                score = min(score, abs(y - b[1]), abs(y - b[3]))
+        if score > best_score:
+            best, best_score = y, score
+        y += 1.0
+    return best
+
+
+def _crossings(drawing: _Drawing, y: float) -> list[float]:
+    """x of every edge crossing the horizontal line ``y``, left to right."""
+    xs: list[float] = []
+    for pts in drawing.lines:
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            if min(y0, y1) < y < max(y0, y1):
+                xs.append(x0 + (x1 - x0) * (y - y0) / (y1 - y0))
+    return sorted(xs)
+
+
+def _connector_label(n: int) -> str:
+    out = ""
+    n += 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
+def _connector(x: float, y: float, label: str, t: dict[str, str]) -> str:
+    """An off-page connector: a small circle with the letter both parts share."""
+    font = t.get("font", DEFAULT_THEME["font"])
+    return (
+        f'<g class="mddoc-continue"><circle cx="{x:g}" cy="{y:g}" r="{_CONNECTOR_R:g}" '
+        f'fill="{t["surface"]}" stroke="{t["edge"]}" stroke-width="1.25"/>'
+        f'<text x="{x:g}" y="{y + 3.5:g}" text-anchor="middle" font-family="{font}" '
+        f'font-size="10" font-weight="600" fill="{t["ink2"]}">{_escape(label)}</text></g>'
+    )
+
+
+def _slice_drawing(
+    drawing: _Drawing, gaps: list[tuple[float, float]], t: dict[str, str]
+) -> list[str]:
+    """Cut the drawing at the best line in each gap; one SVG per part."""
+    import hashlib
+
+    cuts = [_best_cut(lo, hi, drawing) for lo, hi in gaps]
+    labels: list[list[tuple[float, str]]] = []
+    count = 0
+    for y in cuts:
+        row = []
+        for x in _crossings(drawing, y):
+            row.append((x, _connector_label(count)))
+            count += 1
+        labels.append(row)
+    edges = [drawing.oy, *cuts, drawing.oy + drawing.height]
+    uid = hashlib.sha1("".join(drawing.body).encode()).hexdigest()[:8]
+    out: list[str] = []
+    for k, (ya, yb) in enumerate(zip(edges, edges[1:])):
+        h = yb - ya
+        marks: list[str] = []
+        if k > 0:  # continued from the part above
+            marks += [_connector(x, ya + _CONNECTOR_R + 3, lab, t) for x, lab in labels[k - 1]]
+        if k < len(cuts):  # continues in the part below
+            marks += [_connector(x, yb - _CONNECTOR_R - 3, lab, t) for x, lab in labels[k]]
+        clip = f"mddoc-part-{uid}-{k}"
+        out.append(
+            _svg_root(
+                drawing.width,
+                h,
+                [
+                    drawing.defs,
+                    f'<clipPath id="{clip}"><rect x="0" y="0" width="{drawing.width:g}" '
+                    f'height="{h:g}"/></clipPath>',
+                    f'<g clip-path="url(#{clip})">',
+                    f'<g transform="translate({-drawing.ox:g},{-ya:g})">',
+                    *drawing.body,
+                    *marks,
+                    "</g></g>",
+                ],
+                t["font"],
+            )
+        )
+    return out
 
 
 def _edge_lane(fc: Flowchart, edge: Edge) -> float:
@@ -8035,8 +8271,12 @@ def render_zenuml_svg(source: str, theme: dict[str, str] | None = None) -> str:
 def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> str:
     """Render a state diagram to SVG via the flowchart layout engine."""
     if not sd.states:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+        return _EMPTY_SVG
+    return render_svg(_state_flowchart(sd), theme)
 
+
+def _state_flowchart(sd: StateDiagram) -> Flowchart:
+    """A state diagram on the flowchart model (``[*]`` as start and end dots)."""
     fc = Flowchart(direction=sd.direction if sd.direction in ("LR", "TB", "TD") else "LR")
     for tr in sd.transitions:
         ends: list[str] = []
@@ -8050,7 +8290,7 @@ def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> s
                 fc.nodes.setdefault(name, Node(name, name, "rounded"))
                 ends.append(name)
         fc.edges.append(Edge(ends[0], ends[1], tr.label))
-    return render_svg(fc, theme)
+    return fc
 
 
 # ---------------------------------------------------------------------------
@@ -10427,6 +10667,37 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
     return svg
 
 
+def render_to_svgs(source: str, theme: dict[str, str] | None = None) -> list[str]:
+    """Like :func:`render_to_svg`, but a diagram too tall for a page comes back in parts.
+
+    Flowchart, state, use case and agent flow diagrams split across pages when
+    the theme carries ``page_px`` (see :func:`render_svg_parts`); every other
+    type, and every diagram that fits, is a single SVG.
+    """
+    theme = theme or {}
+    config = _diagram_config(source)
+    merged = {**theme, **_config_theme(config)}
+    body = _strip_preamble(source)
+    kind = _detect_diagram_type(body)
+    parsers = {
+        "flowchart": parse,
+        "state": lambda text: _state_flowchart(parse_state(text)),
+        "usecase": parse_usecase,
+        "agentflow": parse_agentflow,
+    }
+    if not merged.get("page_px") or kind not in parsers:
+        return [render_to_svg(source, theme)]
+    if kind == "state" and not parse_state(body).states:
+        return [render_to_svg(source, theme)]
+    _ACTIVE_CONFIG.set(config)
+    parts = render_svg_parts(parsers[kind](body), merged)
+    if config.get("title"):
+        parts[0] = _with_title(parts[0], config["title"], _tokens(merged))
+    for part in parts:
+        _check_fits(part, kind, body, merged)
+    return parts
+
+
 #: Elements that put ink on the page; an SVG without any of them is blank.
 _DRAWN_RE = re.compile(r"<(?:rect|path|circle|ellipse|line|polyline|polygon|text|image)\b")
 
@@ -10604,10 +10875,10 @@ def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     def _replace(m: re.Match) -> str:
         source = _unescape_mermaid_source(m.group(1))
         try:
-            svg = render_to_svg(source, theme)
+            svgs = render_to_svgs(source, theme)
         except UnsupportedDiagramError as exc:
             logger.warning("Mermaid: %s; leaving the source as a code block", exc)
             return m.group(0)
-        return _wrap_diagram(svg)
+        return "\n".join(_wrap_diagram(svg) for svg in svgs)
 
     return _MERMAID_BLOCK_RE.sub(_replace, html)

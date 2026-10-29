@@ -78,6 +78,22 @@ flowchart LR
     R --> S[Outcomes]
 ```
 
+## Flowchart that spans pages
+
+```mermaid
+flowchart TD
+    S([Complaint received]) --> A1[Acknowledge within 2 days]
+    A1 --> A2[Log in the register] --> A3[Assess severity]
+    A3 --> A4[Assign an investigator] --> A5[Gather records]
+    A5 --> A6[Interview the people involved] --> A7[Draft findings]
+    A7 --> D{Findings agreed?}
+    D -->|no| A6
+    D -->|yes| A8[Agree the remedy] --> A9[Write to the complainant]
+    A9 --> A10[Apply the remedy] --> A11[Check it worked]
+    A11 --> A12[Record lessons learned] --> A13[Report to the board]
+    A13 --> E([Closed])
+```
+
 ## Sequence
 
 ```mermaid

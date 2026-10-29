@@ -28,6 +28,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mind maps and Venn diagrams, so they can follow a document-wide colour key.
 - Diagram warnings: an unreadable flowchart, sequence, Gantt or pie line is logged with the line
   quoted, a diagram that draws nothing warns, and so does one taller than the page's text area.
+- **Tall diagrams split across pages.** A flowchart, state, use case or agent flow diagram taller
+  than the page's text area is cut between ranks (or wrapped rows) into page-sized parts in PDF
+  and Word, instead of being cut off at the bottom margin. Lines over a cut end and restart at
+  matching lettered off-page connectors. `md_doc.mermaid.render_to_svgs` returns the parts.
 - **Component option lint.** `md-doc lint` warns about unknown keys in `::: cards`, `tiers`,
   `flow`, `rings`, `matrix` and `process` options (and options that are not valid YAML), naming
   the component, key and line. This catches an unquoted comma in a `{...}` value, which silently
@@ -126,6 +130,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ICC profiles) that cannot be found.
 
 ### Fixed
+- A diagram taller than a page no longer loses everything past the bottom margin (it pushed to a
+  new page, leaving the one before blank, and was clipped there without a warning).
 - `::: cards`: a title that wraps no longer overprints the subtitle; it pushes the subtitle and
   items down and the card grows to fit.
 - `::: tiers`: text keeps a minimum size with six or more tiers (tiers grow taller to fit

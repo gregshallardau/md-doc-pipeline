@@ -1355,3 +1355,109 @@ def test_venn_class_and_inline_class():
     assert data["styles"]["IND"] == {"fill": "#0f766e", "stroke": "#000000"}
     svg = m.render_venn_svg(data)
     assert 'fill="#1d4ed8"' in svg and 'fill="#0f766e"' in svg and 'stroke="#000000"' in svg
+
+
+# ---------------------------------------------------------------------------
+# Tall diagrams split across pages
+# ---------------------------------------------------------------------------
+
+_PAGE = {"column_px": "640", "page_px": "945"}
+_TALL = "flowchart TD\n" + "\n".join(
+    f"  s{i}[Step {i}] --> s{i + 1}[Step {i + 1}]" for i in range(1, 31)
+)
+
+
+def _part_windows(parts: list[str]) -> list[tuple[float, float]]:
+    """(top, bottom) of each part, in layout coordinates."""
+    out = []
+    for svg in parts:
+        top = float(re.search(r'translate\([-\d.]+,(-?[\d.]+)\)">', svg).group(1))
+        height = float(re.search(r'viewBox="0 0 [\d.]+ ([\d.]+)"', svg).group(1))
+        out.append((-top, -top + height))
+    return out
+
+
+def test_tall_flowchart_splits_between_ranks_with_lettered_connectors():
+    fc = m.parse(_TALL)
+    parts = m.render_svg_parts(fc, _PAGE)
+    assert len(parts) >= 3
+    windows = _part_windows(parts)
+    for (a0, a1), (b0, _b1) in zip(windows, windows[1:]):
+        assert a1 == b0  # the parts tile the drawing without overlap or gaps
+    for svg in parts:  # each part fits on a page (with room for spacing)
+        assert float(re.search(r'viewBox="0 0 [\d.]+ ([\d.]+)"', svg).group(1)) <= 945
+    # No node is cut: each sits wholly inside exactly one part
+    for node in fc.nodes.values():
+        inside = [w for w in windows if w[0] <= node.y and node.y + node.h <= w[1]]
+        assert len(inside) == 1, node.id
+    # Every connector letter ends one part and starts the next
+    letters = [re.findall(r'font-weight="600" fill="[^"]+">([A-Z]+)</text></g>', p) for p in parts]
+    for k in range(len(parts) - 1):
+        shared = set(letters[k]) & set(letters[k + 1])
+        assert len(shared) == 1
+    assert letters[0] == ["A"] and "A" in letters[1]
+    # each part clips to its own window, with ids unique to the diagram
+    clips = [re.search(r'clipPath id="([^"]+)"', p).group(1) for p in parts]
+    assert len(set(clips)) == len(parts)
+
+
+def test_split_keeps_every_edge_crossing_a_cut_and_frames_grow():
+    src = (
+        "flowchart TD\n"
+        + "\n".join(f"  a{i} --> a{i + 1}" for i in range(14))
+        + "\n  a13 -.-> a2\n  subgraph G[Group]\n"
+        + "\n".join(f"    g{i}" for i in range(8))
+        + "\n  end\n  a14 --> g0\n"
+        + "\n".join(f"  g{i} --> g{i + 1}" for i in range(7))
+    )
+    fc = m.parse(src)
+    parts = m.render_svg_parts(fc, _PAGE)
+    assert len(parts) >= 2
+    first = re.findall(r'font-weight="600" fill="[^"]+">([A-Z]+)</text></g>', parts[0])
+    assert len(first) >= 2  # the main line and the dotted loop back both continue
+    frame = fc.subgraphs[0]
+    members = [fc.nodes[n] for n in frame.node_ids]
+    assert frame.y < min(n.y for n in members)
+    assert frame.y + frame.h > max(n.y + n.h for n in members)
+
+
+def test_short_diagrams_other_types_and_no_page_size_stay_whole():
+    assert len(m.render_to_svgs("flowchart TD\n  a --> b", _PAGE)) == 1
+    assert len(m.render_to_svgs('pie\n  "A" : 1', _PAGE)) == 1
+    assert len(m.render_to_svgs(_TALL, {"column_px": "640"})) == 1
+    assert m.render_to_svg(_TALL, _PAGE).count("<svg") == 1  # the single-SVG API is unchanged
+    assert len(m.render_to_svgs(_TALL, _PAGE)) >= 3
+    state = "stateDiagram-v2\n  direction TB\n" + "\n".join(
+        f"  s{i} --> s{i + 1}" for i in range(30)
+    )
+    assert len(m.render_to_svgs(state, _PAGE)) >= 2
+
+
+def test_wrapped_rows_split_between_rows():
+    chain = "flowchart LR\n" + "\n".join(
+        f"  s{i}[Step {i}] --> s{i + 1}[Step {i + 1}]" for i in range(60)
+    )
+    fc = m.parse(chain)
+    parts = m.render_svg_parts(fc, _PAGE)
+    assert len(parts) >= 2
+    windows = _part_windows(parts)
+    for node in fc.nodes.values():
+        assert sum(w[0] <= node.y and node.y + node.h <= w[1] for w in windows) == 1
+
+
+def test_pdf_html_and_word_images_get_one_block_per_part():
+    from md_doc.builders._assets import _render_mermaid_to_images
+
+    html = f'<pre><code class="language-mermaid">{_TALL}</code></pre>'
+    out = m.process_html(html, _PAGE)
+    assert out.count('class="mermaid-diagram"') >= 3
+    rewritten, images = _render_mermaid_to_images(html, _PAGE)
+    if images:  # cairosvg installed
+        assert len(images) >= 3 and rewritten.count("mermaid://") == len(images)
+
+
+def test_unsplittable_diagram_still_warns(mermaid_logs: pytest.LogCaptureFixture):
+    huge = "flowchart TD\n  a[" + "<br>".join(f"line {i}" for i in range(80)) + "]"
+    parts = m.render_to_svgs(huge, _PAGE)
+    assert len(parts) == 1
+    assert "tall but a page holds" in mermaid_logs.text

@@ -1535,10 +1535,20 @@ read as a set:
   `%%{ mddoc: { keep_direction: true } }%%`; the diagram then stays as written and shrinks to
   the column instead. Turn fitting off altogether with
   `%%{init: {"flowchart": {"autoFit": false}}}%%`. Word and PowerPoint use the same sizes.
+- *Tall diagrams.* A flowchart, state, use case or agent flow diagram taller than the page's
+  text area is split across pages, in PDF and in Word: it is cut between ranks (or between
+  wrapped rows), never through a node, with extra space opened at each cut. Every line that
+  crosses a cut ends in a small lettered circle (an off-page connector) at the bottom of one part
+  and starts again from the same letter at the top of the next, so you can follow it over the
+  page. A group frame that spans a cut continues in the next part. Each part is a figure of its
+  own, so a part that does not fit below the text above it starts on the next page.
+  PowerPoint slides are never split (a slide shrinks the diagram to fit). See the
+  [example](#markdown-gallery-spans-pages).
 - *Checks.* A line md-doc cannot read in a flowchart, sequence, Gantt or pie diagram is left out
-  with a warning that quotes it, a diagram that would draw nothing warns instead of leaving a
-  blank space, and a diagram taller than the page's text area warns that the PDF and Word output
-  will cut it off (split such a diagram into smaller ones).
+  with a warning that quotes it, and a diagram that would draw nothing warns instead of leaving a
+  blank space. A diagram still taller than a page, because it cannot be cut (another diagram
+  type, a single huge node, or left-to-right columns with no clear gap between rows), warns that
+  the PDF and Word output will cut it off; split it into smaller diagrams.
 - *Fonts.* Diagrams use the theme's `body` font. Boxes are sized by measuring text with the font
   file that will actually draw it, so wide faces such as DejaVu Sans never overflow. Fonts added
   with the [`fonts`](#configuration) key are used in diagrams too, including the images embedded
@@ -1785,6 +1795,44 @@ flowchart LR
 flowchart LR
     P[Policy] ~~~ Q[Process] ~~~ R[People]
     R --> S[Outcomes]
+```
+
+<a id="markdown-gallery-spans-pages"></a>
+
+##### Flowchart that spans pages
+
+`flowchart TD` too tall for one page. It is cut between ranks and each line over the cut
+continues from a lettered connector at the top of the next part (the cut may fall on a new
+page here, depending on what precedes it).
+
+````markdown
+```mermaid
+flowchart TD
+    S([Complaint received]) --> A1[Acknowledge within 2 days]
+    A1 --> A2[Log in the register] --> A3[Assess severity]
+    A3 --> A4[Assign an investigator] --> A5[Gather records]
+    A5 --> A6[Interview the people involved] --> A7[Draft findings]
+    A7 --> D{Findings agreed?}
+    D -->|no| A6
+    D -->|yes| A8[Agree the remedy] --> A9[Write to the complainant]
+    A9 --> A10[Apply the remedy] --> A11[Check it worked]
+    A11 --> A12[Record lessons learned] --> A13[Report to the board]
+    A13 --> E([Closed])
+```
+````
+
+```mermaid
+flowchart TD
+    S([Complaint received]) --> A1[Acknowledge within 2 days]
+    A1 --> A2[Log in the register] --> A3[Assess severity]
+    A3 --> A4[Assign an investigator] --> A5[Gather records]
+    A5 --> A6[Interview the people involved] --> A7[Draft findings]
+    A7 --> D{Findings agreed?}
+    D -->|no| A6
+    D -->|yes| A8[Agree the remedy] --> A9[Write to the complainant]
+    A9 --> A10[Apply the remedy] --> A11[Check it worked]
+    A11 --> A12[Record lessons learned] --> A13[Report to the board]
+    A13 --> E([Closed])
 ```
 
 ##### Sequence
@@ -6928,9 +6976,13 @@ except SyncError as exc:
 ### Render a Mermaid diagram to SVG
 
 ```python
-from md_doc.mermaid import render_to_svg
+from md_doc.mermaid import render_to_svg, render_to_svgs
 
 svg = render_to_svg("flowchart LR\n  A --> B")
+
+# Page-sized parts of a diagram too tall for one page (one SVG when it fits).
+# page_px and column_px are the text area's height and width in CSS pixels.
+parts = render_to_svgs(source, {"page_px": "945", "column_px": "640"})
 ```
 
 <a id="python-api-logging"></a>
