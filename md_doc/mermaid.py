@@ -85,6 +85,11 @@ class Edge:
     head: str = "arrow"  # end marker: arrow | circle | cross | none
     tail: str = "none"  # start marker (bidirectional edges): arrow | circle | cross | none
     css: dict[str, str] = field(default_factory=dict)
+    # Subgraph ids when the edge was written to or from a group (``A --> Group``);
+    # ``src``/``dst`` then hold a stand-in member for layouts that need a node.
+    src_group: str = ""
+    dst_group: str = ""
+    invisible: bool = False  # ``A ~~~ B``: shapes the layout, never drawn
 
 
 @dataclass
@@ -97,6 +102,18 @@ class Subgraph:
     y: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    direction: str = ""  # ``direction TB`` inside the group; empty inherits the parent's
+    css: dict[str, str] = field(default_factory=dict)  # ``style`` / ``class`` on the group
+
+
+@dataclass
+class _ClusterRouting:
+    """Per-edge routing decided by the cluster layout (groups laid out as blocks)."""
+
+    direction: dict[int, str] = field(default_factory=dict)  # flow direction of the edge's scope
+    ports: dict[tuple[int, str], "_Port"] = field(default_factory=dict)
+    cross: set[int] = field(default_factory=set)  # edges routed around obstacles
+    frames: dict[str, "Node"] = field(default_factory=dict)  # group id -> frame box
 
 
 @dataclass
@@ -110,6 +127,9 @@ class Flowchart:
     crossings: int = 0  # edge crossings between adjacent levels after ordering
     crossings_unordered: int = 0  # same, before ordering (for comparison)
     end_marker_space: float = 0.0  # extra gap per edge end for wide markers (crow's feet)
+    clusters: _ClusterRouting | None = None  # set when groups are laid out as blocks
+    # edge index -> fixed corner points (a chain wrapped into rows draws its row breaks so)
+    fixed_routes: dict[int, list[tuple[float, float]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -142,6 +162,15 @@ class SeqBlock:
 
 
 @dataclass
+class SeqBox:
+    """``box <colour> <label> ... end``: a tinted band behind a group of lifelines."""
+
+    label: str = ""
+    color: str = ""  # empty: transparent, outlined
+    members: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SeqActivation:
     participant: str
     on: bool
@@ -155,6 +184,7 @@ class SequenceDiagram:
     actors: set[str] = field(default_factory=set)
     events: list[SeqMessage | SeqNote | SeqBlock | SeqActivation] = field(default_factory=list)
     autonumber: bool = False
+    boxes: list[SeqBox] = field(default_factory=list)
 
 
 @dataclass
@@ -200,6 +230,7 @@ class GanttTask:
     duration: str = ""
     section: str = ""
     tags: set[str] = field(default_factory=set)  # done | active | crit | milestone
+    classes: list[str] = field(default_factory=list)  # ``Task:::name`` / ``class id name``
 
 
 @dataclass
@@ -207,6 +238,8 @@ class GanttChart:
     title: str = ""
     date_format: str = "YYYY-MM-DD"
     tasks: list[GanttTask] = field(default_factory=list)
+    class_defs: dict[str, dict[str, str]] = field(default_factory=dict)
+    section_classes: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -215,6 +248,9 @@ class MindNode:
     children: list["MindNode"] = field(default_factory=list)
     x: float = 0.0
     y: float = 0.0
+    node_id: str = ""  # ``id[Label]``; style / class statements name a node by id or label
+    classes: list[str] = field(default_factory=list)
+    css: dict[str, str] = field(default_factory=dict)  # resolved fill / stroke / color
 
 
 @dataclass
@@ -1092,6 +1128,7 @@ _NODE_PATTERNS = [
 #   plain      -->  ---  --o  --x  ==>  ===  -.->  -.-   (any extra length)
 #   text       -- text -->   == text ==>   -. text .->
 #   both ways  <-->  o--o  x--x
+#   invisible  ~~~   (layout only, never drawn)
 # optionally followed by a pipe label:  -->|label|
 _EDGE_RE = re.compile(
     r"""
@@ -1102,7 +1139,7 @@ _EDGE_RE = re.compile(
                  |\.-+>|\.-+(?![>\w])|\.-[ox](?=\s|$))
       |
         (?P<plain>-{2,}>|-{3,}|-{2,}[ox](?=\s|$|\|)|={2,}>|={3,}|={2,}[ox](?=\s|$|\|)
-                 |-\.+-?>|-\.+-(?![>\w]))
+                 |-\.+-?>|-\.+-(?![>\w])|~{3,})
     )
     (?:\|(?P<pipe>[^|]*)\|)?
     [ \t]*
@@ -1243,9 +1280,12 @@ def parse(source: str) -> Flowchart:
             if dir_m.group(1):
                 fc.direction = dir_m.group(1).upper()
             continue
-        if re.match(r"^direction\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE) or line.startswith(
-            ("click ", "accTitle", "accDescr")
-        ):
+        dm = re.match(r"^direction\s+(LR|TD|TB|RL|BT)\s*$", line, re.IGNORECASE)
+        if dm:
+            if subgraph_stack:  # a group's own flow direction
+                subgraph_stack[-1].direction = dm.group(1).upper()
+            continue
+        if line.startswith(("click ", "accTitle", "accDescr")):
             continue
 
         # Styling statements
@@ -1298,8 +1338,8 @@ def parse(source: str) -> Flowchart:
         before = set(fc.nodes)
         if any(True for _ in _EDGE_RE.finditer(_mask(line))):
             _parse_edge_line(fc, line)
-        else:
-            _ensure_node(fc, line)
+        elif _ensure_node(fc, line) not in fc.nodes:
+            logger.warning("Mermaid flowchart: could not read line %r; it is left out", line)
         # Mermaid scopes a node to the group where it is first mentioned.
         if subgraph_stack:
             for nid in fc.nodes:
@@ -1309,6 +1349,10 @@ def parse(source: str) -> Flowchart:
     _apply_styles(fc, class_defs, class_assign, node_styles, link_styles)
     _attach_subgraph_edges(fc)
     return fc
+
+
+#: ``style`` / ``classDef`` properties a subgraph frame honours.
+_FRAME_CSS = ("fill", "stroke", "stroke-width", "stroke-dasharray", "color", "fill-opacity")
 
 
 def _subgraph_members(fc: Flowchart, sg: Subgraph) -> list[str]:
@@ -1337,11 +1381,11 @@ def _attach_subgraph_edges(fc: Flowchart) -> None:
         if e.dst in groups and e.dst not in fc.nodes:
             members = _subgraph_members(fc, groups[e.dst])
             if members:
-                e.dst = members[0]
+                e.dst_group, e.dst = e.dst, members[0]
         if e.src in groups and e.src not in fc.nodes:
             members = _subgraph_members(fc, groups[e.src])
             if members:
-                e.src = members[-1]
+                e.src_group, e.src = e.src, members[-1]
     fc.edges = [e for e in fc.edges if e.src in fc.nodes and e.dst in fc.nodes]
 
 
@@ -1363,6 +1407,12 @@ def _apply_styles(
             css.update(class_defs.get(name, {}))
         css.update(node_styles.get(nid, {}))
         node.css = css
+    for sg in fc.subgraphs:
+        css = {}
+        for name in assigned.get(sg.id, []):
+            css.update(class_defs.get(name, {}))
+        css.update(node_styles.get(sg.id, {}))
+        sg.css = {k: v for k, v in css.items() if k in _FRAME_CSS}
     for idxs, css in link_styles:
         for i in range(len(fc.edges)) if idxs is None else idxs:
             if 0 <= i < len(fc.edges):
@@ -1391,7 +1441,9 @@ def _parse_edge_line(fc: Flowchart, line: str) -> None:
             if m.group("lhead")
             else {"o": "circle", "x": "cross"}.get(m.group("lmark") or "", "none")
         )
-        ops.append(Edge("", "", label, style, _end_marker(op), tail))
+        edge = Edge("", "", label, style, _end_marker(op), tail)
+        edge.invisible = op.startswith("~")
+        ops.append(edge)
     spans.append((pos, len(line)))
 
     groups: list[list[str]] = []
@@ -1402,13 +1454,25 @@ def _parse_edge_line(fc: Flowchart, line: str) -> None:
         for cut in [*cuts, len(chunk)]:
             pieces.append(chunk[last:cut])
             last = cut + 1
-        ids = [nid for nid in (_ensure_node(fc, piece) for piece in pieces) if nid in fc.nodes]
+        ids = []
+        for piece in pieces:
+            nid = _ensure_node(fc, piece)
+            if nid in fc.nodes:
+                ids.append(nid)
+            else:
+                logger.warning(
+                    "Mermaid flowchart: could not read %r in line %r; it is left out",
+                    piece.strip(),
+                    line,
+                )
         groups.append(ids)
 
     for i, op in enumerate(ops):
         for src in groups[i]:
             for dst in groups[i + 1]:
-                fc.edges.append(Edge(src, dst, op.label, op.style, op.head, op.tail))
+                edge = Edge(src, dst, op.label, op.style, op.head, op.tail)
+                edge.invisible = op.invisible
+                fc.edges.append(edge)
 
 
 # ---------------------------------------------------------------------------
@@ -1442,6 +1506,8 @@ def parse_pie(source: str) -> PieChart:
         slice_m = re.match(r'^"([^"]+)"\s*:\s*([\d.]+)\s*$', line)
         if slice_m:
             pc.slices.append((slice_m.group(1), float(slice_m.group(2))))
+        elif not line.startswith(("accTitle", "accDescr")):
+            logger.warning("Mermaid pie: could not read line %r; it is left out", line)
 
     return pc
 
@@ -1470,14 +1536,28 @@ def parse_sequence(source: str) -> SequenceDiagram:
         if actor:
             sd.actors.add(pid)
 
+    box: SeqBox | None = None
     for raw_line in source.strip().splitlines():
         line = raw_line.strip().rstrip(";")
         if not line or line.startswith("%%") or line.lower().startswith("sequencediagram"):
             continue
 
-        m = re.match(r"^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$", line, re.IGNORECASE)
+        m = re.match(r"^box\b\s*(.*)$", line, re.IGNORECASE)
+        if m:
+            color, label = _split_leading_color(m.group(1).strip())
+            box = SeqBox(label=label, color=color)
+            sd.boxes.append(box)
+            continue
+        if box is not None and line.lower() == "end":
+            box = None
+            continue
+        m = re.match(
+            r"^(?:create\s+)?(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$", line, re.IGNORECASE
+        )
         if m:
             add(m.group(2).strip(), (m.group(3) or "").strip(), m.group(1).lower() == "actor")
+            if box is not None and m.group(2).strip() not in box.members:
+                box.members.append(m.group(2).strip())
             continue
         if re.match(r"^autonumber\b", line, re.IGNORECASE):
             sd.autonumber = True
@@ -1511,8 +1591,33 @@ def parse_sequence(source: str) -> SequenceDiagram:
             msg = SeqMessage(src=src, dst=dst, label=label.strip(), arrow=arrow, activate=act)
             sd.messages.append(msg)
             sd.events.append(msg)
+            continue
+        if not re.match(
+            r"^(title|accTitle|accDescr|destroy|links?|properties|details)\b", line, re.IGNORECASE
+        ):
+            logger.warning("Mermaid sequence: could not read line %r; it is left out", line)
 
     return sd
+
+
+_CSS_FUNC_COLOR_RE = re.compile(r"^((?:rgba?|hsla?)\([^)]*\))\s*(.*)$", re.IGNORECASE)
+
+
+def _split_leading_color(text: str) -> tuple[str, str]:
+    """``rgb(1,2,3) Label`` / ``#abc Label`` / ``Aqua Label`` -> (colour, label).
+
+    The first word counts as a colour only when it reads as one, so ``box Team``
+    is a label with no colour.
+    """
+    m = _CSS_FUNC_COLOR_RE.match(text)
+    if m:
+        return m.group(1), m.group(2).strip()
+    first, _, rest = text.partition(" ")
+    if first.lower() == "transparent":
+        return "", rest.strip()
+    if first and css_color_to_hex(first):
+        return first, rest.strip()
+    return "", text
 
 
 # ---------------------------------------------------------------------------
@@ -1662,6 +1767,7 @@ def parse_gantt(source: str) -> GanttChart:
     """Parse a Mermaid gantt chart definition."""
     gc = GanttChart()
     current_section = ""
+    assigned: list[tuple[list[str], str]] = []
     for raw_line in source.strip().splitlines():
         line = raw_line.strip()
         if not line or line.startswith("%%"):
@@ -1680,23 +1786,38 @@ def parse_gantt(source: str) -> GanttChart:
             continue
 
         if re.match(
-            r"^(axisFormat|excludes|includes|todayMarker|tickInterval|weekday)\b",
+            r"^(axisFormat|excludes|includes|todayMarker|tickInterval|weekday|inclusiveEndDates"
+            r"|topAxis|displayMode|accTitle|accDescr|click)\b",
             line,
             re.IGNORECASE,
         ):
             continue
 
-        sec_m = re.match(r"^section\s+(.+)$", line, re.IGNORECASE)
-        if sec_m:
-            current_section = sec_m.group(1).strip()
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            for name in m.group(1).split(","):
+                gc.class_defs.setdefault(name.strip(), {}).update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^class\s+(.+?)\s+([\w-]+)$", line)
+        if m:
+            assigned.append(([x.strip() for x in m.group(1).split(",")], m.group(2)))
             continue
 
-        # Task line: "Task name :[tags,] [id,] [start,] duration"
-        task_m = re.match(r"^(.+?)\s*:\s*(.+)$", line)
+        sec_m = re.match(r"^section\s+(.+?)(?:\s*:::\s*([\w-]+))?$", line, re.IGNORECASE)
+        if sec_m:
+            current_section = sec_m.group(1).strip()
+            if sec_m.group(2):
+                gc.section_classes.setdefault(current_section, []).append(sec_m.group(2))
+            continue
+
+        # Task line: "Task name[:::class] :[tags,] [id,] [start,] duration"
+        task_m = re.match(r"^(.+?)(?:\s*:::\s*([\w-]+))?\s*:(?!::)\s*(.+)$", line)
         if task_m:
             name = task_m.group(1).strip()
-            params = [p.strip() for p in task_m.group(2).split(",")]
+            params = [p.strip() for p in task_m.group(3).split(",")]
             task = GanttTask(name=name, section=current_section)
+            if task_m.group(2):
+                task.classes.append(task_m.group(2))
             for p in params:
                 if p.lower() in _GANTT_TAGS:
                     task.tags.add(p.lower())
@@ -1710,7 +1831,23 @@ def parse_gantt(source: str) -> GanttChart:
                 else:
                     task.duration = p
             gc.tasks.append(task)
+            continue
+        logger.warning("Mermaid gantt: could not read line %r; it is left out", line)
 
+    # ``class a1,a2 name`` names task ids or whole sections
+    sections = {task.section for task in gc.tasks}
+    for ids, name in assigned:
+        for ident in ids:
+            ident = ident.strip('"')
+            hits = [task for task in gc.tasks if task.task_id == ident]
+            for task in hits:
+                task.classes.append(name)
+            if ident in sections:
+                gc.section_classes.setdefault(ident, []).append(name)
+            elif not hits:
+                logger.warning(
+                    "Mermaid gantt: 'class' names %r, which is no task or section", ident
+                )
     return gc
 
 
@@ -1723,6 +1860,10 @@ def parse_mindmap(source: str) -> MindNode:
     """Parse a Mermaid mindmap definition into a tree."""
     root = MindNode(label="Root")
     stack: list[tuple[int, MindNode]] = []  # (indent_level, node)
+    class_defs: dict[str, dict[str, str]] = {}
+    styles: dict[str, dict[str, str]] = defaultdict(dict)
+    assigned: dict[str, list[str]] = defaultdict(list)
+    nodes: list[MindNode] = []
 
     for raw_line in source.strip().splitlines():
         if not raw_line.strip() or raw_line.strip().startswith("%%"):
@@ -1730,21 +1871,41 @@ def parse_mindmap(source: str) -> MindNode:
         if re.match(r"^\s*mindmap\b", raw_line, re.IGNORECASE):
             continue
         stripped = raw_line.lstrip()
-        if stripped.startswith("::icon(") or stripped.startswith(":::"):
+        m = re.match(r"^(classDef|style)\s+(\S+)\s+(\S*:.+)$", stripped)
+        if m:
+            target = class_defs if m.group(1) == "classDef" else styles
+            for name in m.group(2).split(","):
+                target.setdefault(name.strip(), {}).update(_parse_css(m.group(3)))
+            continue
+        m = re.match(r"^class\s+(\S+)\s+([\w-]+(?:\s*,\s*[\w-]+)*)$", stripped)
+        if m:
+            for nid in m.group(1).split(","):
+                assigned[nid.strip()] += [c.strip() for c in m.group(2).split(",")]
+            continue
+        if stripped.startswith(":::"):  # Mermaid's own form: classes for the node above
+            if stack:
+                stack[-1][1].classes += stripped[3:].split()
+            continue
+        if stripped.startswith("::icon("):
             continue
         indent = len(raw_line) - len(stripped)
 
-        label = re.sub(r"\s*:::.*$", "", stripped.strip())
+        cm = re.search(r"\s*:::\s*(.*)$", stripped.strip())
+        classes = cm.group(1).split() if cm else []
+        label = stripped.strip()[: cm.start()] if cm else stripped.strip()
         # Shape decorations around the label: id((x)), (x), [x], {{x}}, ))x((, )x(
         shape_m = re.match(
-            r"^[\w-]*\s*(\(\((.+)\)\)|\(\[(.+)\]\)|\{\{(.+)\}\}|\)\)(.+)\(\(|\)(.+)\(|\((.+)\)|\[(.+)\])$",
+            r"^([\w-]*)\s*(\(\((.+)\)\)|\(\[(.+)\]\)|\{\{(.+)\}\}|\)\)(.+)\(\(|\)(.+)\(|\((.+)\)|\[(.+)\])$",
             label,
         )
+        node_id = ""
         if shape_m:
-            label = next(g for g in shape_m.groups()[1:] if g is not None)
+            node_id = shape_m.group(1)
+            label = next(g for g in shape_m.groups()[2:] if g is not None)
         label = label.strip().strip('"')
 
-        node = MindNode(label=label)
+        node = MindNode(label=label, node_id=node_id or label, classes=classes)
+        nodes.append(node)
         if not stack:
             root = node
             stack.append((indent, node))
@@ -1757,7 +1918,25 @@ def parse_mindmap(source: str) -> MindNode:
                 root.children.append(node)
             stack.append((indent, node))
 
+    for node in nodes:
+        css: dict[str, str] = {}
+        for name in [*node.classes, *assigned.get(node.node_id, []), *assigned.get(node.label, [])]:
+            css.update(class_defs.get(name, {}))
+        css.update(styles.get(node.node_id, {}))
+        css.update(styles.get(node.label, {}) if node.label != node.node_id else {})
+        node.css = css
     return root
+
+
+def _mind_base(node: MindNode) -> str | None:
+    """The colour a styled mind-map node hands to its branch (links, child borders)."""
+    stroke = css_color_to_hex(node.css.get("stroke", ""))
+    if stroke:
+        return stroke
+    fill = css_color_to_hex(node.css.get("fill", ""))
+    if fill and _luminance(fill) > 0.45:  # a pale fill: use a deeper shade for lines
+        return _mix(fill, "#000000", 0.45)
+    return fill
 
 
 # ---------------------------------------------------------------------------
@@ -2146,6 +2325,11 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
     """Position all nodes in the flowchart."""
     if not fc.nodes:
         return
+    fc.clusters = None
+    fc.fixed_routes = {}
+    if fc.subgraphs and _wants_clusters(fc):
+        _layout_clusters(fc, theme)
+        return
 
     font_size = 12
 
@@ -2189,8 +2373,11 @@ def layout(fc: Flowchart, theme: dict[str, str] | None = None) -> None:
             node.w = max(max(_text_w(line, font_size, 500) for line in lines) + 12, 56)
             node.h = 50 + num_lines * font_size * 1.3
 
-    # Assign levels
+    # Assign levels. Without any links, left-to-right nodes form a row, as they
+    # already do top-down, instead of stacking in one column.
     levels = _compute_levels(fc)
+    if not fc.edges and fc.direction in ("LR", "RL"):
+        levels = {nid: i for i, nid in enumerate(fc.nodes)}
 
     # Edges spanning several levels (and back edges) get a chain of invisible
     # lane nodes so they reserve space and route around the real nodes.
@@ -2391,6 +2578,359 @@ def _separate_frames(fc: Flowchart, is_horizontal: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cluster layout: each group laid out as a block in its own direction
+# ---------------------------------------------------------------------------
+
+_SG_PAD = 12.0  # frame padding around a group's contents
+_SG_TITLE = 18.0  # band at the top of a frame that holds its title
+
+_Item = tuple[str, str]  # ("n", node id) or ("g", group id)
+
+
+def _wants_clusters(fc: Flowchart) -> bool:
+    """Groups with their own ``direction``, or edges to a group, need the block layout."""
+    return any(sg.direction for sg in fc.subgraphs) or any(
+        e.src_group or e.dst_group for e in fc.edges
+    )
+
+
+def _edge_items(e: Edge) -> tuple[_Item, _Item]:
+    src: _Item = ("g", e.src_group) if e.src_group else ("n", e.src)
+    dst: _Item = ("g", e.dst_group) if e.dst_group else ("n", e.dst)
+    return src, dst
+
+
+def _layout_clusters(fc: Flowchart, theme: dict[str, str] | None) -> None:
+    """Lay out every group as one block, so frames never overlap.
+
+    Working from the innermost groups out, each group's own nodes and child
+    blocks are laid out in the group's ``direction`` (or the parent's), and
+    the finished block becomes a single fixed-size node one level up. Edges
+    between two items of the same scope are routed there, in that scope's
+    direction; edges that leave a group run around the frames in between
+    (see :func:`_orthogonal_route`).
+    """
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+    parent: dict[_Item, str | None] = {}
+    for sg in fc.subgraphs:
+        parent.setdefault(("g", sg.id), None)
+        for cid in sg.children:
+            if cid in by_id:
+                parent[("g", cid)] = sg.id
+        for nid in sg.node_ids:
+            if nid in fc.nodes:
+                parent.setdefault(("n", nid), sg.id)
+    for nid in fc.nodes:
+        parent.setdefault(("n", nid), None)
+
+    def path(item: _Item) -> list[_Item | None]:
+        out: list[_Item | None] = [item]
+        seen = {item}
+        up = parent.get(item)
+        while up is not None and ("g", up) not in seen:
+            seen.add(("g", up))
+            out.append(("g", up))
+            up = parent.get(("g", up))
+        out.append(None)
+        return out
+
+    def rep(scope: str | None, item: _Item) -> _Item | None:
+        """The item directly inside ``scope`` that holds ``item`` (None if outside it)."""
+        chain = path(item)
+        target = None if scope is None else ("g", scope)
+        if target not in chain[1:]:
+            return None
+        return chain[chain.index(target) - 1]
+
+    def key(item: _Item) -> str:
+        return item[1] if item[0] == "n" else f"\0g:{item[1]}"
+
+    routing = _ClusterRouting()
+    fc.waypoints = {}
+    proxies: dict[str, Node] = {}
+    scope_edges: dict[str | None, list[int]] = defaultdict(list)
+    edge_items = [_edge_items(e) for e in fc.edges]
+
+    def layout_scope(scope: str | None, direction: str) -> tuple[float, float]:
+        items: list[_Item] = []
+        for nid in fc.nodes:
+            r = rep(scope, ("n", nid))
+            if r is not None and r not in items:
+                items.append(r)
+        for sg in fc.subgraphs:  # empty groups still get a frame
+            r = rep(scope, ("g", sg.id))
+            if r is not None and r not in items:
+                items.append(r)
+        sub = Flowchart(direction=direction, end_marker_space=fc.end_marker_space)
+        for item in items:
+            if item[0] == "g":
+                sg = by_id[item[1]]
+                w, h = layout_scope(sg.id, sg.direction or direction)
+                proxies[sg.id] = sub.nodes[key(item)] = Node(key(item), "", "fixed", w=w, h=h)
+            else:
+                sub.nodes[item[1]] = fc.nodes[item[1]]
+        sub_to_fc: list[int] = []
+        for idx, (s_item, d_item) in enumerate(edge_items):
+            rs, rd = rep(scope, s_item), rep(scope, d_item)
+            if rs is None or rd is None or rs == rd:
+                continue
+            e = fc.edges[idx]
+            sub.edges.append(Edge(key(rs), key(rd), e.label, e.style, e.head, e.tail))
+            sub.edges[-1].invisible = e.invisible
+            sub_to_fc.append(idx)
+            if rs == s_item and rd == d_item:
+                routing.direction[idx] = direction
+            else:
+                routing.cross.add(idx)
+        if sub.nodes:
+            layout(sub, theme)
+            for (k, role), port in _assign_ports(sub).items():
+                if sub_to_fc[k] not in routing.cross:
+                    routing.ports[(sub_to_fc[k], role)] = port
+            for k, pts in sub.waypoints.items():
+                if sub_to_fc[k] not in routing.cross:
+                    fc.waypoints[sub_to_fc[k]] = list(pts)
+                    scope_edges[scope].append(sub_to_fc[k])
+        boxes = [(n.x, n.y, n.x + n.w, n.y + n.h) for n in sub.nodes.values()]
+        boxes += [(px, py, px, py) for i in scope_edges[scope] for px, py in fc.waypoints[i]]
+        if scope is None:
+            return 0.0, 0.0
+        label_w = _text_w(by_id[scope].label, _FS_SM, 600) + 2 * _SG_PAD
+        if not boxes:
+            return max(label_w, 96.0), _SG_TITLE + 2 * _SG_PAD + 12
+        x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+        w = max(x1 - x0 + 2 * _SG_PAD, label_w)
+        dx = (w - (x1 - x0)) / 2 - x0
+        dy = _SG_PAD + _SG_TITLE - y0
+        _shift_scope(sub.nodes.values(), [fc.waypoints[i] for i in scope_edges[scope]], dx, dy)
+        return w, y1 - y0 + 2 * _SG_PAD + _SG_TITLE
+
+    layout_scope(None, fc.direction)
+
+    def place(scope: str | None, ox: float, oy: float) -> None:
+        nodes = [fc.nodes[i[1]] for i in parent if i[0] == "n" and parent[i] == scope]
+        _shift_scope(nodes, [fc.waypoints[i] for i in scope_edges[scope]], ox, oy)
+        for item, up in parent.items():
+            if item[0] == "g" and up == scope and item[1] in proxies:
+                sg, box = by_id[item[1]], proxies[item[1]]
+                sg.x, sg.y, sg.w, sg.h = box.x + ox, box.y + oy, box.w, box.h
+                routing.frames[sg.id] = Node(sg.id, "", "fixed", sg.x, sg.y, sg.w, sg.h)
+                place(sg.id, sg.x, sg.y)
+
+    place(None, 0.0, 0.0)
+    fc.clusters = routing
+
+
+def _shift_scope(
+    nodes: Iterable[Node], lanes: list[list[tuple[float, float]]], dx: float, dy: float
+) -> None:
+    for n in nodes:
+        n.x += dx
+        n.y += dy
+    for pts in lanes:
+        pts[:] = [(px + dx, py + dy) for px, py in pts]
+
+
+# ---------------------------------------------------------------------------
+# Obstacle-avoiding orthogonal router
+# ---------------------------------------------------------------------------
+
+_Rect = tuple[float, float, float, float]  # x0, y0, x1, y1
+_SIDES = {"right": (1, 0), "bottom": (0, 1), "left": (-1, 0), "top": (0, -1)}
+_BEND_COST = 28.0
+
+
+def _side_point(n: Node, side: str) -> tuple[float, float]:
+    cx, cy = n.x + n.w / 2, n.y + n.h / 2
+    return {
+        "right": (n.x + n.w, cy),
+        "left": (n.x, cy),
+        "bottom": (cx, n.y + n.h),
+        "top": (cx, n.y),
+    }[side]
+
+
+def _orthogonal_route(
+    a: Node,
+    b: Node,
+    obstacles: list[_Rect],
+    stub: float = 14.0,
+    soft: list[_Rect] | None = None,
+) -> list[tuple[float, float]] | None:
+    """Shortest right-angled path from ``a`` to ``b`` that keeps clear of ``obstacles``.
+
+    Candidate lines run along every obstacle edge, through the gaps between
+    them and out of each side of both ends; Dijkstra over that grid charges
+    for length and for every bend, so routes hug the gaps between frames.
+    ``soft`` areas (other edges' lines) may be crossed but cost extra to run
+    along, so a detour keeps its distance from them.
+    Returns the corner points (side of ``a`` ... side of ``b``) or None.
+    """
+    import heapq
+
+    soft_rects: list[_Rect] = soft or []
+
+    def blocked(x: float, y: float) -> bool:
+        return any(o[0] < x < o[2] and o[1] < y < o[3] for o in obstacles)
+
+    _End = tuple[tuple[float, float], tuple[float, float], tuple[int, int]]
+    starts: list[_End] = []
+    ends: list[_End] = []
+    for side, (dx, dy) in _SIDES.items():
+        for node, found in ((a, starts), (b, ends)):
+            px, py = _side_point(node, side)
+            sx, sy = px + dx * stub, py + dy * stub
+            if not blocked(sx, sy):
+                found.append(((px, py), (sx, sy), (dx, dy)))
+    if not starts or not ends:
+        return None
+    xs_set = {o[0] for o in obstacles + soft_rects} | {o[2] for o in obstacles + soft_rects}
+    ys_set = {o[1] for o in obstacles + soft_rects} | {o[3] for o in obstacles + soft_rects}
+    for _p, (sx, sy), _d in starts + ends:
+        xs_set.add(sx)
+        ys_set.add(sy)
+    lo_x, hi_x = min(xs_set) - 2 * stub, max(xs_set) + 2 * stub
+    lo_y, hi_y = min(ys_set) - 2 * stub, max(ys_set) + 2 * stub
+    xs_sorted = sorted(xs_set | {lo_x, hi_x})
+    ys_sorted = sorted(ys_set | {lo_y, hi_y})
+    xs = sorted(set(xs_sorted) | {(p + q) / 2 for p, q in zip(xs_sorted, xs_sorted[1:])})
+    ys = sorted(set(ys_sorted) | {(p + q) / 2 for p, q in zip(ys_sorted, ys_sorted[1:])})
+    ix = {x: i for i, x in enumerate(xs)}
+    iy = {y: i for i, y in enumerate(ys)}
+    dirs = list(_SIDES.values())
+
+    goal: dict[tuple[int, int], list[tuple[tuple[float, float], tuple[int, int]]]] = defaultdict(
+        list
+    )
+    for port, (sx, sy), (dx, dy) in ends:
+        goal[(ix[sx], iy[sy])].append((port, (-dx, -dy)))
+
+    heap: list[tuple[float, int, int, int, int]] = []
+    prev: dict[tuple[int, int, int], tuple[int, int, int] | None] = {}
+    best: dict[tuple[int, int, int], float] = {}
+    first_port: dict[tuple[int, int, int], tuple[float, float]] = {}
+    for port, (sx, sy), heading in starts:
+        state = (ix[sx], iy[sy], dirs.index(heading))
+        if stub < best.get(state, math.inf):
+            best[state] = stub
+            prev[state] = None
+            first_port[state] = port
+            heapq.heappush(heap, (stub, *state, 0))
+    done: tuple[float, tuple[int, int, int], tuple[float, float]] | None = None
+    while heap:
+        cost, i, j, d, _ = heapq.heappop(heap)
+        if cost > best.get((i, j, d), math.inf) or (done and cost >= done[0]):
+            continue
+        for port, arrive in goal.get((i, j), []):
+            ad = dirs.index(arrive)
+            if (dirs[d][0] + arrive[0], dirs[d][1] + arrive[1]) == (0, 0):
+                continue  # would double back into the stub
+            total = cost + stub + (0 if ad == d else _BEND_COST)
+            if done is None or total < done[0]:
+                done = (total, (i, j, d), port)
+        for nd, (dx, dy) in enumerate(dirs):
+            if (dx + dirs[d][0], dy + dirs[d][1]) == (0, 0):
+                continue
+            ni, nj = i + dx, j + dy
+            if not (0 <= ni < len(xs) and 0 <= nj < len(ys)):
+                continue
+            x0, y0, x1, y1 = xs[i], ys[j], xs[ni], ys[nj]
+            if blocked(x1, y1) or blocked((x0 + x1) / 2, (y0 + y1) / 2):
+                continue
+            step = abs(x1 - x0) + abs(y1 - y0)
+            mx_, my_ = (x0 + x1) / 2, (y0 + y1) / 2
+            if any(o[0] < mx_ < o[2] and o[1] < my_ < o[3] for o in soft_rects):
+                step *= 4
+            step += 0 if nd == d else _BEND_COST
+            state = (ni, nj, nd)
+            if cost + step < best.get(state, math.inf):
+                best[state] = cost + step
+                prev[state] = (i, j, d)
+                heapq.heappush(heap, (cost + step, ni, nj, nd, 0))
+    if done is None:
+        return None
+    _total, state, end_port = done
+    chain: list[tuple[float, float]] = []
+    cur: tuple[int, int, int] | None = state
+    origin = state
+    while cur is not None:
+        chain.append((xs[cur[0]], ys[cur[1]]))
+        origin = cur
+        cur = prev[cur]
+    pts = [first_port[origin], *reversed(chain), end_port]
+    corners = [pts[0]]
+    for p, q in zip(pts[1:], pts[2:]):
+        r = corners[-1]
+        if (abs(r[0] - p[0]) < 0.01 and abs(p[0] - q[0]) < 0.01) or (
+            abs(r[1] - p[1]) < 0.01 and abs(p[1] - q[1]) < 0.01
+        ):
+            continue  # collinear
+        corners.append(p)
+    corners.append(pts[-1])
+    return corners
+
+
+def _route_label_xy(pts: list[tuple[float, float]]) -> tuple[float, float]:
+    """Label position: the middle of the longest run, centred on the line."""
+    p, q = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    return (p[0] + q[0]) / 2, (p[1] + q[1]) / 2 + _FS_SM * 0.35
+
+
+def _frame_contains(fc: Flowchart, sg: Subgraph, nid: str) -> bool:
+    return nid in _subgraph_members(fc, sg)
+
+
+def _route_obstacles(fc: Flowchart, idx: int) -> tuple[list[_Rect], list[_Rect]]:
+    """(nodes, frames) an edge must keep clear of; frames holding its ends are excluded."""
+    e = fc.edges[idx]
+    by_id = {sg.id: sg for sg in fc.subgraphs}
+
+    def holds(sg: Subgraph, group: str, nid: str) -> bool:
+        if group:  # an edge to a group stays outside that frame, but inside its parents
+            return sg.id != group and _group_within(by_id, group, sg.id)
+        return _frame_contains(fc, sg, nid)
+
+    nodes = [(n.x, n.y, n.x + n.w, n.y + n.h) for n in fc.nodes.values() if n.w > 0]
+    frames: list[_Rect] = []
+    for sg in fc.subgraphs:
+        if sg.w <= 0:
+            continue
+        if holds(sg, e.src_group, e.src) or holds(sg, e.dst_group, e.dst):
+            # the edge may cross its own group's frame, but not the title in it
+            if sg.label:
+                title_w = _text_w(sg.label, _FS_SM, 600) + 14
+                nodes.append((sg.x, sg.y, sg.x + min(title_w, sg.w), sg.y + _SG_TITLE))
+            continue
+        frames.append((sg.x, sg.y, sg.x + sg.w, sg.y + sg.h))
+    return nodes, frames
+
+
+def _inflate(rects: list[_Rect], by: float) -> list[_Rect]:
+    return [(x0 - by, y0 - by, x1 + by, y1 + by) for x0, y0, x1, y1 in rects]
+
+
+def _group_within(by_id: dict[str, Subgraph], inner: str, outer: str) -> bool:
+    """True when group ``inner`` is nested (at any depth) inside group ``outer``."""
+    stack = list(by_id[outer].children) if outer in by_id else []
+    while stack:
+        gid = stack.pop()
+        if gid == inner:
+            return True
+        stack.extend(by_id[gid].children if gid in by_id else [])
+    return False
+
+
+def _polyline_hits(pts: list[tuple[float, float]], rects: list[_Rect]) -> bool:
+    """Does the polyline ``pts`` pass through the inside of any of ``rects``?"""
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        lo_x, hi_x, lo_y, hi_y = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        if any(lo_x < r[2] and hi_x > r[0] and lo_y < r[3] and hi_y > r[1] for r in rects):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # SVG renderer — shared helpers
 # ---------------------------------------------------------------------------
 
@@ -2446,12 +2986,22 @@ def _make_arrow_defs(t: dict[str, str], prefix: str = "", colors: tuple[str, ...
 # ---------------------------------------------------------------------------
 
 
-def _flow_extent(fc: Flowchart, pad: float = 10.0) -> tuple[float, float, float, float]:
-    """(origin x, origin y, width, height) of everything drawn: nodes, frames, lanes, labels."""
+def _flow_extent(
+    fc: Flowchart, pad: float = 10.0, extra: list[tuple[float, float]] | None = None
+) -> tuple[float, float, float, float]:
+    """(origin x, origin y, width, height) of everything drawn: nodes, frames, lanes, labels.
+
+    ``extra`` adds points (detoured edges) that must fit, with room for a label.
+    """
     xs0 = [n.x for n in fc.nodes.values()] + [sg.x for sg in fc.subgraphs if sg.w > 0]
     ys0 = [n.y for n in fc.nodes.values()] + [sg.y for sg in fc.subgraphs if sg.w > 0]
     xs1 = [n.x + n.w for n in fc.nodes.values()] + [sg.x + sg.w for sg in fc.subgraphs if sg.w > 0]
     ys1 = [n.y + n.h for n in fc.nodes.values()] + [sg.y + sg.h for sg in fc.subgraphs if sg.w > 0]
+    for px, py in extra or []:
+        xs0.append(px - 8)
+        xs1.append(px + 8)
+        ys0.append(py - 14)
+        ys1.append(py + 8)
     for pts in fc.waypoints.values():
         xs0 += [px for px, _ in pts]
         xs1 += [px for px, _ in pts]
@@ -2482,15 +3032,23 @@ def _wrap_label(label: str, max_w: float, weight: int = 500) -> str:
 def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
     """Keep a laid-out diagram within the text column instead of shrinking its text.
 
-    Too wide: wrap long node labels; still too wide, try the other flow direction
-    (left-to-right <-> top-down) and keep it if it fits or is clearly narrower.
-    Opt out per diagram with ``%%{init: {"flowchart": {"autoFit": false}}}%%``.
+    Too wide: a single chain (or unlinked nodes) wraps into rows that keep the
+    declared direction. Otherwise wrap long node labels; still too wide, try the
+    other flow direction (left-to-right <-> top-down) and keep it if it fits or
+    is clearly narrower -- unless the diagram asks to keep its direction with
+    ``%%{init: {"flowchart": {"keepDirection": true}}}%%`` (or the
+    ``%%{ mddoc: { keep_direction: true } }%%`` directive).
+    Opt out entirely with ``%%{init: {"flowchart": {"autoFit": false}}}%%``.
     """
     if t.get("auto_fit") == "0" or not fc.nodes:
         return
     column = float(t.get("column_px") or 640)
     width = _flow_extent(fc)[2]
     if width <= column:
+        return
+    order = _chain_order(fc)
+    if order is not None:
+        _wrap_rows(fc, order, column)
         return
     if wrap:
         for node in fc.nodes.values():
@@ -2500,6 +3058,8 @@ def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
         width = _flow_extent(fc)[2]
         if width <= column:
             return
+    if t.get("keep_direction") == "1":
+        return
     original = fc.direction
     fc.direction = "TD" if original in ("LR", "RL") else "LR"
     layout(fc, t)
@@ -2510,59 +3070,496 @@ def _fit_to_column(fc: Flowchart, t: dict[str, str], wrap: bool = True) -> None:
     layout(fc, t)
 
 
+def _chain_order(fc: Flowchart) -> list[str] | None:
+    """Nodes in order when the diagram can wrap into rows like text, else None.
+
+    That is a left-to-right single chain ``A --> B --> C`` (any link style,
+    ``~~~`` included), or nodes with no links at all in either direction.
+    """
+    if fc.subgraphs or fc.clusters is not None:
+        return None
+    if not fc.edges:
+        return list(fc.nodes)
+    if fc.direction != "LR" or len(fc.edges) != len(fc.nodes) - 1:
+        return None
+    nxt: dict[str, str] = {}
+    has_in: set[str] = set()
+    for e in fc.edges:
+        if e.src in nxt or e.dst in has_in or e.src == e.dst:
+            return None
+        nxt[e.src] = e.dst
+        has_in.add(e.dst)
+    starts = [n for n in fc.nodes if n not in has_in]
+    if len(starts) != 1:
+        return None
+    order = [starts[0]]
+    while order[-1] in nxt and len(order) <= len(fc.nodes):
+        order.append(nxt[order[-1]])
+    return order if len(order) == len(fc.nodes) else None
+
+
+def _wrap_rows(fc: Flowchart, order: list[str], column: float) -> None:
+    """Place ``order`` left to right in rows no wider than ``column``.
+
+    A link from the end of one row to the start of the next drops into the gap
+    below the row, runs back to the left and enters the next row's first node
+    from above, so the chain still reads left to right, row after row.
+    """
+    pad, gap = 30.0, 48.0
+    row_gap = 56.0 if fc.edges else 30.0  # room for the line that joins two rows
+    label = {(e.src, e.dst): e.label for e in fc.edges if not e.invisible}
+
+    def gap_before(a: str, b: str) -> float:
+        text = label.get((a, b), "")
+        return max(gap, _text_w(text, _FS_SM) + 28) if text else gap
+
+    rows: list[list[str]] = [[]]
+    used = 0.0
+    for nid in order:
+        row = rows[-1]
+        step = gap_before(row[-1], nid) if row else 0.0
+        if row and used + step + fc.nodes[nid].w > column - 2 * pad:
+            rows.append([])
+            row, used, step = rows[-1], 0.0, 0.0
+        row.append(nid)
+        used += step + fc.nodes[nid].w
+    y = pad
+    for row in rows:
+        h = max(fc.nodes[n].h for n in row)
+        x = pad
+        for i, nid in enumerate(row):
+            node = fc.nodes[nid]
+            if i:
+                x += gap_before(row[i - 1], nid)
+            node.x, node.y = x, y + (h - node.h) / 2
+            x += node.w
+        y += h + row_gap
+    fc.waypoints = {}
+    fc.fixed_routes = {}
+    breaks = {(a[-1], b[0]) for a, b in zip(rows, rows[1:])}
+    for i, e in enumerate(fc.edges):
+        if (e.src, e.dst) in breaks:
+            a, b = fc.nodes[e.src], fc.nodes[e.dst]
+            mid = (max(fc.nodes[n].y + fc.nodes[n].h for n in _row_of(rows, e.src)) + b.y) / 2
+            ax, bx = a.x + a.w / 2, b.x + b.w / 2
+            fc.fixed_routes[i] = [(ax, a.y + a.h), (ax, mid), (bx, mid), (bx, b.y)]
+
+
+def _row_of(rows: list[list[str]], nid: str) -> list[str]:
+    return next(row for row in rows if nid in row)
+
+
+_EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+
+
 def render_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> str:
     """Render a laid-out Flowchart to an SVG string."""
+    return render_svg_parts(fc, theme, split=False)[0]
+
+
+def render_svg_parts(
+    fc: Flowchart, theme: dict[str, str] | None = None, split: bool = True
+) -> list[str]:
+    """Render a Flowchart as one SVG, or as page-sized parts when it is too tall.
+
+    With ``page_px`` in the theme (the page's text-area height, set by
+    :func:`diagram_theme`), a diagram taller than a page is cut between ranks
+    (or wrapped rows) into parts that each fit one. Extra space is opened at
+    each cut first, and every edge crossing a cut ends in a lettered off-page
+    connector at the bottom of one part and starts from the same letter at the
+    top of the next.
+    """
     t = _tokens(theme)
     layout(fc, t)
     _fit_to_column(fc, t)
 
     if not fc.nodes:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+        logger.warning("Mermaid flowchart has no nodes to draw; check the diagram source")
+        return [_EMPTY_SVG]
+    gaps = _open_page_gaps(fc, t) if split else []
+    drawing = _draw_flowchart(fc, t)
+    if not gaps:
+        return [
+            _svg_root(
+                drawing.width,
+                drawing.height,
+                [drawing.defs, f'<g transform="translate({-drawing.ox:g},{-drawing.oy:g})">']
+                + drawing.body
+                + ["</g>"],
+                t["font"],
+            )
+        ]
+    return _slice_drawing(drawing, gaps, t)
 
+
+@dataclass
+class _Drawing:
+    """A flowchart drawn in layout coordinates, before it is framed in an <svg>."""
+
+    defs: str
+    body: list[str]  # frames, edges, nodes (layout coordinates)
+    ox: float
+    oy: float
+    width: float
+    height: float
+    lines: list[list[tuple[float, float]]]  # every drawn edge's corner points
+    pills: list[tuple[float, float, float, float]]  # edge label boxes
+
+
+def _draw_flowchart(fc: Flowchart, t: dict[str, str]) -> _Drawing:
+    """Route and draw every frame, edge and node of a laid-out flowchart."""
     parts: list[str] = []
 
-    ox, oy, width, height = _flow_extent(fc)
+    clusters = fc.clusters
+    ports = clusters.ports if clusters else _assign_ports(fc)
+    ends: dict[int, tuple[Node, Node, str]] = {}
+    routes: dict[int, list[tuple[float, float]]] = dict(fc.fixed_routes)
+    for edge_idx, edge in enumerate(fc.edges):
+        if edge.invisible:
+            continue
+        src = fc.nodes.get(edge.src)
+        dst = fc.nodes.get(edge.dst)
+        if clusters:  # an edge to a group meets its frame
+            src = clusters.frames.get(edge.src_group, src) if edge.src_group else src
+            dst = clusters.frames.get(edge.dst_group, dst) if edge.dst_group else dst
+        if not src or not dst:
+            continue
+        direction = clusters.direction.get(edge_idx, fc.direction) if clusters else fc.direction
+        ends[edge_idx] = (src, dst, direction)
+    if fc.subgraphs:
+        # Edges on their usual paths first; detours then keep their distance from them
+        usual: dict[int, list[tuple[float, float]]] = {}
+        for edge_idx, (src, dst, direction) in ends.items():
+            edge = fc.edges[edge_idx]
+            if not (clusters and edge_idx in clusters.cross):
+                usual[edge_idx] = _route_points(
+                    src,
+                    dst,
+                    fc.waypoints.get(edge_idx) or [],
+                    direction in ("LR", "RL"),
+                    edge.label,
+                    ports.get((edge_idx, "out")),
+                    ports.get((edge_idx, "in")),
+                    _edge_lane(fc, edge),
+                )[0]
+        for edge_idx, (src, dst, direction) in ends.items():
+            soft = [
+                (min(x0, x1) - 8, min(y0, y1) - 8, max(x0, x1) + 8, max(y0, y1) + 8)
+                for k, pts in [*usual.items(), *routes.items()]
+                if k != edge_idx
+                for (x0, y0), (x1, y1) in zip(pts, pts[1:])
+            ]
+            route = _avoid_frames(
+                fc, edge_idx, src, dst, direction, ports, _edge_lane(fc, fc.edges[edge_idx]), soft
+            )
+            if route:
+                routes[edge_idx] = route
+                usual.pop(edge_idx, None)
+    # Detours count as drawn lines: labels keep off them
+    taken: list[tuple[float, float, float, float]] = []
+    own: dict[int, list[tuple[float, float, float, float]]] = defaultdict(list)
+    for edge_idx, route in routes.items():
+        for (x0, y0), (x1, y1) in zip(route, route[1:]):
+            box = (min(x0, x1) - 2, min(y0, y1) - 2, max(x0, x1) + 2, max(y0, y1) + 2)
+            taken.append(box)
+            own[edge_idx].append(box)
+
+    ox, oy, width, height = _flow_extent(fc, extra=[p for r in routes.values() for p in r])
 
     edge_colors = tuple(sorted({e.css["stroke"] for e in fc.edges if "stroke" in e.css}))
-    parts.append(_make_arrow_defs(t, colors=edge_colors))
-    parts.append(f'<g transform="translate({-ox:g},{-oy:g})">')
+    defs = _make_arrow_defs(t, colors=edge_colors)
+    lines: list[list[tuple[float, float]]] = []
 
     # Draw subgraphs (behind everything)
     for sg in fc.subgraphs:
         parts.append(_render_subgraph(sg, t))
 
     # Draw edges (behind nodes)
-    ports = _assign_ports(fc)
     for edge_idx, edge in enumerate(fc.edges):
-        src = fc.nodes.get(edge.src)
-        dst = fc.nodes.get(edge.dst)
-        if not src or not dst:
+        if edge_idx not in ends:
             continue
-        lane = 0.0
-        if any(o.src == edge.dst and o.dst == edge.src for o in fc.edges):
-            lane = -7.0 if edge.src < edge.dst else 7.0
+        src, dst, direction = ends[edge_idx]
+        lines.append(
+            routes.get(edge_idx)
+            or _route_points(
+                src,
+                dst,
+                fc.waypoints.get(edge_idx) or [],
+                direction in ("LR", "RL"),
+                edge.label,
+                ports.get((edge_idx, "out")),
+                ports.get((edge_idx, "in")),
+                _edge_lane(fc, edge),
+            )[0]
+        )
         parts.append(
             _render_edge(
                 src,
                 dst,
                 edge.label,
-                fc.direction,
+                direction,
                 t,
                 edge.style,
-                lane,
+                _edge_lane(fc, edge),
                 fc.waypoints.get(edge_idx),
                 ports.get((edge_idx, "out")),
                 ports.get((edge_idx, "in")),
                 edge,
+                route=routes.get(edge_idx),
+                taken=taken,
+                own=own.get(edge_idx),
             )
         )
 
     # Draw nodes
     for node in fc.nodes.values():
         parts.append(_render_node(node, t))
-    parts.append("</g>")
 
-    return _svg_root(width, height, parts, t["font"])
+    detours = {box for boxes in own.values() for box in boxes}
+    pills = [box for box in taken if box not in detours]
+    return _Drawing(defs, parts, ox, oy, width, height, lines, pills)
+
+
+# ---------------------------------------------------------------------------
+# Splitting a tall flowchart across pages
+# ---------------------------------------------------------------------------
+
+_PAGE_GAP = 64.0  # extra space opened at each cut, for the connectors
+_CONNECTOR_R = 8.0
+
+
+def _flow_bottom(fc: Flowchart) -> float:
+    return max(
+        [n.y + n.h for n in fc.nodes.values()] + [sg.y + sg.h for sg in fc.subgraphs if sg.w > 0]
+    )
+
+
+def _open_page_gaps(fc: Flowchart, t: dict[str, str]) -> list[tuple[float, float]]:
+    """Open space at the cuts a too-tall diagram needs; return each widened gap.
+
+    Cuts go in node-free bands between ranks (or wrapped rows), as low as each
+    page allows. A diagram with no such band within a page (a single huge
+    node, or interleaved left-to-right columns) is left whole.
+    """
+    page = float(t.get("page_px") or 0)
+    if not page:
+        return []
+    ox, oy, width, height = _flow_extent(fc)
+    column = float(t.get("column_px") or width)
+    scale = min(1.0, column / width) if width else 1.0
+    limit = page / scale * 0.9  # leave room for the space around a figure
+    if height <= limit:
+        return []
+    gaps: list[tuple[float, float]] = []
+    top = oy
+    while _flow_bottom(fc) + 10 - top > limit:
+        spans = sorted((n.y - 4, n.y + n.h + 4) for n in fc.nodes.values() if n.h > 0)
+        merged: list[list[float]] = []
+        for lo, hi in spans:
+            if merged and lo <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        free = [(a[1], b[0]) for a, b in zip(merged, merged[1:]) if b[0] - a[1] >= 20]
+        fits = [g for g in free if g[0] > top + 40 and (g[0] + g[1]) / 2 + _PAGE_GAP <= top + limit]
+        if not fits:
+            break  # nothing left to cut at: the rest stays whole (and warns)
+        lo, hi = fits[-1]
+        at = (lo + hi) / 2
+        _insert_space(fc, at, _PAGE_GAP)
+        gaps.append((lo, hi + _PAGE_GAP))
+        top = at + _PAGE_GAP / 2
+    return gaps
+
+
+def _insert_space(fc: Flowchart, at: float, gap: float) -> None:
+    """Move everything below ``at`` down by ``gap`` (frames across it grow)."""
+    for node in fc.nodes.values():
+        if node.y > at:
+            node.y += gap
+    for sg in fc.subgraphs:
+        if sg.y > at:
+            sg.y += gap
+        elif sg.y + sg.h > at:
+            sg.h += gap
+    if fc.clusters:
+        for frame in fc.clusters.frames.values():
+            if frame.y > at:
+                frame.y += gap
+            elif frame.y + frame.h > at:
+                frame.h += gap
+    for pts in [*fc.waypoints.values(), *fc.fixed_routes.values()]:
+        # a row break's run sits at the middle of its gap: it moves with the lower part
+        pts[:] = [(x, y + gap if y >= at - 0.5 else y) for x, y in pts]
+
+
+def _best_cut(lo: float, hi: float, drawing: _Drawing) -> float:
+    """The line across a widened gap that keeps furthest from runs, labels and nodes."""
+    runs = [
+        p[1]
+        for pts in drawing.lines
+        for p, q in zip(pts, pts[1:])
+        if abs(p[1] - q[1]) < 0.5 and lo < p[1] < hi
+    ]
+    best, best_score = (lo + hi) / 2, -math.inf
+    room = 2 * _CONNECTOR_R + 6  # a connector on each side of the cut
+    y = lo + room
+    while y <= hi - room:
+        score = min(y - lo, hi - y, *(abs(y - r) for r in runs), math.inf)
+        for b in drawing.pills:
+            if b[1] - 2 <= y <= b[3] + 2:
+                score = min(score, 0.0)
+            else:
+                score = min(score, abs(y - b[1]), abs(y - b[3]))
+        if score > best_score:
+            best, best_score = y, score
+        y += 1.0
+    return best
+
+
+def _crossings(drawing: _Drawing, y: float) -> list[float]:
+    """x of every edge crossing the horizontal line ``y``, left to right."""
+    xs: list[float] = []
+    for pts in drawing.lines:
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            if min(y0, y1) < y < max(y0, y1):
+                xs.append(x0 + (x1 - x0) * (y - y0) / (y1 - y0))
+    return sorted(xs)
+
+
+def _connector_label(n: int) -> str:
+    out = ""
+    n += 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
+def _connector(x: float, y: float, label: str, t: dict[str, str]) -> str:
+    """An off-page connector: a small circle with the letter both parts share."""
+    font = t.get("font", DEFAULT_THEME["font"])
+    return (
+        f'<g class="mddoc-continue"><circle cx="{x:g}" cy="{y:g}" r="{_CONNECTOR_R:g}" '
+        f'fill="{t["surface"]}" stroke="{t["edge"]}" stroke-width="1.25"/>'
+        f'<text x="{x:g}" y="{y + 3.5:g}" text-anchor="middle" font-family="{font}" '
+        f'font-size="10" font-weight="600" fill="{t["ink2"]}">{_escape(label)}</text></g>'
+    )
+
+
+def _slice_drawing(
+    drawing: _Drawing, gaps: list[tuple[float, float]], t: dict[str, str]
+) -> list[str]:
+    """Cut the drawing at the best line in each gap; one SVG per part."""
+    import hashlib
+
+    cuts = [_best_cut(lo, hi, drawing) for lo, hi in gaps]
+    labels: list[list[tuple[float, str]]] = []
+    count = 0
+    for y in cuts:
+        row = []
+        for x in _crossings(drawing, y):
+            row.append((x, _connector_label(count)))
+            count += 1
+        labels.append(row)
+    edges = [drawing.oy, *cuts, drawing.oy + drawing.height]
+    uid = hashlib.sha1("".join(drawing.body).encode()).hexdigest()[:8]
+    out: list[str] = []
+    for k, (ya, yb) in enumerate(zip(edges, edges[1:])):
+        h = yb - ya
+        marks: list[str] = []
+        if k > 0:  # continued from the part above
+            marks += [_connector(x, ya + _CONNECTOR_R + 3, lab, t) for x, lab in labels[k - 1]]
+        if k < len(cuts):  # continues in the part below
+            marks += [_connector(x, yb - _CONNECTOR_R - 3, lab, t) for x, lab in labels[k]]
+        clip = f"mddoc-part-{uid}-{k}"
+        out.append(
+            _svg_root(
+                drawing.width,
+                h,
+                [
+                    drawing.defs,
+                    f'<clipPath id="{clip}"><rect x="0" y="0" width="{drawing.width:g}" '
+                    f'height="{h:g}"/></clipPath>',
+                    f'<g clip-path="url(#{clip})">',
+                    f'<g transform="translate({-drawing.ox:g},{-ya:g})">',
+                    *drawing.body,
+                    *marks,
+                    "</g></g>",
+                ],
+                t["font"],
+            )
+        )
+    return out
+
+
+def _edge_lane(fc: Flowchart, edge: Edge) -> float:
+    """Offset that keeps the two halves of an ``A --> B`` / ``B --> A`` pair apart."""
+    if any(o.src == edge.dst and o.dst == edge.src for o in fc.edges):
+        return -7.0 if edge.src < edge.dst else 7.0
+    return 0.0
+
+
+def _avoid_frames(
+    fc: Flowchart,
+    idx: int,
+    src: Node,
+    dst: Node,
+    direction: str,
+    ports: dict[tuple[int, str], _Port],
+    lane: float,
+    soft: list[_Rect] | None = None,
+) -> list[tuple[float, float]] | None:
+    """A detour for an edge whose usual path would cut through a frame (None if clear).
+
+    Edges that leave their group in the block layout always take the router,
+    since their usual path was laid out for the group as a whole.
+    """
+    nodes, frames = _route_obstacles(fc, idx)
+    cross = fc.clusters is not None and idx in fc.clusters.cross
+    if not cross:
+        if not frames:
+            return None
+        pts, _ = _route_points(
+            src,
+            dst,
+            fc.waypoints.get(idx) or [],
+            direction in ("LR", "RL"),
+            fc.edges[idx].label,
+            ports.get((idx, "out")),
+            ports.get((idx, "in")),
+            lane,
+        )
+        if not _polyline_hits(pts, frames):
+            return None
+    return _orthogonal_route(
+        src, dst, _inflate(nodes, 10) + _inflate(frames, 12), stub=18.0, soft=soft
+    )
+
+
+def _free_label_spot(
+    lx: float,
+    ly: float,
+    w: float,
+    taken: list[tuple[float, float, float, float]],
+    own: list[tuple[float, float, float, float]] | None = None,
+) -> tuple[float, float]:
+    """Nudge a label pill (centred at ``lx``, text baseline ``ly``) off earlier ones."""
+    others = [o for o in taken if o not in (own or [])]
+
+    def box(x: float, y: float) -> tuple[float, float, float, float]:
+        return (x - w / 2 - 2, y - 13, x + w / 2 + 2, y + 6)
+
+    def clear(b: tuple[float, float, float, float]) -> bool:
+        return all(b[2] <= o[0] or o[2] <= b[0] or b[3] <= o[1] or o[3] <= b[1] for o in others)
+
+    for step in (0, 1, -1, 2, -2, 3, -3):
+        for dx, dy in ((0.0, 17.0 * step), (step * (w + 6), 0.0)):
+            if clear(box(lx + dx, ly + dy)):
+                taken.append(box(lx + dx, ly + dy))
+                return lx + dx, ly + dy
+    taken.append(box(lx, ly))
+    return lx, ly
 
 
 def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
@@ -2570,17 +3567,26 @@ def _render_subgraph(sg: Subgraph, t: dict[str, str]) -> str:
     if sg.w <= 0 or sg.h <= 0:
         return ""
     font = t.get("font", DEFAULT_THEME["font"])
-    fill = t["subgraph_fill"]
-    stroke = t["subgraph_stroke"]
-    label_color = t["subgraph_label"]
+    css = sg.css
+    fill = css.get("fill", t["subgraph_fill"])
+    stroke = css.get("stroke", t["subgraph_stroke"])
+    # A custom fill keeps the label legible: dark text on light tints, white on dark.
+    fill_hex = css_color_to_hex(fill) if "fill" in css else None
+    label_color = css.get("color") or (_text_on(fill_hex, t) if fill_hex else t["subgraph_label"])
+    extra = "".join(
+        f' {prop}="{_escape(css[prop])}"'
+        for prop in ("stroke-dasharray", "fill-opacity")
+        if prop in css
+    )
+    width = css.get("stroke-width", "1").removesuffix("px")
 
     return "\n".join(
         [
             f'<rect x="{sg.x}" y="{sg.y}" width="{sg.w}" height="{sg.h}" '
-            f'rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1"/>',
+            f'rx="8" fill="{_escape(fill)}" stroke="{_escape(stroke)}" stroke-width="{_escape(width)}"{extra}/>',
             f'<text x="{sg.x + 10}" y="{sg.y + 15}" '
             f'font-family="{font}" font-size="{_FS_SM:g}" font-weight="600" '
-            f'fill="{label_color}">{_escape(sg.label)}</text>',
+            f'fill="{_escape(label_color)}">{_escape(sg.label)}</text>',
         ]
     )
 
@@ -2779,6 +3785,8 @@ def _assign_ports(fc: Flowchart) -> dict[tuple[int, str], _Port]:
         src, dst = fc.nodes.get(e.src), fc.nodes.get(e.dst)
         if not src or not dst or abs(major(src) - major(dst)) < 1:
             continue
+        if e.invisible or i in fc.fixed_routes:
+            continue
         via = fc.waypoints.get(i)
         src_c = (src.x + src.w / 2, src.y + src.h / 2)
         dst_c = (dst.x + dst.w / 2, dst.y + dst.h / 2)
@@ -2839,6 +3847,28 @@ def _routed_path(
     the edge is a straight line, so the caller uses the midpoint). The label sits
     on the final segment so it never lands on another edge's trunk.
     """
+    verts, label_xy = _route_points(src, dst, via, horizontal, label, out_port, in_port, lane)
+    ax = 0 if horizontal else 1
+    if (
+        abs((src.x + src.w / 2, src.y + src.h / 2)[ax] - (dst.x + dst.w / 2, dst.y + dst.h / 2)[ax])
+        < 1
+    ):
+        (x0, y0), (x1, y1) = verts  # same rank: side to side
+        return f"M {x0},{y0} L {x1},{y1}", label_xy
+    return _round_polyline(verts), label_xy
+
+
+def _route_points(
+    src: Node,
+    dst: Node,
+    via: list[tuple[float, float]],
+    horizontal: bool,
+    label: str,
+    out_port: _Port | None = None,
+    in_port: _Port | None = None,
+    lane: float = 0.0,
+) -> tuple[list[tuple[float, float]], tuple[float, float] | None]:
+    """The corner points :func:`_routed_path` draws through, and the label position."""
     out_port, in_port = out_port or _Port(), in_port or _Port()
     sc = (src.x + src.w / 2, src.y + src.h / 2)
     dc = (dst.x + dst.w / 2, dst.y + dst.h / 2)
@@ -2855,7 +3885,7 @@ def _routed_path(
         extent_d = dst.h if horizontal else dst.w
         start = pt(sc[ax], sc[mx] + (extent_s / 2 if right else -extent_s / 2))
         end = pt(dc[ax], dc[mx] + (-extent_d / 2 if right else extent_d / 2))
-        return f"M {start[0]},{start[1]} L {end[0]},{end[1]}", None
+        return [start, end], None
 
     fwd = sc[ax] < dc[ax]
     half_s = (src.w if horizontal else src.h) / 2
@@ -2882,16 +3912,15 @@ def _routed_path(
             continue
         straight_only = False
         verts += [pt(mid, p[mx]), pt(mid, q[mx]), q]
-    d = _round_polyline(verts)
 
     if straight_only:
-        return d, None
+        return verts, None
     if horizontal:
         # On the last bend, centred on its vertical run (the label's pill sits over the line)
         label_xy = (mid, (seg_start[1] + end[1]) / 2 + _FS_SM * 0.35)
     else:
         label_xy = (end[0] + len(label) * 2.75 + 8, (mid + end[1]) / 2 + 3)
-    return d, label_xy
+    return verts, label_xy
 
 
 def _render_edge(
@@ -2906,8 +3935,16 @@ def _render_edge(
     out_port: _Port | None = None,
     in_port: _Port | None = None,
     edge: Edge | None = None,
+    route: list[tuple[float, float]] | None = None,
+    taken: list[tuple[float, float, float, float]] | None = None,
+    own: list[tuple[float, float, float, float]] | None = None,
 ) -> str:
-    """Render an edge between two nodes."""
+    """Render an edge between two nodes.
+
+    ``route`` is a precomputed list of corner points (from the obstacle router);
+    ``taken`` collects label pills (and detoured lines) so a label moves off
+    them; ``own`` lists this edge's entries in ``taken``, which it may overlap.
+    """
     font = t.get("font", DEFAULT_THEME["font"])
     parts: list[str] = []
     css = edge.css if edge else {}
@@ -2934,13 +3971,21 @@ def _render_edge(
         marker += f' marker-start="url(#{marker_id(tail, True)})"'
 
     is_h = direction in ("LR", "RL")
-    d, label_xy = _routed_path(src, dst, via or [], is_h, label, out_port, in_port, lane)
+    label_xy: tuple[float, float] | None
+    if route:
+        d, label_xy = _round_polyline(route), _route_label_xy(route)
+    else:
+        d, label_xy = _routed_path(src, dst, via or [], is_h, label, out_port, in_port, lane)
     parts.append(f'<path d="{d}" {stroke_attrs}{marker}/>')
 
     # Edge label
     if label:
         lx = (src.x + src.w / 2 + dst.x + dst.w / 2) / 2
         ly = (src.y + src.h / 2 + dst.y + dst.h / 2) / 2
+        if not label_xy and any(p and p.offset for p in (out_port, in_port)):
+            # A straight edge shifted along the node side: centre on the line itself
+            line = _route_points(src, dst, via or [], is_h, label, out_port, in_port, lane)[0]
+            lx, ly = (line[0][0] + line[1][0]) / 2, (line[0][1] + line[1][1]) / 2
         if label_xy:
             lx, ly = label_xy
         elif is_h:
@@ -2949,6 +3994,8 @@ def _render_edge(
             lx += lane * 2.2 if lane else 10
         # White pill behind the text so it reads over crossing lines
         est_w = _text_w(label, _FS_SM) + 10
+        if taken is not None:
+            lx, ly = _free_label_spot(lx, ly, est_w, taken, own)
         parts.append(
             f'<rect x="{lx - est_w / 2:g}" y="{ly - 11:g}" width="{est_w:g}" height="15" '
             f'rx="3" fill="{t["surface"]}"/>'
@@ -3315,7 +4362,7 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
                 open_frames.append(
                     {"kind": ev.kind, "label": ev.label, "y0": y, "who": set(), "dividers": []}
                 )
-                y += 30
+                y += 14 if ev.kind == "rect" else 30  # a rect has no tag to make room for
             continue
         if isinstance(ev, SeqActivation):
             if ev.on:
@@ -3453,12 +4500,17 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
         fx1 = xs[max(who)] + margin + 22
         tag = f["kind"]
         tag_w = _text_w(tag, 10) + 16
-        fx1 = max(fx1, fx0 + tag_w + _text_w(f"[{f['label']}]", _FS_SM) + 24)
+        if tag != "rect":  # a rect's "label" is its colour, never drawn
+            fx1 = max(fx1, fx0 + tag_w + _text_w(f"[{f['label']}]", _FS_SM) + 24)
         fy0, fy1 = f["y0"] + 2, f["y1"] + 4
         fill = _tint(t["primary"], 0.97, t) if tag == "rect" else "none"
+        stroke = frame_color
+        if tag == "rect" and f["label"] and css_color_to_hex(f["label"]):
+            # ``rect rgb(219, 234, 254)``: a highlight in that colour, no border (as Mermaid)
+            fill, stroke = _escape(f["label"]), "none"
         parts.append(
             f'<rect x="{fx0:g}" y="{fy0:g}" width="{fx1 - fx0:g}" height="{fy1 - fy0:g}" rx="4" '
-            f'fill="{fill}" stroke="{frame_color}" stroke-width="1"/>'
+            f'fill="{fill}" stroke="{stroke}" stroke-width="1"/>'
         )
         if tag != "rect":
             parts.append(
@@ -3478,6 +4530,38 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
             )
             if dlabel:
                 parts.append(_svg_text(fx0 + 8, dy + 14, f"[{dlabel}]", t, _FS_SM, t["ink2"]))
+
+    # Participant boxes behind everything else; the drawing moves down to make
+    # room for their titles
+    box_top = 0.0
+    if sd.boxes:
+        box_top = 22.0 if any(sb.label for sb in sd.boxes) else 8.0
+        bands: list[str] = []
+        for band in sd.boxes:
+            members = [index[m] for m in band.members if m in index]
+            if not members:
+                continue
+            bx0 = min(xs[i] - box_w[i] / 2 for i in members) - 10
+            bx1 = max(xs[i] + box_w[i] / 2 for i in members) + 10
+            hex_fill = css_color_to_hex(band.color) if band.color else None
+            fill = _escape(band.color) if hex_fill else "none"
+            stroke = "none" if hex_fill else frame_color
+            bands.append(
+                f'<rect x="{bx0:g}" y="{-box_top + 2:g}" width="{bx1 - bx0:g}" '
+                f'height="{total_h + box_top - 4:g}" rx="6" fill="{fill}" stroke="{stroke}" '
+                f'stroke-width="1"/>'
+            )
+            if band.label:
+                ink = _text_on(hex_fill, t) if hex_fill else t["ink"]
+                bands.append(
+                    _svg_text(
+                        (bx0 + bx1) / 2, -box_top + 16, band.label, t, _FS_SM, ink, 600, "middle"
+                    )
+                )
+        parts[parts.index("</defs>") + 1 : parts.index("</defs>") + 1] = [
+            f'<g transform="translate(0,{box_top:g})">',
+            *bands,
+        ]
 
     # Lifelines
     for p in sd.participants:
@@ -3524,7 +4608,9 @@ def render_sequence_svg(sd: SequenceDiagram, theme: dict[str, str] | None = None
                     )
                 )
 
-    return _svg_root(width, total_h, parts, t["font"])
+    if sd.boxes:
+        parts.append("</g>")
+    return _svg_root(width, total_h + box_top, parts, t["font"])
 
 
 # ---------------------------------------------------------------------------
@@ -3939,6 +5025,17 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             sections.append(task.section)
     sec_color = {s: _palette(t)[i % 8] for i, s in enumerate(sections)}
 
+    def class_css(names: list[str]) -> dict[str, str]:
+        css: dict[str, str] = {}
+        for name in names:
+            css.update(gc.class_defs.get(name, {}))
+        return css
+
+    for sec in sections:  # a section class recolours its whole section
+        fill = css_color_to_hex(class_css(gc.section_classes.get(sec, [])).get("fill", ""))
+        if fill:
+            sec_color[sec] = fill
+
     parts, top = _chart_title(gc.title, t)
     label_w = min(
         max([_text_w(task.name, 11) for task in gc.tasks] + [_text_w(s, 11) for s in sections])
@@ -4000,7 +5097,13 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
         task = gc.tasks[idx]
         first = False
         a, b = timeline[idx]
-        color = _CRITICAL if "crit" in task.tags else sec_color[task.section]
+        task_css = class_css(task.classes)
+        own = css_color_to_hex(task_css.get("fill", ""))
+        # A task's own class wins over `crit`, which wins over its section's colour
+        color = own or (_CRITICAL if "crit" in task.tags else sec_color[task.section])
+        on_bar = css_color_to_hex(task_css.get("color", "")) or _text_on(color, t)
+        edge = css_color_to_hex(task_css.get("stroke", ""))
+        outline = f' stroke="{edge}" stroke-width="1"' if edge else ""
         parts.append(
             _svg_text(12 if task.section else 0, y + row_h / 2 + 4, task.name, t, 11, t["ink2"])
         )
@@ -4009,7 +5112,7 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             mx, s = sx(a), 6.5
             parts.append(
                 f'<path d="M {mx:.1f},{cy - s:.1f} L {mx + s:.1f},{cy:.1f} L {mx:.1f},{cy + s:.1f} '
-                f'L {mx - s:.1f},{cy:.1f} Z" fill="{color}"/>'
+                f'L {mx - s:.1f},{cy:.1f} Z" fill="{color}"{outline}/>'
             )
             parts.append(
                 _svg_text(
@@ -4027,13 +5130,11 @@ def render_gantt_svg(gc: GanttChart, theme: dict[str, str] | None = None) -> str
             opacity = ' fill-opacity="0.4"' if "done" in task.tags else ""
             parts.append(
                 f'<rect x="{bx:.1f}" y="{cy - bar_h / 2:g}" width="{bw:.1f}" height="{bar_h:g}" '
-                f'rx="3" fill="{color}"{opacity}/>'
+                f'rx="3" fill="{color}"{opacity}{outline}/>'
             )
             dur = task.duration if _gantt_days(task.duration) else f"{b - a:g}d"
             if bw >= _text_w(dur, 9.5) + 12 and "done" not in task.tags:
-                parts.append(
-                    _svg_text(bx + bw / 2, cy + 3.5, dur, t, 9.5, _text_on(color, t), 600, "middle")
-                )
+                parts.append(_svg_text(bx + bw / 2, cy + 3.5, dur, t, 9.5, on_bar, 600, "middle"))
             else:
                 parts.append(_svg_text(bx + bw + 5, cy + 3.5, dur, t, 9.5, t["ink2"]))
         y += row_h
@@ -4097,6 +5198,7 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
         node: MindNode, depth: int, side: int, offsets: list[float], y: float, color: str
     ) -> tuple[float, float]:
         """Lay out a subtree; return (centre y, next free y)."""
+        color = _mind_base(node) or color  # a styled node recolours its branch
         w, h = size(node, depth)
         if node.children:
             cys = []
@@ -4183,24 +5285,35 @@ def render_mindmap_svg(root: MindNode, theme: dict[str, str] | None = None) -> s
             f'fill="none" stroke="{_tint(color, 0.25 if depth == 1 else 0.45, t)}" '
             f'stroke-width="{2 if depth == 1 else 1.5}" stroke-linecap="round"/>'
         )
+    root_fill = css_color_to_hex(root.css.get("fill", "")) or t["term_fill"]
+    root_ink = css_color_to_hex(root.css.get("color", "")) or (
+        _text_on(root_fill, t) if "fill" in root.css else t["term_text"]
+    )
+    root_stroke = css_color_to_hex(root.css.get("stroke", ""))
     parts.append(
         f'<rect x="{-rw / 2:g}" y="{root_cy - lw / 2:g}" width="{rw:g}" height="{lw:g}" '
-        f'rx="{lw / 2:g}" fill="{t["term_fill"]}"/>'
+        f'rx="{lw / 2:g}" fill="{root_fill}"'
+        + (f' stroke="{root_stroke}" stroke-width="1.25"' if root_stroke else "")
+        + "/>"
     )
-    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, t["term_text"], 600, "middle"))
+    parts.append(_svg_text(0, root_cy + 4.6, root.label, t, 13, root_ink, 600, "middle"))
     for node, depth, x, by, w, h, color in boxes:
         if depth == 1:
             fill, stroke, fs, weight = _tint(color, 0.86, t), _tint(color, 0.35, t), _FS, 500
         else:
             fill, stroke, fs, weight = t["card"], _tint(color, 0.6, t), 11.5, 400
+        own_fill = css_color_to_hex(node.css.get("fill", ""))
+        fill = own_fill or fill
+        stroke = css_color_to_hex(node.css.get("stroke", "")) or stroke
+        ink = css_color_to_hex(node.css.get("color", "")) or (
+            _text_on(own_fill, t) if own_fill else t["ink"]
+        )
         parts.append(
             f'<rect x="{x:g}" y="{by:g}" width="{w:g}" height="{h:g}" rx="{h / 2:g}" '
             f'fill="{fill}" stroke="{stroke}" stroke-width="1.25"/>'
         )
         parts.append(
-            _svg_text(
-                x + w / 2, by + h / 2 + fs * 0.35, node.label, t, fs, weight=weight, anchor="middle"
-            )
+            _svg_text(x + w / 2, by + h / 2 + fs * 0.35, node.label, t, fs, ink, weight, "middle")
         )
     parts.append("</g>")
     return _svg_root(max(xe) - ox + pad, max(ye) - oy + pad, parts, t["font"])
@@ -7158,8 +8271,12 @@ def render_zenuml_svg(source: str, theme: dict[str, str] | None = None) -> str:
 def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> str:
     """Render a state diagram to SVG via the flowchart layout engine."""
     if not sd.states:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>'
+        return _EMPTY_SVG
+    return render_svg(_state_flowchart(sd), theme)
 
+
+def _state_flowchart(sd: StateDiagram) -> Flowchart:
+    """A state diagram on the flowchart model (``[*]`` as start and end dots)."""
     fc = Flowchart(direction=sd.direction if sd.direction in ("LR", "TB", "TD") else "LR")
     for tr in sd.transitions:
         ends: list[str] = []
@@ -7173,7 +8290,7 @@ def render_state_svg(sd: StateDiagram, theme: dict[str, str] | None = None) -> s
                 fc.nodes.setdefault(name, Node(name, name, "rounded"))
                 ends.append(name)
         fc.edges.append(Edge(ends[0], ends[1], tr.label))
-    return render_svg(fc, theme)
+    return fc
 
 
 # ---------------------------------------------------------------------------
@@ -7229,6 +8346,14 @@ def _diagram_config(source: str) -> dict:
                 merge(config, data["config"])
             if data.get("title"):
                 config["title"] = str(data["title"])
+    for m in re.finditer(r"%%\{\s*mddoc\s*:\s*(\{.*?\})\s*\}%%", text, re.DOTALL):
+        try:  # md-doc's own options, in YAML flow style: {keep_direction: true}
+            data = yaml.safe_load(m.group(1))
+        except yaml.YAMLError:
+            logger.warning("Mermaid: could not read the mddoc directive %r", m.group(0))
+            continue
+        if isinstance(data, dict):
+            merge(config, {"mddoc": data})
     for m in re.finditer(r"%%\{\s*(?:init|initialize)\s*:\s*(\{.*?\})\s*\}%%", text, re.DOTALL):
         raw = m.group(1)
         for candidate in (raw, raw.replace("'", '"')):
@@ -7266,6 +8391,11 @@ def _config_theme(config: dict) -> dict[str, str]:
     flow = config.get("flowchart")
     if isinstance(flow, dict) and flow.get("autoFit") is False:
         out["auto_fit"] = "0"
+    mddoc = config.get("mddoc")
+    if (isinstance(flow, dict) and flow.get("keepDirection") is True) or (
+        isinstance(mddoc, dict) and mddoc.get("keep_direction") is True
+    ):
+        out["keep_direction"] = "1"
     return out
 
 
@@ -7601,7 +8731,12 @@ def render_swimlanes_svg(fc: Flowchart, theme: dict[str, str] | None = None) -> 
         parts.append(_render_node(node, t))
     width, height = (major_end, lane_total) if horizontal else (lane_total, major_end)
     column = float(t.get("column_px") or 640)
-    if horizontal and width > column and t.get("auto_fit") != "0":
+    if (
+        horizontal
+        and width > column
+        and t.get("auto_fit") != "0"
+        and t.get("keep_direction") != "1"
+    ):
         # Too wide for the page: lanes become columns and the flow runs downwards
         fc.direction = "TD"
         return render_swimlanes_svg(fc, theme)
@@ -7860,6 +8995,8 @@ def parse_venn(source: str) -> dict:
     sets: list[dict] = []
     unions: list[dict] = []
     styles: dict[str, dict[str, str]] = {}
+    class_defs: dict[str, dict[str, str]] = {}
+    assigned: list[tuple[str, str]] = []  # (set or union id, class name)
     last: dict | None = None
     for raw_line in source.splitlines():
         line = raw_line.strip()
@@ -7867,6 +9004,22 @@ def parse_venn(source: str) -> dict:
             continue
         if line.startswith(("accTitle", "accDescr")):
             continue
+        m = re.match(r"^classDef\s+(\S+)\s+(.+)$", line)
+        if m:
+            for name in m.group(1).split(","):
+                class_defs.setdefault(name.strip(), {}).update(_parse_css(m.group(2)))
+            continue
+        m = re.match(r"^class\s+(\S+)\s+([\w-]+)$", line)
+        if m:  # ``class A,B name`` styles the sets A and B
+            assigned += [(_unquote(i.strip()), m.group(2)) for i in m.group(1).split(",")]
+            continue
+        cm = re.search(r"\s*:::\s*([\w-]+)\s*$", line)
+        if cm and re.match(r"^(set|union)\s", line):
+            line = line[: cm.start()]
+            head = re.match(r"^(?:set|union)\s+([^\[:]+)", line)
+            if head:
+                key = ",".join(_unquote(p.strip()) for p in head.group(1).split(","))
+                assigned.append((key, cm.group(1)))
         m = re.match(r"^title\s+(.+)$", line)
         if m:
             title = _unquote(m.group(1).strip())
@@ -7903,6 +9056,8 @@ def parse_venn(source: str) -> dict:
                 if ":" in decl:
                     k, v = decl.split(":", 1)
                     css[k.strip()] = v.strip()
+    for key, name in assigned:  # a class is the base; ``style`` on the same set still wins
+        styles[key] = {**class_defs.get(name, {}), **styles.get(key, {})}
     return {"title": title, "sets": sets, "unions": unions, "styles": styles}
 
 
@@ -9508,7 +10663,67 @@ def render_to_svg(source: str, theme: dict[str, str] | None = None) -> str:
     svg = _render_by_type(diagram_type, source, theme)
     if config.get("title"):
         svg = _with_title(svg, config["title"], _tokens(theme))
+    _check_fits(svg, diagram_type, source, theme)
     return svg
+
+
+def render_to_svgs(source: str, theme: dict[str, str] | None = None) -> list[str]:
+    """Like :func:`render_to_svg`, but a diagram too tall for a page comes back in parts.
+
+    Flowchart, state, use case and agent flow diagrams split across pages when
+    the theme carries ``page_px`` (see :func:`render_svg_parts`); every other
+    type, and every diagram that fits, is a single SVG.
+    """
+    theme = theme or {}
+    config = _diagram_config(source)
+    merged = {**theme, **_config_theme(config)}
+    body = _strip_preamble(source)
+    kind = _detect_diagram_type(body)
+    parsers = {
+        "flowchart": parse,
+        "state": lambda text: _state_flowchart(parse_state(text)),
+        "usecase": parse_usecase,
+        "agentflow": parse_agentflow,
+    }
+    if not merged.get("page_px") or kind not in parsers:
+        return [render_to_svg(source, theme)]
+    if kind == "state" and not parse_state(body).states:
+        return [render_to_svg(source, theme)]
+    _ACTIVE_CONFIG.set(config)
+    parts = render_svg_parts(parsers[kind](body), merged)
+    if config.get("title"):
+        parts[0] = _with_title(parts[0], config["title"], _tokens(merged))
+    for part in parts:
+        _check_fits(part, kind, body, merged)
+    return parts
+
+
+#: Elements that put ink on the page; an SVG without any of them is blank.
+_DRAWN_RE = re.compile(r"<(?:rect|path|circle|ellipse|line|polyline|polygon|text|image)\b")
+
+
+def _check_fits(svg: str, diagram_type: str, source: str, theme: dict[str, str]) -> None:
+    """Warn about a blank diagram, or one taller than a page (it would be cut off)."""
+    first = next((ln.strip() for ln in source.splitlines() if ln.strip()), diagram_type)
+    if not _DRAWN_RE.search(svg):
+        logger.warning("Mermaid %s diagram %r draws nothing; check its source", diagram_type, first)
+        return
+    m = re.search(r'viewBox="[\d.\-]+ [\d.\-]+ ([\d.]+) ([\d.]+)"', svg)
+    page = float(theme.get("page_px") or 0)
+    if not m or not page:
+        return
+    width, height = float(m.group(1)), float(m.group(2))
+    column = float(theme.get("column_px") or width)
+    shown = height * min(1.0, column / width) if width else height
+    if shown > page:
+        logger.warning(
+            "Mermaid %s diagram %r is %.0fpx tall but a page holds %.0fpx; the PDF and Word "
+            "output will cut it off. Split it into smaller diagrams.",
+            diagram_type,
+            first,
+            shown,
+            page,
+        )
 
 
 def _render_by_type(diagram_type: str, source: str, theme: dict[str, str]) -> str:
@@ -9624,6 +10839,8 @@ def diagram_theme(
 
             geom = _page_geometry(css_text)
             column_px = (geom["w"] - geom["left"] - geom["right"]) / 25.4 * 96
+            # the text area's height, to flag diagrams too tall for one page
+            theme["page_px"] = f"{(geom['h'] - geom['top'] - geom['bottom']) / 25.4 * 96:.0f}"
         except Exception:
             column_px = None
     if column_px:
@@ -9658,10 +10875,10 @@ def process_html(html: str, theme: dict[str, str] | None = None) -> str:
     def _replace(m: re.Match) -> str:
         source = _unescape_mermaid_source(m.group(1))
         try:
-            svg = render_to_svg(source, theme)
+            svgs = render_to_svgs(source, theme)
         except UnsupportedDiagramError as exc:
             logger.warning("Mermaid: %s; leaving the source as a code block", exc)
             return m.group(0)
-        return _wrap_diagram(svg)
+        return "\n".join(_wrap_diagram(svg) for svg in svgs)
 
     return _MERMAID_BLOCK_RE.sub(_replace, html)

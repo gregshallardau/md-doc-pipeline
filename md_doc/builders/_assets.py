@@ -96,25 +96,27 @@ def _render_mermaid_to_images(
     indexed by N. Diagrams that can't be rasterized (cairosvg missing or a parse
     error) are left as-is so they still render as a code block.
     """
-    from ..mermaid import _MERMAID_BLOCK_RE, _unescape_mermaid_source, render_to_svg
+    from ..mermaid import _MERMAID_BLOCK_RE, _unescape_mermaid_source, render_to_svgs
 
     images: list[tuple[bytes, int, int]] = []
 
     def _replace(m: re.Match) -> str:
         source = _unescape_mermaid_source(m.group(1))
         try:
-            svg = render_to_svg(source, theme)
-            png = _svg_to_png(svg)
+            # A diagram too tall for a page comes back in parts, one picture each
+            pngs = [_svg_to_png(svg) for svg in render_to_svgs(source, theme)]
         except Exception as exc:
             logger.warning("Mermaid render failed: %s", exc)
-            png = None
-        if png is None:
+            pngs = [None]
+        if not pngs or any(png is None for png in pngs):
             return m.group(0)  # leave original code block
-        images.append(png)
-        idx = len(images) - 1
-        # Natural size, as in the PDF; the builder caps it at the text width.
-        width = str(int(png[1]))
-        return f'<p><img src="mermaid://{idx}" width="{width}"></p>'
+        out = []
+        for png in pngs:
+            assert png is not None
+            images.append(png)
+            # Natural size, as in the PDF; the builder caps it at the text width.
+            out.append(f'<p><img src="mermaid://{len(images) - 1}" width="{int(png[1])}"></p>')
+        return "\n".join(out)
 
     return _MERMAID_BLOCK_RE.sub(_replace, html), images
 

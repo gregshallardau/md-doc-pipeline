@@ -131,48 +131,64 @@ TIERS_DEFAULTS: dict[str, Any] = {
 }
 
 
+#: Smallest text a tiers figure draws, in SVG units. The PDF shows figures at
+#: 135mm (about 0.8 of the 640-unit drawing), so this prints at roughly 7pt.
+TIERS_MIN_FONT = 11.5
+
+
 def tiers_svg(options: dict[str, Any] | None = None) -> str:
-    """Numbered tiers, each indented further than the one above, joined by arrows."""
+    """Numbered tiers, each indented further than the one above, joined by arrows.
+
+    Text never drops below :data:`TIERS_MIN_FONT`: a tier grows taller to fit
+    its wrapped subtitle and description instead, so six tiers read as well as
+    three. A tier without a subtitle has its title centred vertically.
+    """
     opts = {**TIERS_DEFAULTS, **(options or {})}
     tiers: list[dict[str, Any]] = list(opts["tiers"] or TIERS_DEFAULTS["tiers"])
-    width, tier_h, gap, step, margin = 640.0, 74.0, 26.0, 22.0, 12.0
+    width, min_h, gap, margin = 640.0, 74.0, 26.0, 12.0
+    # The indent shrinks with the count, so the last tier keeps room for its text
+    step = min(22.0, 110.0 / max(len(tiers) - 1, 1))
+    title_size, sub_size, desc_size = 13.0, 12.0, TIERS_MIN_FONT
+    leading = 1.25
     right = width - margin
     parts: list[str] = []
     y = margin
     title = str(opts.get("title") or "")
     if title:
-        parts.append(text_block(width / 2, y + 8, [title], 14, opts["text"], 700, "middle"))
+        parts.append(text_block(width / 2, y + 8, [title], 15, opts["text"], 700, "middle"))
         y += 34
     for i, tier in enumerate(tiers):
         defaults = TIERS_DEFAULTS["tiers"][min(i, len(TIERS_DEFAULTS["tiers"]) - 1)]
         t = {**defaults, **tier}
         x = margin + i * step
         w = right - x
+        tx = x + 68
+        divider = x + w * 0.5
+        head = wrap_px(str(t["title"]).upper(), title_size, divider - tx - 12, True)
+        sub = wrap_px(t["subtitle"], sub_size, divider - tx - 12, True) if t["subtitle"] else []
+        desc = wrap_px(t["description"], desc_size, right - divider - 28)
+        left_h = len(head) * title_size * leading + (
+            6 + len(sub) * sub_size * leading if sub else 0
+        )
+        right_h = len(desc) * desc_size * leading
+        tier_h = max(min_h, left_h + 26, right_h + 26)
         parts.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{tier_h}" rx="14" fill="{t["fill"]}"/>'
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{tier_h:.1f}" rx="14" fill="{t["fill"]}"/>'
         )
         cx, cy = x + 34, y + tier_h / 2
         parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="22" fill="{t["badge"]}"/>')
         parts.append(text_block(cx, cy, [str(i + 1)], 20, "#ffffff", 700, "middle"))
-        tx = x + 68
-        divider = x + w * 0.52
-        parts.append(text_block(tx, y + 25, [str(t["title"]).upper()], 12.5, opts["text"], 700))
-        parts.append(
-            text_block(
-                tx,
-                y + 45,
-                wrap_px(t["subtitle"], 10.5, divider - tx - 12, True),
-                10.5,
-                t["accent"],
-                700,
-            )
-        )
+        # Title (and subtitle) as one block, centred on the tier
+        top = cy - left_h / 2 + title_size * leading / 2
+        parts.append(text_block(tx, top, head, title_size, opts["text"], 700))
+        if sub:
+            sub_top = top + len(head) * title_size * leading + 6 - (title_size - sub_size) / 2
+            parts.append(text_block(tx, sub_top, sub, sub_size, t["accent"], 700))
         parts.append(
             f'<path d="M{divider:.1f} {y + 12:.1f} L{divider:.1f} {y + tier_h - 12:.1f}" stroke="{opts["arrow"]}" stroke-width="0.8"/>'
         )
-        desc = wrap_px(t["description"], 9.5, right - divider - 28)
-        top = y + tier_h / 2 - (len(desc) - 1) * 9.5 * 1.25 / 2
-        parts.append(text_block(divider + 16, top, desc, 9.5, opts["muted"]))
+        desc_top = cy - (len(desc) - 1) * desc_size * leading / 2
+        parts.append(text_block(divider + 16, desc_top, desc, desc_size, opts["muted"]))
         y += tier_h
         if i < len(tiers) - 1:
             parts.append(_arrow_down(x + w * 0.3, y + 3, y + gap - 3, opts["arrow"]))
@@ -228,14 +244,18 @@ def cards_svg(options: dict[str, Any] | None = None) -> str:
     if title or subtitle:
         y += 6
 
+    title_lead = 11 * 1.25  # line pitch of a card title (text_block's default leading)
     prepared = []
     for card in cards:
+        head = wrap_px(card["title"], 11, card_w - 20, True)
         sub = wrap_px(card.get("subtitle", ""), 8.8, card_w - 24)
         items = [str(i) for i in (card.get("items") or [])]
-        height = 34 + len(sub) * 11 + 12 + len(items) * 17 + 14
-        prepared.append((card, sub, items, height))
+        # A title that wraps pushes the subtitle and items down; the card grows to fit
+        extra = (len(head) - 1) * title_lead
+        height = 34 + extra + len(sub) * 11 + 12 + len(items) * 17 + 14
+        prepared.append((card, head, extra, sub, items, height))
     card_h = max(h for *_rest, h in prepared)
-    for i, (card, sub, items, _h) in enumerate(prepared):
+    for i, (card, head, extra, sub, items, _h) in enumerate(prepared):
         colors = {**palette[i % len(palette)], **(card.get("colors") or {})}
         x = margin + i * (card_w + gap)
         parts.append(
@@ -243,19 +263,9 @@ def cards_svg(options: dict[str, Any] | None = None) -> str:
             f'fill="{colors["fill"]}" stroke="{colors["border"]}" stroke-width="1.6"/>'
         )
         cx = x + card_w / 2
-        parts.append(
-            text_block(
-                cx,
-                y + 18,
-                wrap_px(card["title"], 11, card_w - 20, True),
-                11,
-                colors["accent"],
-                700,
-                "middle",
-            )
-        )
-        parts.append(text_block(cx, y + 36, sub, 8.8, opts["muted"], 400, "middle"))
-        iy = y + 36 + len(sub) * 11 + 14
+        parts.append(text_block(cx, y + 18, head, 11, colors["accent"], 700, "middle"))
+        parts.append(text_block(cx, y + 36 + extra, sub, 8.8, opts["muted"], 400, "middle"))
+        iy = y + 36 + extra + len(sub) * 11 + 14
         for item in items:
             parts.append(text_block(cx, iy, [item], 10.5, opts["text"], 700, "middle"))
             iy += 17
@@ -561,6 +571,37 @@ def _flow_node_box(node: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]
     return {"lines": lines, "w": width, "h": height, "size": size, "shape": shape, "span": span}
 
 
+_GROUP_PAD = 10.0  # frame padding around a group's nodes
+_GROUP_LABEL_H = 18.0  # band above the nodes that holds the group label
+
+GROUP_DEFAULTS: dict[str, str] = {"fill": "#eef2f7", "stroke": "#64748b", "text": "#1f2937"}
+
+
+def _flow_group_frames(
+    groups: list[dict[str, Any]], boxes: dict[str, dict[str, Any]], opts: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Rounded, tinted frames (with a label) around each group's nodes."""
+    frames: list[dict[str, Any]] = []
+    for group in groups:
+        members = [boxes[str(n)] for n in group.get("nodes") or [] if str(n) in boxes]
+        if not members:
+            continue
+        g = {**GROUP_DEFAULTS, **{k: v for k, v in group.items() if v is not None}}
+        x0 = min(b["cx"] - b["w"] / 2 for b in members) - _GROUP_PAD
+        x1 = max(b["cx"] + b["w"] / 2 for b in members) + _GROUP_PAD
+        y0 = min(b["cy"] - b["h"] / 2 for b in members) - _GROUP_PAD - _GROUP_LABEL_H
+        y1 = max(b["cy"] + b["h"] / 2 for b in members) + _GROUP_PAD
+        svg = (
+            f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{x1 - x0:.1f}" height="{y1 - y0:.1f}" '
+            f'rx="10" fill="{_attr(g["fill"])}" stroke="{_attr(g["stroke"])}" stroke-width="1.2"/>'
+        )
+        label = str(group.get("label") or "")
+        if label:
+            svg += text_block(x0 + 10, y0 + 12, [label], 10, _attr(g["text"]), 700)
+        frames.append({"svg": svg, "x0": x0, "y0": y0, "x1": x1, "y1": y1})
+    return frames
+
+
 def flow_svg(options: dict[str, Any] | None = None) -> str:
     """Flowchart with nodes on a ``[column, row]`` grid and orthogonal arrows.
 
@@ -569,6 +610,8 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
     Edges: ``[from, to, label?]`` or ``{from, to, label, exit, enter, via}``
     where ``exit``/``enter`` pick a side (top, bottom, left, right) and ``via``
     (left or right) sends the arrow round the outside of the diagram.
+    Groups: ``{label, nodes: [ids], fill, stroke, text}`` draw a tinted, labelled
+    frame behind the listed nodes (under the arrows, so no arrow is hidden).
     """
     opts = {**FLOW_DEFAULTS, **(options or {})}
     nodes_in: list[dict[str, Any]] = list(opts["nodes"] or FLOW_DEFAULTS["nodes"])
@@ -582,7 +625,8 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
     lanes_r = sum(1 for e in edges_in if isinstance(e, dict) and e.get("via") == "right")
     left_pad = margin + 34 * lanes_l
     title = str(opts.get("title") or "")
-    top = margin + (30 if title else 0)
+    groups = [g for g in (opts.get("groups") or []) if isinstance(g, dict)]
+    top = margin + (30 if title else 0) + (_GROUP_LABEL_H if groups else 0)
 
     rows = sorted({b["at"][1] for b in boxes.values()})
     row_h = {r: max(b["h"] for b in boxes.values() if b["at"][1] == r) for r in rows}
@@ -609,6 +653,12 @@ def flow_svg(options: dict[str, Any] | None = None) -> str:
     parts: list[str] = []
     if title:
         parts.append(text_block(width / 2, margin + 8, [title], 15, opts["text"], 700, "middle"))
+    frames = _flow_group_frames(groups, boxes, opts)
+    for frame in frames:
+        parts.append(frame["svg"])
+    if frames:
+        width = max(width, max(f["x1"] for f in frames) + margin / 2)
+        total_h = max(total_h, max(f["y1"] for f in frames) + margin / 2)
     arrow = opts["arrow"]
     for b in boxes.values():
         x, yy, w, h = b["cx"] - b["w"] / 2, b["cy"] - b["h"] / 2, b["w"], b["h"]

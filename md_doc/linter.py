@@ -12,6 +12,7 @@ Checks performed:
   - {% include "path" %} targets resolve in the template search path
   - [[field]] references exist in the _merge_fields.yml cascade
     (only checked when at least one _merge_fields.yml is present)
+  - ``::: figure`` component options are valid YAML with known keys
 """
 
 from __future__ import annotations
@@ -566,6 +567,17 @@ def lint_file(doc_path: Path, repo_root: Path | None = None) -> list[LintIssue]:
         return prose
 
     transform_outside_code(body, check_directives)
+
+    # ------------------------------------------------------------------
+    # 3d. ::: figure component options (unknown keys, broken YAML)
+    # ------------------------------------------------------------------
+    from .components import component_problems
+
+    body_start = frontmatter_block.count("\n") + 1
+    for line, message in component_problems(body, first_line=body_start):
+        issues.append(
+            LintIssue(path=doc_path, message=f"line {line}: {message}", severity="warning")
+        )
 
     _check_pdf_assets(config, doc_path, repo_root, issues)
     _check_review_markup_outside_code(body, config, doc_path, issues)

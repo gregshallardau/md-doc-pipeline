@@ -542,3 +542,27 @@ def test_end_footnotes_keep_the_list(tmp_repo):
     with zipfile.ZipFile(tmp_repo / "out.docx") as z:
         assert "word/footnotes.xml" not in z.namelist()
     assert any("The note." in p.text for p in doc.paragraphs)
+
+
+class TestColWidthsNeverSplitWords:
+    _TABLE = (
+        "<!-- col-widths: 10, 60, 30 -->\n| Responsibility | Description | Owner |\n|---|---|---|\n"
+        "| Interdepartmental | Coordination of the programme | Commissioner |\n"
+    )
+
+    def test_narrow_column_widens_to_its_longest_word(self, tmp_repo):
+        from md_doc.mermaid import _text_w
+
+        doc = _build_docx(tmp_repo, self._TABLE, {})
+        widths = _col_widths(doc)
+        assert sum(widths) > 0
+        longest_pt = _text_w("Interdepartmental", 10)
+        assert widths[0] / 20 > longest_pt  # wider than the word (twips -> pt)
+        assert widths[1] > widths[2]  # the rest keeps the author's 60:30 proportion
+
+    def test_widths_that_already_fit_are_kept(self, tmp_repo):
+        doc = _build_docx(
+            tmp_repo, "| A | B |\n|---|---|\n| 1 | 2 |\n", {"table_col_widths": [30, 70]}
+        )
+        widths = _col_widths(doc)
+        assert abs(widths[0] / sum(widths) - 0.3) < 0.002
